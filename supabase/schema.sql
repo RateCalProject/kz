@@ -19725,7 +19725,7 @@ begin
     tt_ := tt_ || jsonb_build_object(k, jsonb_strip_nulls(jsonb_build_object('a', (v ->> 'a')::int, 'd', (v ->> 'd')::int, 't', (v ->> 't')::int)));
   end loop;
   select count(*) into n from mp_trains where route = p_route;
-  if p_id is null and n >= 400 then raise exception '1つの系統の列車は400本までです'; end if;
+  if p_id is null and n >= 900 then raise exception '1つの系統の列車は900本までです'; end if;
   if p_id is not null and not exists (select 1 from mp_trains where id = p_id and route = p_route) then raise exception '列車が見つかりません'; end if;
   perform _mp_dia_snap(p_route, format(case when p_id is null then '列車 %s を足した' else '列車 %s を直した' end, left(trim(p_num), 12)));
   if p_id is null then
@@ -19765,7 +19765,7 @@ begin
   if p_every < 2 or p_every > 240 then raise exception '何分おきかは2〜240分です'; end if;
   if p_from < 0 or p_to >= 86400 or p_to < p_from then raise exception '時刻がちがいます'; end if;
   select count(*) into have from mp_trains where route = p_route;
-  if have + (p_to - p_from) / (p_every * 60) + 1 > 400 then raise exception '1つの系統の列車は400本までです'; end if;
+  if have + (p_to - p_from) / (p_every * 60) + 1 > 900 then raise exception '1つの系統の列車は900本までです'; end if;
   base := case when p_dir = -1 then 2 else 1 end;
   perform _mp_dia_snap(p_route, format('列車を %s本 まとめて足した', (p_to - p_from) / (p_every * 60) + 1));
   t := p_from;
@@ -22810,10 +22810,10 @@ begin
     sumv := sumv || jsonb_build_array(jsonb_build_object('num', opnum, 'new', opnum is not null and o.id is null, 'add', nadd, 'del', ndel)
                || case when opnum is not null and e ? '編成' then jsonb_build_object('form', e -> '編成') else '{}'::jsonb end);
   end loop;
-  -- 系統ごとの列車は400本まで
+  -- 系統ごとの列車は900本まで（2026-10-28 に400本から）
   for kk in select * from jsonb_object_keys(cnt) loop
-    if (select count(*) from mp_trains t where t.route = kk::bigint and not (t.op is not null and t.op = any(repl))) + (cnt ->> kk)::int > 400 then
-      errs := errs || format('系統「%s」の列車が400本をこえます', (select name from mp_routes where id = kk::bigint));
+    if (select count(*) from mp_trains t where t.route = kk::bigint and not (t.op is not null and t.op = any(repl))) + (cnt ->> kk)::int > 900 then
+      errs := errs || format('系統「%s」の列車が900本をこえます', (select name from mp_routes where id = kk::bigint));
     end if;
   end loop;
   if p_dry or array_length(errs, 1) > 0 then
