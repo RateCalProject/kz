@@ -18270,6 +18270,76 @@ begin
   perform _mp_chg('sta', p_id, 'set', box(point(st.x / 100.0 - 3, st.y / 100.0 - 3), point(st.x / 100.0 + 3, st.y / 100.0 + 3)));
   return jsonb_build_object('ok', true);
 end $$;
+-- 駅のホームの長さ・番線の数を変える（2026-10-28）。まん中（at）はそのまま。見つもり（p_dry）は工事費・維持費・使用料・許可のいる筆
+--   工事費は、ふえるホーム（番線 × 長さ）の分だけ（駅をつくるときと同じ1mあたりの値段・いまの場所の値段）。小さくしても、もどらない。持ち主（人・会社）がはらう
+--   番線の使いかた（trk）を決めていたら、のこる番線はそのまま、ふえた番線はいつもの決まり。この駅を通る系統の時刻を組みなおす
+create or replace function public.mp_sta_resize(p_id bigint, p_plat int, p_tracks int, p_dry boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); st mp_stations; sg mp_segs; span real; sub int[]; tiles int[]; pcs int[]; oc int[]; olds int[]; need jsonb; lfee numeric := 0;
+        pt record; cost numeric; addc bigint; ntrk jsonb; dflt jsonb; rr bigint; st2 mp_stations;
+begin
+  perform _mp_ok(u);
+  select * into st from mp_stations where id = p_id;
+  if not found or st.kind <> 'rail' then raise exception '駅が見つかりません'; end if;
+  if not _mp_mine(u, st.own_u, st.own_c) then raise exception 'あなたの駅ではありません'; end if;
+  if not p_dry then
+    perform _mp_lock(st.own_u, st.own_c);
+    select * into st from mp_stations where id = p_id for update;
+  end if;
+  if p_plat is null or p_plat < 20 or p_plat > 400 or p_plat % 20 <> 0 then raise exception 'ホームの長さは20m単位で、20〜400mです'; end if;
+  if p_tracks is null or p_tracks < 1 or p_tracks > 8 then raise exception '番線の数は1〜8です'; end if;
+  if p_plat = st.plat and p_tracks = st.tracks then raise exception 'ホームの長さも番線の数も、いまと同じです'; end if;
+  select * into sg from mp_segs where id = st.seg;
+  if not found then raise exception '線路が見つかりません'; end if;
+  span := p_plat / 50.0;
+  if st.at - span / 2 < 0.3 or st.at + span / 2 > sg.len - 0.3 then raise exception 'ホームが線路からはみ出します（いまの線路では、これより長くできません）'; end if;
+  sub := _mp_sub(sg.pts, st.at - span / 2, st.at + span / 2);
+  if p_plat > st.plat and _mp_minr(sub) < 8 then raise exception 'ホームはカーブのゆるいところ（半径400m以上）にしか作れません'; end if;
+  if exists (select 1 from mp_stations t where t.seg = st.seg and t.id <> p_id and abs(t.at - st.at) < (t.plat / 50.0 + span) / 2 + 1)
+     or exists (select 1 from mp_depots t where t.seg = st.seg and abs(t.at - st.at) < (span + (_mp_dep_dim(t.kind, t.size))[1]) / 2 + 0.2) then raise exception '近くにほかの駅・車庫があります'; end if;
+  tiles := _mp_tiles(sub);
+  pcs := (select coalesce(array_agg(u2.v order by z.y, z.x, u2.o), '{}') from _mp_line_cells(sub, greatest(0.5, (0.22 * p_tracks + 0.18) * 2.5)::real) z,
+                  lateral unnest(array[z.x, z.y]) with ordinality u2(v, o));
+  -- いまのホームの区画（もう使っている）は、建物・許可・使用料の見つもりからのぞく
+  olds := (select coalesce(array_agg(u2.v order by z.y, z.x, u2.o), '{}') from _mp_sta_cells(p_id) z, lateral unnest(array[z.x, z.y]) with ordinality u2(v, o));
+  if _mp_bld_hit((select coalesce(array_agg(u2.v order by z.y, z.x, u2.o), '{}') from (
+        select pcs[2 * i - 1] x, pcs[2 * i] y from generate_series(1, coalesce(array_length(pcs, 1), 0) / 2) i
+        except select olds[2 * i - 1], olds[2 * i] from generate_series(1, coalesce(array_length(olds, 1), 0) / 2) i) z, lateral unnest(array[z.x, z.y]) with ordinality u2(v, o))) is not null then
+    raise exception 'ホームが建物のある土地にかかります';
+  end if;
+  oc := _mp_seg_cells_arr(_mp_sub(sg.pts, greatest(0, st.at - span / 2 - 1), least(sg.len, st.at + span / 2 + 1)), 'rail', sg.w, sg.dbl);
+  need := _mp_land_need(pcs, st.own_u, st.own_c, false, oc || olds);
+  with c as (select distinct pcs[2 * i - 1] x, pcs[2 * i] y from generate_series(1, coalesce(array_length(pcs, 1), 0) / 2) i),
+       o as materialized (select distinct oc[2 * i - 1] x, oc[2 * i] y from generate_series(1, coalesce(array_length(oc, 1), 0) / 2) i
+                          union select olds[2 * i - 1], olds[2 * i] from generate_series(1, coalesce(array_length(olds, 1), 0) / 2) i)
+  select coalesce(sum(coalesce(_mp_land_fee(p.id, st.own_u, st.own_c), _mp_land_std(p.id))), 0) into lfee
+    from c join mp_pcells pcl on pcl.x = c.x and pcl.y = c.y join mp_parcels p on p.id = pcl.parcel
+   where not exists (select 1 from o where o.x = c.x and o.y = c.y) and (p.own_u is not null or p.own_c is not null) and not _mp_same(p.own_u, p.own_c, false, st.own_u, st.own_c, false);
+  select * into pt from _mp_at(sg.pts, st.at);
+  -- ふえるホーム（番線 × 長さ）の分だけ、いまの場所の値段で
+  cost := greatest(0, p_tracks * p_plat - st.tracks * st.plat) * _mp_rate('sta_m') * (1 + _mp_rate('urb_sta') * _mp_dens(pt.x, pt.y));
+  addc := round(cost)::bigint;
+  if p_dry then
+    return jsonb_build_object('cost', addc, 'up_day', round(_mp_rate('up_sta') * (1 + 0.25 * (p_tracks - 1))), 'up_now', round(_mp_rate('up_sta') * (1 + 0.25 * (st.tracks - 1))),
+                              'lease', round(lfee), 'need', need,
+                              'routes', (select count(*) from mp_routes r where p_id = any(r.stops)));
+  end if;
+  perform _mp_land_stop(need);
+  if addc > 0 then perform _mp_pay(st.own_u, st.own_c, false, addc, 'sta', format('駅「%s」のホームの工事（%sm・%s番線 → %sm・%s番線）', st.name, st.plat, st.tracks, p_plat, p_tracks)); end if;
+  -- 番線の使いかた：決めていたら、のこる番線はそのまま・ふえた番線はいつもの決まり
+  ntrk := null;
+  if st.trk is not null and jsonb_typeof(st.trk) = 'array' and jsonb_array_length(st.trk) = greatest(st.tracks, 1) and p_tracks > 1 then
+    st2 := st; st2.trk := null; st2.tracks := p_tracks; dflt := _mp_sta_trk(st2);
+    ntrk := (select jsonb_agg(case when k <= jsonb_array_length(st.trk) then st.trk -> (k - 1) else dflt -> (k - 1) end order by k) from generate_series(1, p_tracks) k);
+  end if;
+  update mp_stations set plat = p_plat, tracks = p_tracks, cost = st.cost + addc, trk = ntrk where id = p_id;
+  delete from mp_occ where what = 'sta' and ref = p_id;
+  perform _mp_occ_set(p_id, 'sta', tiles);
+  perform _mp_lease_set('sta', p_id, st.own_u, st.own_c, false);
+  for rr in select r.id from mp_routes r where p_id = any(r.stops) loop perform _mp_resched(rr); end loop;
+  perform _mp_chg('sta', p_id, 'set', box(point(st.x / 100.0 - 3, st.y / 100.0 - 3), point(st.x / 100.0 + 3, st.y / 100.0 + 3)));
+  return jsonb_build_object('ok', true, 'cost', addc, 'plat', p_plat, 'tracks', p_tracks);
+end $$;
 -- バス停を他社に貸す（p_lend：1系統・1日の使用料。null なら貸さない）。いま使っている系統はそのまま（使用料も、使いはじめたときのまま）
 create or replace function public.mp_stop_lend(p_id bigint, p_lend numeric) returns jsonb
 language plpgsql security definer set search_path = public as $$
@@ -25340,7 +25410,7 @@ begin
             'mp_route_del','mp_route_pat','mp_route_save','mp_routes_list','mp_rwy_build','mp_rwy_del','mp_sc_list','mp_sc_set',
             'mp_seg_build','mp_seg_del','mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_speed','mp_seg_split','mp_slot_admin',
             'mp_slot_answer','mp_slot_apply','mp_slot_bid','mp_slot_cancel','mp_slot_get','mp_slot_list','mp_slot_return','mp_spot',
-            'mp_sta_build','mp_sta_edit','mp_sta_trk','mp_sta_trk_set','mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list',
+            'mp_sta_build','mp_sta_edit','mp_sta_resize','mp_sta_trk','mp_sta_trk_set','mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list',
             'mp_thru_req','mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market',
             'mp_unit_mine','mp_unit_own','mp_unit_set','mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer') loop
     execute format('revoke all on function %s from public, anon', f.sig);
@@ -25374,7 +25444,7 @@ begin
   for f in select p.oid::regprocedure sig from pg_proc p join pg_namespace n on n.oid = p.pronamespace
             where n.nspname = 'public' and p.proname in ('mp_dia_undo', 'mp_form_set', 'mp_kinds_set', 'mp_op_del', 'mp_op_import', 'mp_op_save',
               'mp_route_pat', 'mp_route_save', 'mp_rwy_build', 'mp_rwy_del', 'mp_seg_build', 'mp_seg_del', 'mp_seg_edit', 'mp_seg_join', 'mp_seg_opts',
-              'mp_sta_trk_set', 'mp_thru_end', 'mp_train_autoform', 'mp_train_bulk', 'mp_train_del', 'mp_train_save') loop
+              'mp_sta_resize', 'mp_sta_trk_set', 'mp_thru_end', 'mp_train_autoform', 'mp_train_bulk', 'mp_train_del', 'mp_train_save') loop
     execute format('alter function %s set statement_timeout = %L', f.sig, '20s');
   end loop;
 end $$;

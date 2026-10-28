@@ -1463,13 +1463,14 @@ function showSta(s) {
     ${gov ? `<div class="mp-row"><button class="btn main" data-slot>🛫 発着口・入札</button>${pdep ? '<button class="btn" data-cars>飛行機を見る・注文する</button>' : ''}<button class="btn" data-newr>＋ 空路</button>${adm ? '<button class="btn" data-ren>名前を変える</button><button class="btn" data-lend>使用料</button>' : ''}</div>
       <p class="muted small"><span>国の空港です。だれでも駐機場に飛行機を置いて（≡ →「車両と編成」）、空路に使えます。空路に入れると、1路線・1日の使用料を国にはらいます（使いはじめたときの値段のまま）。</span><span>この空港を出る便は、1時間に、持っている発着口の数まで（発着口の権利は入札で買います）</span></p>`
     : s.mine && port ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button><button class="btn" data-lend>貸し出し</button>${pdep ? (air ? '<button class="btn" data-cars>飛行機を見る</button>' : '<button class="btn" data-cars>船を見る</button>') : ''}${air ? '<button class="btn" data-newr>＋ 空路</button>' : '<button class="btn" data-newr>＋ 航路</button>'}</div>
-      <p class="muted small">${air ? '空港は、空港の建物をこわすとなくなります' : '港は、フェリーターミナルの建物をこわすとなくなります'}</p>` : s.mine ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button>${s.k === 'bus' ? '<button class="btn" data-lend>貸し出し</button>' : '<button class="btn" data-trk>発着番線</button>'}<button class="btn" data-del>こわす</button></div>` : ''}`, sh => {
+      <p class="muted small">${air ? '空港は、空港の建物をこわすとなくなります' : '港は、フェリーターミナルの建物をこわすとなくなります'}</p>` : s.mine ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button>${s.k === 'bus' ? '<button class="btn" data-lend>貸し出し</button>' : '<button class="btn" data-plat>ホーム・番線</button><button class="btn" data-trk>発着番線</button>'}<button class="btn" data-del>こわす</button></div>` : ''}`, sh => {
     const cs = sh.querySelector('[data-cars]'); if (cs) cs.onclick = () => openCars(pdep.id);
     const sl = sh.querySelector('[data-slot]'); if (sl) sl.onclick = () => openSlots(s.id);
     const nr = sh.querySelector('[data-newr]'); if (nr) nr.onclick = () => { sheet(null); routeBuild(s.k); };
     sh.querySelectorAll('[data-rt]').forEach(a => a.onclick = ev => { ev.preventDefault(); openDia(Number(a.dataset.rt)); });
     const th = sh.querySelector('[data-thru]'); if (th) th.onclick = () => thruReq({ sta: s.id }, () => { if (S.sel && S.sel.kind === 'sta' && S.sel.id === s.id) showSta(s); });
     const tk = sh.querySelector('[data-trk]'); if (tk) tk.onclick = () => trkEdit(s);
+    const pl = sh.querySelector('[data-plat]'); if (pl) pl.onclick = () => staResize(s);
     const ld = sh.querySelector('[data-lend]'); if (ld) ld.onclick = async () => {
       const v = prompt(gov ? T('国の空港の使用料（1路線・1日・X）。空にすると、新しい空路には使えなくなります（いまの空路は、そのまま使えます）') : T('ほかの人・会社に貸す使用料（1系統・1日・X）。空にすると貸しません（いま使っている系統は、そのまま使えます）'), s.ln != null ? String(s.ln) : '1000');
       if (v == null) return;
@@ -1483,6 +1484,53 @@ function showSta(s) {
   });
   addrInto(s.fx, s.fy, () => S.sel && S.sel.kind === 'sta' && S.sel.id === s.id);
   if (s.k === 'rail' && s.o !== myKey() && !thruFresh()) loadThru().then(() => { if (S.sel && S.sel.kind === 'sta' && S.sel.id === s.id) showSta(s); });
+}
+// 駅のホームの長さ・番線の数を変える（まん中はそのまま、前後にのびちぢみ）。見つもってから
+function staResize(s) {
+  const sg = S.vis && S.vis.segs.get(s.seg);
+  const st = { plat: s.pl, tracks: s.tr, q: null, err: null, quoting: false, seq: 0 };
+  const same = () => st.plat === s.pl && st.tracks === s.tr;
+  S.sel = { kind: 'sta', id: s.id }; S.dirty = true;
+  S.drawTool = sg ? (g, z) => {
+    if (!S.sel || S.sel.kind !== 'sta' || S.sel.id !== s.id) return;   // ほかのものをえらんだら描かない
+    const a0 = s.at - st.plat / 100, a1 = s.at + st.plat / 100;
+    g.lineCap = 'butt'; g.strokeStyle = 'rgba(31,95,191,.9)'; g.lineWidth = Math.max(8, (0.22 * st.tracks + 0.3) * z); pathPart(g, sg, a0, a1); g.stroke();
+    g.strokeStyle = '#fff'; g.lineWidth = Math.max(4, (0.22 * st.tracks + 0.18) * z); pathPart(g, sg, a0, a1); g.stroke(); g.lineCap = 'round';
+  } : null;
+  const quote = async () => {
+    const my = ++st.seq; st.quoting = true; st.err = null; draw();
+    let q = null, err = null;
+    try { q = await call('mp_sta_resize', { p_id: s.id, p_plat: st.plat, p_tracks: st.tracks, p_dry: true }); } catch (e) { err = errJa(e.message); }
+    if (st.seq !== my) return;
+    st.quoting = false; st.q = q; st.err = err; draw(); S.dirty = true;
+  };
+  const changed = () => { st.seq++; st.quoting = false; st.q = null; st.err = null; draw(); S.dirty = true; };
+  const draw = () => {
+    const q = st.q;
+    sheet(`<h4>🚉 <span>${esc(s.n)}</span><span>駅のホーム</span></h4>
+      <div class="mp-row"><span>ホーム</span> <button class="btn" data-pm="-20" style="flex:none;padding:4px 12px">−</button><b style="min-width:4.2em;text-align:center">${st.plat}m</b><button class="btn" data-pm="20" style="flex:none;padding:4px 12px">＋</button>
+        <span class="muted small"><span>20m の車両 ${Math.floor(st.plat / 20)}両まで</span>（<span>いま ${s.pl}m</span>）</span></div>
+      <div class="mp-row">番線 <span class="mp-seg">${[1, 2, 3, 4, 5, 6, 7, 8].map(n => `<button data-t="${n}" class="${st.tracks === n ? 'on' : ''}">${n}</button>`).join('')}</span><span class="muted small">（いま ${s.tr}番線）</span></div>
+      <div class="mp-row">${same() ? '' : q ? `<span class="mp-cost">${q.cost > 0 ? '工事費 ' + X(q.cost) : '工事費なし'}</span><span class="small"><span>維持費 1日 ${X(q.up_now)} → ${X(q.up_day)}</span>${q.lease ? `<span>・ふえる使用料 1日 ${X(q.lease)}</span>` : ''}</span>`
+        : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button><span class="muted small">工事費を出してから、変えられます</span>'}</div>
+      ${!same() && q ? needH(q.need) : ''}
+      <p class="muted small"><span>駅のまん中はそのままで、ホームが前後にのびちぢみします。工事費は、ふえたホームの分だけかかります（短くしても・番線をへらしても、お金はもどりません）。</span>${q && q.routes ? `<span>この駅を通る ${q.routes}系統の時刻を組みなおします。</span>` : ''}</p>
+      <div class="mp-row"><button class="btn main" data-ok ${!same() && q && !hasNeed(q) ? '' : 'disabled'}>この大きさにする</button><button class="btn" data-back>もどる</button></div>`, sh => {
+      needBind(sh, !same() && q && q.need, () => quote());
+      sh.querySelectorAll('[data-pm]').forEach(b => b.onclick = () => { st.plat = clamp(st.plat + Number(b.dataset.pm), 20, 400); changed(); });
+      sh.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { st.tracks = Number(b.dataset.t); changed(); });
+      { const es = sh.querySelector('[data-est]'); if (es) es.onclick = () => quote(); }
+      sh.querySelector('[data-back]').onclick = () => { S.drawTool = null; S.dirty = true; showSta(s); };
+      sh.querySelector('[data-ok]').onclick = async () => {
+        const r = await api('mp_sta_resize', { p_id: s.id, p_plat: st.plat, p_tracks: st.tracks, p_dry: false }, 'ホームを変えました');
+        if (!r) return;
+        s.pl = r.plat; s.tr = r.tracks; S.drawTool = null;
+        refreshBox(s.fx - 6, s.fy - 6, s.fx + 6, s.fy + 6); showSta(s);
+      };
+    });
+  };
+  S.onSheetClose = () => { S.drawTool = null; S.dirty = true; };
+  draw();
 }
 // 駅の発着番線を決める：番線ごとに 下り・上り・両方／本線・待避線（待避線があると、優先番号の低い列車がそこで待避する）
 async function trkEdit(s) {
@@ -2517,7 +2565,7 @@ function openHelp() {
     <p><b>線路・道路</b>：点をおくと、なめらかな線になります。他人の土地や国の土地の上につくると、毎日使用料がかかります（国・府県・市の道路の上はかかりません）。まちの中は工事費が高くなります。</p>
     <p><b>他人の土地</b>：線路・道路・駅・車庫は、他人の筆の上には、持ち主が貸出料を決めているか、申請して許可をもらったときだけつくれます（使用料は1区画・1日。許可のときに持ち主が決めます）。自分の筆は、タップ →「貸出料」で貸し出せます。申請は ≡ →「土地の申請」。前からあるものは、そのまま使えます。</p>
     <p><b>バス停の貸し出し</b>：ほかの人・会社のバス停は、持ち主が貸し出しているものだけ系統に入れられます（1系統・1日の使用料。使いはじめたときの値段のまま）。自分のバス停は、タップ →「貸し出し」。</p>
-    <p><b>駅と車庫</b>：駅はホームの長さ（20m単位）と番線の数を決めます（20mの車両がホームに入る両数まで）。車両は車庫に車籍をおきます。</p>
+    <p><b>駅と車庫</b>：駅はホームの長さ（20m単位）と番線の数を決めます（20mの車両がホームに入る両数まで。あとから駅の「ホーム・番線」で変えられます）。車両は車庫に車籍をおきます。</p>
     <p><b>車両</b>：122系0番台は国鉄103系とほぼ同じ性能（最高100km/h）。両はしに運転台つきの Tc（奇数向き・偶数向き）、まん中に Mp（パンタグラフつき）と M をはさんで編成にします。「編成で注文」で形式を先頭から順にえらんで、まとめて注文できます（編成番号は自分で決める）。車番は 12200-001 のように、形式の番号と3けたの番号です。編成はほかの人・会社にゆずれます（相手が受けとったら移る）。</p>
     <p><b>系統とダイヤ</b>：止まる駅を順にえらんで系統をつくり、列車を入れます。時刻を決めるのは、会社が決めた採時駅だけ（着・発・番線）。ほかの駅は走る時間から自動で決まります。回送・試運転はお客を乗せません。日付をえらぶと、その日だけ走る臨時列車になります（過ぎたら消えます）。</p>
     <p><b>運用</b>：1つの編成が1日に走る列車のならびです。列車は運用に入れ、運用に編成を入れます（編成を入れかえると、その運用の列車ぜんぶが変わる）。「運用を自動で組む」で、編成ごとの運用をつくれます。運用ごとに JSON ファイルに書き出して、バックアップや AI にまかせたあと、読みこめます。</p>
