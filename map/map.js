@@ -2851,7 +2851,7 @@ async function openDia(rid) {
       <div class="tabs-s" style="margin-top:8px">${[['dia', 'ダイヤグラム'], ['tt1', '時刻表（下り）'], ['tt2', '時刻表（上り）'], ['list', '列車']].map(t => `<button data-tab="${t[0]}" class="${tab === t[0] ? 'on' : ''}">${t[1]}</button>`).join('')}</div>
       <div data-pane style="margin-top:8px"></div>
       ${D.mine ? `<div class="mp-row"><button class="btn main" data-add>${D.kind === 'ship' || D.kind === 'air' ? '＋ 便' : '＋ 列車'}</button><button class="btn" data-bulk>＋ まとめて</button><button class="btn" data-auto>運用を自動で組む</button>
-        <button class="btn" data-edit>${D.kind === 'air' ? '空港の順を直す' : D.kind === 'ship' ? '港の順・航路を直す' : '駅の順を直す'}</button><button class="btn" data-kp>種別と優先番号</button><button class="btn" data-pat>停車駅のパターン</button><button class="btn" data-del>系統を消す</button></div>
+        <button class="btn" data-edit>${D.kind === 'air' ? '空港の順を直す' : D.kind === 'ship' ? '港の順・航路を直す' : '駅の順を直す'}</button><button class="btn" data-kp>種別と優先番号</button><button class="btn" data-pat>停車駅のパターン</button><button class="btn" data-fix>重なりを直す${(() => { const n = D.trains.filter(t => /とかさなります/.test(t.warn || '')).length; return n ? `<span>（${n}本）</span>` : ''; })()}</button><button class="btn" data-del>系統を消す</button></div>
         <div class="mp-row"><button class="btn" style="flex:none" data-undo ${D.undo ? '' : 'disabled'}>↶ 取り消す</button>${D.undo ? `<span class="small muted"><span>もどす：</span><span>${esc(D.undo.what)}</span><span>（${D.undo.n}回もどせます）</span></span>` : '<span class="small muted">もどせる操作はありません</span>'}</div>` : ''}`, b => {
       b.querySelectorAll('[data-tab]').forEach(x => x.onclick = () => { tab = x.dataset.tab; draw(); });
       { const un = b.querySelector('[data-undo]'); if (un) un.onclick = async () => {
@@ -2898,10 +2898,47 @@ async function openDia(rid) {
       if (q('[data-edit]')) q('[data-edit]').onclick = () => { m.close(); routeBuild(D.kind, D); };
       if (q('[data-kp]')) q('[data-kp]').onclick = () => kindsEdit(D, load);
       if (q('[data-pat]')) q('[data-pat]').onclick = () => patEdit(D, load);
+      if (q('[data-fix]')) q('[data-fix]').onclick = () => diaFix(D, load);
       if (q('[data-del]')) q('[data-del]').onclick = async () => { if (confirm(T('この系統と、列車をぜんぶ消しますか？')) && await api('mp_route_del', { p_id: D.id, p_as: S.as }, '消しました')) m.close(); };
     });
   };
   load();
+}
+// 重なりを直す（同じ駅・同じ番線に重なる列車）：番線をふりかえる・前の駅で待って時刻をずらす・両方。見つもってから。あとで「↶ 取り消す」でもどせる
+function diaFix(D, reload) {
+  const st = { mode: 'both', q: null, err: null, busy: false, seq: 0 };
+  const MODES = [['trk', '番線をふりかえる'], ['time', '時刻をずらす'], ['both', '両方（ふりかえ → だめならずらす）']];
+  const m = modal(['重なりを直す', ''], null);
+  const quote = async () => {
+    const my = ++st.seq; st.busy = true; st.q = null; st.err = null; draw();
+    let q = null, err = null;
+    try { q = await call('mp_dia_fix', { p_route: D.id, p_mode: st.mode, p_as: S.as, p_dry: true }); } catch (e) { err = errJa(e.message); }
+    if (st.seq !== my) return;
+    st.busy = false; st.q = q; st.err = err; draw();
+  };
+  const res = q => {
+    if (!q.before) return '<p class="small">重なっている列車はありません</p>';
+    if (!q.trk && !q.time) return `<p class="small"><span>重なっている列車 ${q.before}本</span>・<span class="mp-warn">この直し方では直せませんでした</span></p>
+      <p class="muted small">空いている番線がないか、時刻をずらすと走れなくなる列車が出るか、15分より長く待たないと直らないところです。ほかの直し方か、駅の番線をふやすのをためしてください</p>`;
+    return `<div class="mp-kv"><b>重なっている列車</b><span><span>${q.before}本 → ${q.after}本</span></span>
+      ${q.trk ? `<b>番線のふりかえ</b><span>${q.trk}か所</span>` : ''}${q.time ? `<b>時刻のずらし</b><span><span>${q.time}か所</span>（<span>合計 ${mmss(q.delay)}</span>）</span>` : ''}
+      ${q.bad0 || q.bad1 ? `<b>走れない列車</b><span>${q.bad0}本 → ${q.bad1}本</span>` : ''}</div>`;
+  };
+  const draw = () => m.set('重なりを直す', `<p class="small" style="margin-top:0">同じ駅の同じ番線に重なる列車を、この系統の列車をうごかして直します。ゆずるのは優先番号の大きい列車です（ほかの系統の列車と重なるときは、この系統の列車がゆずります）。</p>
+    <div class="mp-row"><span class="mp-seg" style="flex-wrap:wrap">${MODES.map(([k, l]) => `<button data-m="${k}" class="${st.mode === k ? 'on' : ''}">${l}</button>`).join('')}</span></div>
+    <p class="muted small">${st.mode === 'time' ? '前の駅で待って、相手の列車が出てから着くようにします（始発駅なら発車をおくらせます）' : st.mode === 'trk' ? 'その向きで使える、空いている番線にうつします（本線から）' : 'まず空いている番線にうつし、なければ前の駅で待って時刻をずらします'}</p>
+    <div data-res>${st.busy ? '<p class="muted small">見つもり中…（少しかかります）</p>' : st.err ? `<p class="mp-warn small">${esc(st.err)}</p>` : st.q ? res(st.q) : '<div class="mp-row"><button class="btn" data-est>見つもる</button><span class="muted small">どれだけ直るかを出してから、直せます</span></div>'}</div>
+    <div class="mp-row"><button class="btn main" data-ok ${st.q && (st.q.trk || st.q.time) && !st.busy ? '' : 'disabled'}>この直し方で直す</button></div>
+    <p class="muted small">直したあとも、ダイヤの「↶ 取り消す」でもとにもどせます。重なりの数がへらない・走れない列車がふえるところまでは直しません</p>`, b => {
+    b.querySelectorAll('[data-m]').forEach(x => x.onclick = () => { if (st.mode === x.dataset.m) return; st.mode = x.dataset.m; st.seq++; st.busy = false; st.q = null; st.err = null; draw(); });
+    { const e = b.querySelector('[data-est]'); if (e) e.onclick = () => quote(); }
+    b.querySelector('[data-ok]').onclick = async () => {
+      const r = await api('mp_dia_fix', { p_route: D.id, p_mode: st.mode, p_as: S.as, p_dry: false });
+      if (!r) return;
+      toast(T(`重なりを直しました（${r.before}本 → ${r.after}本）`)); m.close(); reload();
+    };
+  });
+  draw();
 }
 // 列車の連結（一覧）：＋連結 A02（なか〜ひがし）。つながないものは、わけも
 function cplL(t, D) {
