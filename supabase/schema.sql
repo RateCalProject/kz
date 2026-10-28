@@ -19127,7 +19127,7 @@ begin
   select * into pa from _mp_party(u, p_as);
   if p_kind not in ('rail', 'bus', 'ship', 'air') then raise exception '系統の種類がちがいます'; end if;
   if n < 2 then raise exception '駅（バス停）を2つ以上えらんでください'; end if;
-  if n > 60 then raise exception '1つの系統は60駅までです'; end if;
+  if n > 157 then raise exception '1つの系統は157駅までです'; end if;   -- 2026-10-28 に60駅から
   if trim(coalesce(p_name, '')) = '' then raise exception '系統の名前をつけてください'; end if;
   for i in 1..n loop
     select * into st from mp_stations where id = p_stops[i];
