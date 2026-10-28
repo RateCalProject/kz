@@ -18824,6 +18824,7 @@ alter table public.mp_trains add column if not exists skip bigint[] not null def
 alter table public.mp_trains add column if not exists bad boolean not null default false;   -- 編成がまにあわないなど、走れない列車
 alter table public.mp_routes add column if not exists runt jsonb not null default '{}'::jsonb;   -- 走る時間のメモ {性能のキー: [秒, …]}
 alter table public.mp_routes add column if not exists catch jsonb;                               -- 駅ごとの利用できる人（毎日見なおす）
+alter table public.mp_routes add column if not exists xwait boolean not null default false;   -- ほかの系統の列車とも待避・続行する（2026-10-28）
 
 -- 線の、はしの点での向き（線の中へ入る向き・ラジアン）
 create or replace function public._mp_end_ang(p int[], at_end int) returns real
@@ -19420,6 +19421,7 @@ declare r mp_routes; n int; km real[]; capd boolean[]; capu boolean[]; tr mp_tra
         ta int[]; td int[]; stp boolean[]; ord int[]; e jsonb; p int; q int; x int; a int; b int; kk int; jj int; it int; si int; j int; need int; conf boolean;
         sdir int[] := '{}'; sday date[] := '{}'; snum text[] := '{}'; sarr int[]; sdep int[]; m int := 0; skips int[]; cap boolean[]; H constant int := 60; key text;
         smin int[] := '{}'; smax int[] := '{}'; tmin int; tmax int;
+        sprio int[] := '{}'; srid bigint[] := '{}'; mypr int; et record; kn int; a0 int; a1 int; edir int; eord int[]; estp boolean[];
 begin
   select * into r from mp_routes where id = rid;
   n := coalesce(array_length(r.stops, 1), 0);
@@ -19437,8 +19439,41 @@ begin
                   from unnest(r.stops) with ordinality z(id, o) join mp_stations s on s.id = z.id order by z.o);
   capu := array(select (select count(*) from jsonb_array_elements(_mp_sta_trk(s)) v where v ->> 'd' in ('up', 'both')) >= 2
                   from unnest(r.stops) with ordinality z(id, o) join mp_stations s on s.id = z.id order by z.o);
+  -- ほかの系統の列車（2026-10-28・xwait のとき）：この系統の駅を2つ以上通る列車を、先に決まった列車として入れる（相手の時刻は変えない）。
+  --   こちらがゆずるのは、優先番号が小さい列車（同じなら、系統の番号が小さいほう）だけ。通るだけの駅（相手の系統にもある駅）は距離でわりふる
+  if coalesce(r.xwait, false) then
+    for et in select t.num, t.day, t.sched, ro.id rid2, ro.stops st2, _mp_kprio(ro.own_u, ro.own_c, t.kind) pr
+                from mp_trains t join mp_routes ro on ro.id = t.route
+               where ro.id <> rid and ro.kind = 'rail' and ro.stops && r.stops and not t.bad and jsonb_array_length(t.sched) > 1 loop
+      ta := array_fill(null::int, array[n]); td := array_fill(null::int, array[n]); estp := array_fill(false, array[n]); kn := 0;
+      for e in select v from jsonb_array_elements(et.sched) v loop
+        p := array_position(r.stops, (e ->> 0)::bigint);
+        if p is null then continue; end if;
+        ta[p] := coalesce((e ->> 1)::int, (e ->> 2)::int); td[p] := coalesce((e ->> 2)::int, (e ->> 1)::int); estp[p] := true; kn := kn + 1;
+      end loop;
+      if kn < 2 then continue; end if;
+      a0 := array_position(estp, true); a1 := n + 1 - array_position(array(select estp[g] from generate_series(n, 1, -1) g), true);
+      edir := case when td[a0] <= ta[a1] then 1 else -1 end;
+      eord := case when edir = -1 then array(select generate_series(n, 1, -1)) else array(select generate_series(1, n)) end;
+      for kk in 1..n loop
+        x := eord[kk];
+        if estp[x] or x < a0 or x > a1 or not (r.stops[x] = any(et.st2)) then continue; end if;
+        p := null; q := null;
+        for jj in reverse kk - 1..1 loop if estp[eord[jj]] then p := eord[jj]; exit; end if; end loop;
+        for jj in kk + 1..n loop if estp[eord[jj]] then q := eord[jj]; exit; end if; end loop;
+        if p is null or q is null then continue; end if;
+        td[x] := td[p] + round((ta[q] - td[p]) * abs(km[x] - km[p]) / greatest(abs(km[q] - km[p]), 0.001))::int;
+        ta[x] := td[x];
+      end loop;
+      m := m + 1; sdir := sdir || edir; sday := sday || et.day; snum := snum || et.num;
+      smin := smin || (select min(v) from unnest(ta || td) v); smax := smax || (select max(v) from unnest(ta || td) v);
+      sprio := sprio || et.pr; srid := srid || et.rid2;
+      if m = 1 then sarr := array[ta]; sdep := array[td]; else sarr := sarr || array[ta]; sdep := sdep || array[td]; end if;
+    end loop;
+  end if;
   for tr in select x2.* from mp_trains x2 where x2.route = rid
              order by (x2.day is not null), x2.day, _mp_kprio(r.own_u, r.own_c, x2.kind), x2.dep, x2.id loop
+    mypr := _mp_kprio(r.own_u, r.own_c, tr.kind);
     ord := case when tr.dir = -1 then array(select generate_series(n, 1, -1)) else array(select generate_series(1, n)) end;
     cap := case when tr.dir = -1 then capu else capd end;
     hld := '{}'::jsonb; waits := '{}'; tai_ := '[]'::jsonb; ws := '{}'; skips := '{}';
@@ -19470,6 +19505,7 @@ begin
         if tr.day is null and sday[si] is not null then continue; end if;
         if tr.day is not null and sday[si] is not null and sday[si] <> tr.day then continue; end if;
         if tmin is null or smax[si] is null or smax[si] + H + 30 < tmin or smin[si] > tmax + H then continue; end if;
+        if sprio[si] is not null and (sprio[si] > mypr or (sprio[si] = mypr and srid[si] > rid)) then continue; end if;   -- ほかの系統の、ゆずらなくてよい列車
         for kk in 1..n - 1 loop
           a := ord[kk]; b := ord[kk + 1];
           if ta[b] is null or td[a] is null or sarr[si][b] is null or sdep[si][a] is null then continue; end if;
@@ -19510,7 +19546,7 @@ begin
     update mp_trains set sched = res -> 'sc', cplx = res -> 'cx', hold = hld, tai = tai_,
            warn = nullif(array_to_string(array(select jsonb_array_elements_text(res -> 'ws')) || ws, ' / '), '') where id = tr.id;
     -- 決まった列車にくわえる
-    m := m + 1; sdir := sdir || tr.dir; sday := sday || tr.day; snum := snum || tr.num; smin := smin || tmin; smax := smax || tmax;
+    m := m + 1; sdir := sdir || tr.dir; sday := sday || tr.day; snum := snum || tr.num; smin := smin || tmin; smax := smax || tmax; sprio := sprio || null::int; srid := srid || rid;
     if m = 1 then sarr := array[ta]; sdep := array[td]; else sarr := sarr || array[ta]; sdep := sdep || array[td]; end if;
   end loop;
 end $$;
@@ -19749,6 +19785,24 @@ begin
   if not p_dry then perform _mp_chg('route', p_route, 'set', null); end if;
   return jsonb_build_object('before', n0, 'after', n1, 'trk', nt, 'time', nd, 'delay', dsum, 'bad0', b0, 'bad1', b1, 'passes', np);
 end $$;
+-- ほかの系統の列車とも待避・続行する（2026-10-28）：系統ごとにオン・オフ。オンにすると、この系統の列車が、
+--   この系統の駅を通るほかの系統（他社の乗り入れもふくむ）の列車のうち、優先番号が小さい（同じなら系統の番号が小さい）列車にゆずる
+create or replace function public.mp_route_xwait(p_route bigint, p_on boolean, p_as text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); pa record; r mp_routes;
+begin
+  perform _mp_ok(u);
+  select * into pa from _mp_party(u, p_as);
+  select * into r from mp_routes where id = p_route and own_u is not distinct from pa.pu and own_c is not distinct from pa.pc for update;
+  if not found then raise exception '系統が見つかりません'; end if;
+  if r.kind <> 'rail' then raise exception 'ほかの系統との待避・続行は、鉄道だけです'; end if;
+  update mp_routes set xwait = coalesce(p_on, false) where id = p_route;
+  perform _mp_resched(p_route);
+  perform _mp_chg('route', p_route, 'set', null);
+  return jsonb_build_object('ok', true, 'xwait', coalesce(p_on, false),
+                            'tai', (select count(*) from mp_trains where route = p_route and jsonb_array_length(tai) > 0),
+                            'ov', (select count(*) from mp_trains where route = p_route and warn ~ 'とかさなります'));
+end $$;
 -- 今日（日本時間）
 create or replace function public._mp_today() returns date
 language sql stable as $$ select (now() at time zone 'Asia/Tokyo')::date $$;
@@ -19937,7 +19991,7 @@ begin
   if not found then raise exception '系統が見つかりません'; end if;
   mine := _mp_mine(u, r.own_u, r.own_c);
   return jsonb_build_object('id', r.id, 'kind', r.kind, 'name', r.name, 'color', r.color, 'mine', mine, 'ok', r.ok, 'why', r.why, 'dwell', r.dwell,
-    'owner', _mp_pname(r.own_u, r.own_c, false), 'timing', to_jsonb(r.timing), 'last', r.last,
+    'owner', _mp_pname(r.own_u, r.own_c, false), 'timing', to_jsonb(r.timing), 'last', r.last, 'xwait', r.xwait,
     'undo', case when mine then (select jsonb_build_object('what', h.what, 'at', h.at, 'n', (select count(*) from mp_dia_hist x where x.route = r.id))
                                    from mp_dia_hist h where h.route = r.id order by h.id desc limit 1) end,
     -- 列車に入れられる運用（持ち主の、同じ種類の運用）
@@ -25506,7 +25560,7 @@ begin
             'mp_admin_airport','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_lvset','mp_admin_place_at','mp_admin_rates','mp_admin_rename','mp_admin_state',
             'mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote','mp_bld_set',
             'mp_boot','mp_car_log','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_gone','mp_cars_list',
-            'mp_cho_get','mp_chunk_get','mp_dep_build','mp_dep_edit','mp_dia','mp_dia_fix','mp_dia_undo','mp_find','mp_form_del',
+            'mp_cho_get','mp_chunk_get','mp_dep_build','mp_dep_edit','mp_dia','mp_dia_fix','mp_dia_undo','mp_route_xwait','mp_find','mp_form_del',
             'mp_form_order','mp_form_set','mp_home_clear','mp_home_get','mp_home_set','mp_jm_cert','mp_jm_file','mp_jm_get',
             'mp_jm_mine','mp_jm_residents','mp_jm_seal','mp_kinds_list','mp_kinds_set','mp_land_buy','mp_land_decide','mp_land_req',
             'mp_land_req_del','mp_land_reqs','mp_ledger_days','mp_ledger_page','mp_makers','mp_op_del','mp_op_export','mp_op_import',
@@ -25548,7 +25602,7 @@ begin
   for f in select p.oid::regprocedure sig from pg_proc p join pg_namespace n on n.oid = p.pronamespace
             where n.nspname = 'public' and p.proname in ('mp_dia_undo', 'mp_form_set', 'mp_kinds_set', 'mp_op_del', 'mp_op_import', 'mp_op_save',
               'mp_route_pat', 'mp_route_save', 'mp_rwy_build', 'mp_rwy_del', 'mp_seg_build', 'mp_seg_del', 'mp_seg_edit', 'mp_seg_join', 'mp_seg_opts',
-              'mp_sta_resize', 'mp_sta_trk_set', 'mp_thru_end', 'mp_train_autoform', 'mp_train_bulk', 'mp_train_del', 'mp_train_save') loop
+              'mp_sta_resize', 'mp_sta_trk_set', 'mp_thru_end', 'mp_route_xwait', 'mp_train_autoform', 'mp_train_bulk', 'mp_train_del', 'mp_train_save') loop
     execute format('alter function %s set statement_timeout = %L', f.sig, '20s');
   end loop;
 end $$;

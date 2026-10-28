@@ -2570,6 +2570,7 @@ function openHelp() {
     <p><b>系統とダイヤ</b>：止まる駅を順にえらんで系統をつくり、列車を入れます。時刻を決めるのは、会社が決めた採時駅だけ（着・発・番線）。ほかの駅は走る時間から自動で決まります。回送・試運転はお客を乗せません。日付をえらぶと、その日だけ走る臨時列車になります（過ぎたら消えます）。</p>
     <p><b>運用</b>：1つの編成が1日に走る列車のならびです。列車は運用に入れ、運用に編成を入れます（編成を入れかえると、その運用の列車ぜんぶが変わる）。「運用を自動で組む」で、編成ごとの運用をつくれます。運用ごとに JSON ファイルに書き出して、バックアップや AI にまかせたあと、読みこめます。</p>
     <p><b>待避と発着番線</b>：種別ごとに優先番号（0〜9。0 がいちばん優先）があります。優先番号の大きい列車は、待避できる駅で、うしろから来る優先番号の小さい列車に先をゆずって待ちます（待避）。追いつく列車は、前の列車のあとを走ります（続行）。時刻は自動でずれます。駅の番線ごとに、下り・上り・両方と、本線・待避線を決められます（駅をタップ →「発着番線」）。種別と優先番号は、系統の画面の「種別と優先番号」で。</p>
+    <p><b>ほかの系統との待避・続行</b>：系統の画面で「ほかの系統と待避・続行」をオンにすると、その系統の列車は、同じ駅を通るほかの系統（乗り入れてくる他社の列車もふくむ）の列車のうち、優先番号の小さい列車（同じなら系統の番号の小さいほう）にもゆずります。相手の時刻は変わりません。同じ駅の同じ番線に重なる列車は、系統の画面の「重なりを直す」で直せます。</p>
     <p><b>停車駅のパターン</b>：系統の画面の「停車駅のパターン」で、種別ごとに止まる駅を決めておけます（例：快速はこの駅だけ）。列車をつくるとき・まとめてつくるとき・種別を変えたときに、そのパターンになります。「この種別の列車にも当てはめる」で、いまある列車もまとめて変えられます。</p>
     <p><b>車歴と譲渡</b>：車両ごとに、新製・転属・譲渡・廃車が車歴にのこります（車両をえらんで「車歴」。廃車した車両は「廃車した車両」）。編成は「ゆずる」、編成に入っていない車両はえらんで「ゆずる」で、ほかの人・会社にゆずれます。まん中にも運転台つきの Tc を入れられます（中間封じ込め）。</p>
     <p><b>乗り入れ（他社直通）</b>：ほかの人・会社の駅か線路をタップ →「乗り入れを申請」。持ち主が許可する（線路使用料：1列車・1km）と、系統にその持ち主の駅を入れて、持ち主の線路を走れます。線路をつなぐこともできます（どちらかの向きに許可があれば）。運賃は系統の持ち主に、走った km ぶんの線路使用料は1時間ごとに線路の持ち主に入ります。同じ駅の番線は、ほかの持ち主の列車ともかさならないように見ます。持ち主が「やめる」と、その線路・駅を使う系統は走れなくなります。≡ →「乗り入れ」で、許可・ことわる・使用料を変える・やめる。</p>
@@ -2851,7 +2852,7 @@ async function openDia(rid) {
       <div class="tabs-s" style="margin-top:8px">${[['dia', 'ダイヤグラム'], ['tt1', '時刻表（下り）'], ['tt2', '時刻表（上り）'], ['list', '列車']].map(t => `<button data-tab="${t[0]}" class="${tab === t[0] ? 'on' : ''}">${t[1]}</button>`).join('')}</div>
       <div data-pane style="margin-top:8px"></div>
       ${D.mine ? `<div class="mp-row"><button class="btn main" data-add>${D.kind === 'ship' || D.kind === 'air' ? '＋ 便' : '＋ 列車'}</button><button class="btn" data-bulk>＋ まとめて</button><button class="btn" data-auto>運用を自動で組む</button>
-        <button class="btn" data-edit>${D.kind === 'air' ? '空港の順を直す' : D.kind === 'ship' ? '港の順・航路を直す' : '駅の順を直す'}</button><button class="btn" data-kp>種別と優先番号</button><button class="btn" data-pat>停車駅のパターン</button><button class="btn" data-fix>重なりを直す${(() => { const n = D.trains.filter(t => /とかさなります/.test(t.warn || '')).length; return n ? `<span>（${n}本）</span>` : ''; })()}</button><button class="btn" data-del>系統を消す</button></div>
+        <button class="btn" data-edit>${D.kind === 'air' ? '空港の順を直す' : D.kind === 'ship' ? '港の順・航路を直す' : '駅の順を直す'}</button><button class="btn" data-kp>種別と優先番号</button><button class="btn" data-pat>停車駅のパターン</button><button class="btn" data-fix>重なりを直す${(() => { const n = D.trains.filter(t => /とかさなります/.test(t.warn || '')).length; return n ? `<span>（${n}本）</span>` : ''; })()}</button>${D.kind === 'rail' ? `<button class="btn" data-xw>${D.xwait ? 'ほかの系統と待避・続行：オン' : 'ほかの系統と待避・続行：オフ'}</button>` : ''}<button class="btn" data-del>系統を消す</button></div>
         <div class="mp-row"><button class="btn" style="flex:none" data-undo ${D.undo ? '' : 'disabled'}>↶ 取り消す</button>${D.undo ? `<span class="small muted"><span>もどす：</span><span>${esc(D.undo.what)}</span><span>（${D.undo.n}回もどせます）</span></span>` : '<span class="small muted">もどせる操作はありません</span>'}</div>` : ''}`, b => {
       b.querySelectorAll('[data-tab]').forEach(x => x.onclick = () => { tab = x.dataset.tab; draw(); });
       { const un = b.querySelector('[data-undo]'); if (un) un.onclick = async () => {
@@ -2899,6 +2900,12 @@ async function openDia(rid) {
       if (q('[data-kp]')) q('[data-kp]').onclick = () => kindsEdit(D, load);
       if (q('[data-pat]')) q('[data-pat]').onclick = () => patEdit(D, load);
       if (q('[data-fix]')) q('[data-fix]').onclick = () => diaFix(D, load);
+      if (q('[data-xw]')) q('[data-xw]').onclick = async () => {
+        const on = !D.xwait;
+        if (on && !confirm(T('ほかの系統（乗り入れてくる他社の列車もふくむ）の、優先番号の小さい列車にもゆずるようにしますか？（この系統の時刻が自動でずれます。相手の時刻は変わりません）'))) return;
+        const r = await api('mp_route_xwait', { p_route: D.id, p_on: on, p_as: S.as }, on ? 'ほかの系統とも待避・続行するようにしました' : 'ほかの系統とは待避・続行しないようにしました');
+        if (r) load();
+      };
       if (q('[data-del]')) q('[data-del]').onclick = async () => { if (confirm(T('この系統と、列車をぜんぶ消しますか？')) && await api('mp_route_del', { p_id: D.id, p_as: S.as }, '消しました')) m.close(); };
     });
   };
