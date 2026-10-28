@@ -16967,7 +16967,8 @@ begin
    where f.id = n.form and f.name = n.num and n.num <> n.nn;
   update public.mp_cars c set num = coalesce(t.nbase, t.label) || '-' || lpad(substring(c.num from '([0-9]+)$'), greatest(length(substring(c.num from '([0-9]+)$')), case when t.num_to >= 1000 then 4 else 3 end), '0')
     from public.mp_types t
-   where t.code = c.type and c.num <> coalesce(t.nbase, t.label) || '-' || lpad(substring(c.num from '([0-9]+)$'), greatest(length(substring(c.num from '([0-9]+)$')), case when t.num_to >= 1000 then 4 else 3 end), '0');
+   where t.code = c.type and c.num <> coalesce(t.nbase, t.label) || '-' || lpad(substring(c.num from '([0-9]+)$'), greatest(length(substring(c.num from '([0-9]+)$')), case when t.num_to >= 1000 then 4 else 3 end), '0')
+     and c.num !~ '^[0-9]+-[0-9]+$';   -- 2026-10-28：12200-032・122-2162 のような車番は、もうこの形（122系を「122-」＋4けたにしても、いまの車両の番号は変えない）
 end $$;
 -- 編成番号は持ち主ごとに1つずつ（同じ名前の編成は「-2」「-3」…をつける）
 do $$
@@ -17272,6 +17273,18 @@ insert into public.mp_types(code, series, label, role, face, num_from, num_to, l
   ('Tc12200e', '122-0', 'Tc12200', 'Tc', '偶数向き', 601, 800, 20, 136, 48, 30.5, 0, 0, true, 100, null, 3.5, true, true, false, false, 45000000, 12000, 365, '制御車（運転台つき・モーターなし）。601〜', 40),
   ('BL10', 'BUS-L', 'BL10', 'Bus', '', 1, 9999, 10.5, 75, 30, 11, 200, 0, true, 80, 4.0, 4.5, false, true, true, false, 25000000, 15000, 300, '大型路線バス（冷暖房つき・運転士の分もふくむ）', 100)
 on conflict (code) do nothing;
+-- 122系の車番を「122-」＋4けたに（2026-10-28。Mp の200両分を使いきったため）。形式ごとに1,999両まで。
+--   いまの車両も改番する（12200-032 → 122-0032・12200-282 → 122-2082・12200-482 → 122-4082・12200-655 → 122-6055）。車歴に「改番」。
+--   番号の数（mp_serials）はそのままなので、これからの車両は続きから
+update public.mp_types t set nbase = '122', num_from = v.f, num_to = v.t, note = regexp_replace(t.note, '。[0-9]+〜$', '。' || lpad(v.f::text, 4, '0') || '〜')
+  from (values ('Tc12200o', 1, 1999), ('Mp12200', 2001, 3999), ('M12200', 4001, 5999), ('Tc12200e', 6001, 7999)) v(c, f, t) where t.code = v.c;
+alter table public.mp_car_hist drop constraint if exists mp_car_hist_k_check;
+alter table public.mp_car_hist add constraint mp_car_hist_k_check check (k in ('new', 'move', 'xfer', 'scrap', 'renum'));   -- renum：改番 {num0}
+with m(code, of, nf) as (values ('Tc12200o', 1, 1), ('Mp12200', 201, 2001), ('M12200', 401, 4001), ('Tc12200e', 601, 6001)),
+     ch as (select c.id, c.num old, '122-' || lpad((substring(c.num from '-([0-9]+)$')::int - m.of + m.nf)::text, 4, '0') nn, c.type, c.own_u, c.own_c
+              from public.mp_cars c join m on m.code = c.type where c.num ~ '^12200-[0-9]+$'),
+     up as (update public.mp_cars c set num = ch.nn from ch where c.id = ch.id returning c.id)
+insert into public.mp_car_hist(car, k, num, type, ou, oc, d) select ch.id, 'renum', ch.nn, ch.type, ch.own_u, ch.own_c, jsonb_build_object('num0', ch.old) from ch;
 
 /* ---------- 設定（管理者が app_settings の mp_rates で変えられる） ---------- */
 create or replace function public._mp_rate(k text) returns numeric
@@ -18473,7 +18486,8 @@ end $$;
 
 /* ---------- 車両（車籍・注文・編成・改造・転属・廃車） ----------
    - 車両は1両ずつ、または編成で注文できる。車籍は車庫（鉄道は車両基地・バスは営業所）に置く。車庫の「入る両数」まで
-   - 車番は 形式の番号＋「-」＋3けたの番号（持ち主ごとに num_from から順に）。例：12200-001（Tc）・12200-201（Mp）・12200-401（M）・12200-601（Tc）。バスは BL10-0001
+   - 車番は 形式の番号＋「-」＋3けたの番号（持ち主ごとに num_from から順に）。例：12200-001（Tc）・12200-201（Mp）・12200-401（M）・12200-601（Tc）。
+     2026-10-28 から122系は「122-」＋4けた：122-0001（Tc 奇数向き）・122-2001（Mp）・122-4001（M）・122-6001（Tc 偶数向き）。いまの車両も改番したバスは BL10-0001
    - 編成には編成番号（持ち主ごとに1つずつ。自分で決める）
    - 電車の編成：両はしは運転台つきの車（奇数向きと偶数向きを1両ずつ）。まん中にも運転台つきの車を入れられる（中間封じ込め：その運転台は使わない）。
      パンタグラフつきの電動車（Mp）が1両以上。M は Mp と組（M の数 ≦ Mp の数）
