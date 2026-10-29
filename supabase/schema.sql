@@ -19128,6 +19128,10 @@ begin
   if p_kind not in ('rail', 'bus', 'ship', 'air') then raise exception '系統の種類がちがいます'; end if;
   if n < 2 then raise exception '駅（バス停）を2つ以上えらんでください'; end if;
   if n > 157 then raise exception '1つの系統は157駅までです'; end if;   -- 2026-10-28 に60駅から
+  -- 環状線（2026-10-29）：同じ駅を2回入れられるのは、さいごに はじめの駅にもどるときだけ
+  if (select count(*) - count(distinct x) from unnest(p_stops) x) > (case when n >= 3 and p_stops[1] = p_stops[n] then 1 else 0 end) then
+    raise exception '同じ駅を2回入れられるのは、環状線にするとき（さいごに、はじめの駅にもどる）だけです';
+  end if;
   if trim(coalesce(p_name, '')) = '' then raise exception '系統の名前をつけてください'; end if;
   for i in 1..n loop
     select * into st from mp_stations where id = p_stops[i];
@@ -19266,6 +19270,17 @@ language sql stable set search_path = public as $$
                   case k when '特急' then 1 when '急行' then 2 when '快速' then 3 when '普通' then 5 when '各停' then 5 when '回送' then 8 when '試運転' then 8 else 5 end)
 $$;
 
+-- 環状線（2026-10-29）：はじめの駅を系統の最後にもう一度入れると環状線（A → … → A）。同じ駅が2回あるのは、この形だけ。
+--   駅が系統の何番目か（_mp_rpos）・走る順の何番目か（_mp_kpos）。走る順で最初に出てくるほう（last = false。始発・つなぐ駅）か、最後のほう（last = true。終着・切りはなす駅）
+create or replace function public._mp_rpos(stops bigint[], dir int, sid bigint, last boolean default false) returns int
+language sql immutable set search_path = public as $$
+  select (case when (dir = -1) = last then min(z.o) else max(z.o) end)::int from unnest(stops) with ordinality z(s, o) where z.s = sid
+$$;
+create or replace function public._mp_kpos(stops bigint[], dir int, sid bigint, last boolean default false) returns int
+language sql immutable set search_path = public as $$
+  select case when dir = -1 then coalesce(array_length(stops, 1), 0) - _mp_rpos(stops, dir, sid, last) + 1 else _mp_rpos(stops, dir, sid, last) end
+$$;
+
 -- 列車の時刻を計算する（sched・warn・cplx）
 --   連結（cpl）：つなぐ運用の編成を、つなぐ駅（a。null は始発）から切りはなす駅（b。null は終点）まで足す。
 --   走る性能は、いちばん弱い編成にあわせる（加速・減速・最高速度）。ホームの長さ・両数（16両まで）は駅ごとに足して見る
@@ -19285,7 +19300,7 @@ begin
   ord := case when tr.dir = 1 then array(select generate_series(1, n)) else array(select generate_series(n, 1, -1)) end;
   dw := r.dwell;
   -- 走る区間（途中始発・途中止まり。2026-10-28）：走る順の k0 番目から k1 番目まで
-  k0 := coalesce(array_position(ord, array_position(r.stops, tr.sa)), 1); k1 := coalesce(array_position(ord, array_position(r.stops, tr.sb)), n);
+  k0 := coalesce(_mp_kpos(r.stops, tr.dir, tr.sa, false), 1); k1 := coalesce(_mp_kpos(r.stops, tr.dir, tr.sb, true), n);   -- 環状線：始発は走る順で前の、終着はうしろのほう
   if k0 >= k1 then ws := ws || '始発駅と終着駅の順がちがいます（系統の端から端まで走ります）'::text; k0 := 1; k1 := n; end if;
   if perf is null then ws := ws || '編成が決まっていません（走りません）'::text; end if;
   if perf is not null and r.kind = 'rail' and (perf ->> 'elec')::boolean and exists (select 1 from jsonb_array_elements(r.legs) with ordinality l(v, lo)
@@ -19308,8 +19323,8 @@ begin
       cp := _mp_form_perf(o.form);
       if cp is null then cw := format('運用 %s に編成が入っていません', o.num); end if;
     end if;
-    ka := case when e ->> 'a' is null then k0 else array_position(ord, array_position(r.stops, (e ->> 'a')::bigint)) end;
-    kb := case when e ->> 'b' is null then k1 else array_position(ord, array_position(r.stops, (e ->> 'b')::bigint)) end;
+    ka := case when e ->> 'a' is null then k0 else _mp_kpos(r.stops, tr.dir, (e ->> 'a')::bigint, false) end;
+    kb := case when e ->> 'b' is null then k1 else _mp_kpos(r.stops, tr.dir, (e ->> 'b')::bigint, true) end;
     if cw is null then
       if ka is null or kb is null then cw := '連結する駅がこの系統にありません';
       elsif ka < k0 or kb > k1 then cw := '連結する駅が、この列車の走る区間にありません';
@@ -19381,8 +19396,8 @@ begin
   end loop;
   -- 連結の時刻（つなぐ駅を出る時刻・切りはなす駅に着く時刻）
   cx := coalesce((select jsonb_agg((c.v - 'cp' - 'ka' - 'kb') || jsonb_build_object(
-          'ta', (select (s.v ->> 2)::int from jsonb_array_elements(sc) s(v) where (s.v ->> 0)::bigint = (c.v ->> 'a')::bigint limit 1),
-          'tb', (select (s.v ->> 1)::int from jsonb_array_elements(sc) s(v) where (s.v ->> 0)::bigint = (c.v ->> 'b')::bigint limit 1)) order by c.o)
+          'ta', (select (s.v ->> 2)::int from jsonb_array_elements(sc) with ordinality s(v, so) where (s.v ->> 0)::bigint = (c.v ->> 'a')::bigint order by s.so limit 1),
+          'tb', (select (s.v ->> 1)::int from jsonb_array_elements(sc) with ordinality s(v, so) where (s.v ->> 0)::bigint = (c.v ->> 'b')::bigint order by s.so desc limit 1)) order by c.o)
         from jsonb_array_elements(cx) with ordinality c(v, o)), '[]'::jsonb);
   return jsonb_build_object('sc', sc, 'ws', to_jsonb(ws), 'cx', cx);
 end $$;
@@ -19443,7 +19458,7 @@ declare r mp_routes; n int; km real[]; capd boolean[]; capu boolean[]; tr mp_tra
         ta int[]; td int[]; stp boolean[]; ord int[]; e jsonb; p int; q int; x int; a int; b int; kk int; jj int; it int; si int; j int; need int; conf boolean;
         sdir int[] := '{}'; sday date[] := '{}'; snum text[] := '{}'; sarr int[]; sdep int[]; m int := 0; skips int[]; cap boolean[]; H constant int := 60; key text;
         smin int[] := '{}'; smax int[] := '{}'; tmin int; tmax int;
-        sprio int[] := '{}'; srid bigint[] := '{}'; mypr int; et record; kn int; a0 int; a1 int; edir int; eord int[]; estp boolean[]; k0d int; k1d int;
+        sprio int[] := '{}'; srid bigint[] := '{}'; mypr int; et record; kn int; a0 int; a1 int; edir int; eord int[]; estp boolean[]; k0d int; k1d int; kc int;
 begin
   select * into r from mp_routes where id = rid;
   n := coalesce(array_length(r.stops, 1), 0);
@@ -19471,6 +19486,7 @@ begin
       for e in select v from jsonb_array_elements(et.sched) v loop
         p := array_position(r.stops, (e ->> 0)::bigint);
         if p is null then continue; end if;
+        if estp[p] then p := _mp_rpos(r.stops, 1, (e ->> 0)::bigint, true); if estp[p] then continue; end if; end if;   -- 環状線：同じ駅の2回目
         ta[p] := coalesce((e ->> 1)::int, (e ->> 2)::int); td[p] := coalesce((e ->> 2)::int, (e ->> 1)::int); estp[p] := true; kn := kn + 1;
       end loop;
       if kn < 2 then continue; end if;
@@ -19502,10 +19518,11 @@ begin
     for it in 1..16 loop
       res := _mp_train_times(tr, hld, waits);
       -- 駅ごとの時刻（系統の駅の順）：止まる駅は着・発、通過する駅は前後の止まる駅から距離でわりふる
-      ta := array_fill(null::int, array[n]); td := array_fill(null::int, array[n]); stp := array_fill(false, array[n]);
+      ta := array_fill(null::int, array[n]); td := array_fill(null::int, array[n]); stp := array_fill(false, array[n]); kc := 1;
       for e in select v from jsonb_array_elements(res -> 'sc') v loop
-        p := array_position(r.stops, (e ->> 0)::bigint);
-        if p is null then continue; end if;
+        while kc <= n and r.stops[ord[kc]] <> (e ->> 0)::bigint loop kc := kc + 1; end loop;   -- 走る順に見る（環状線：同じ駅は前のほうから）
+        if kc > n then continue; end if;
+        p := ord[kc]; kc := kc + 1;
         ta[p] := coalesce((e ->> 1)::int, (e ->> 2)::int); td[p] := coalesce((e ->> 2)::int, (e ->> 1)::int); stp[p] := true;
       end loop;
       for kk in 1..n loop
@@ -19621,7 +19638,9 @@ begin
         from x x1 join x x2 on x2.sa = x1.sb and x2.sb = x1.sa
        where x1.dir = 1 and x2.dir = -1
          and x1.d < x2.a and x2.d < x1.a and (x1.day is null or x2.day is null or x1.day = x2.day)
-         and exists (select 1 from generate_series(array_position(r.stops, x1.sa), array_position(r.stops, x1.sb) - 1) k where (r.legs -> (k - 1) ->> 's')::boolean)),
+         and exists (select 1 from generate_series(array_position(r.stops, x1.sa),
+                       (select min(z.o) from unnest(r.stops) with ordinality z(s, o) where z.s = x1.sb and z.o > array_position(r.stops, x1.sa))::int - 1) k
+                      where (r.legs -> (k - 1) ->> 's')::boolean)),
     g as (
       select z.id, string_agg(z.m, ' / ') m from (
         select c.i1 id, format('単線の区間（%s〜%s）で %s とすれちがえません', (select s.name from mp_stations s where s.id = c.sa), (select s.name from mp_stations s where s.id = c.sb), c.n2) m from c
@@ -19894,8 +19913,8 @@ begin
       if co.id is null then raise exception '連結する運用が見つかりません'; end if;
       if co.id = oid_ then raise exception '連結する運用が、この列車の運用と同じです'; end if;
       if cpl_ @> jsonb_build_array(jsonb_build_object('op', co.id)) then raise exception '同じ運用を2回は連結できません'; end if;
-      ia := case when e ->> 'a' is not null then array_position(r.stops, (e ->> 'a')::bigint) end;
-      ib := case when e ->> 'b' is not null then array_position(r.stops, (e ->> 'b')::bigint) end;
+      ia := case when e ->> 'a' is not null then _mp_rpos(r.stops, case when p_dir = -1 then -1 else 1 end, (e ->> 'a')::bigint, false) end;   -- 環状線：つなぐ駅は前・切りはなす駅はうしろのほう
+      ib := case when e ->> 'b' is not null then _mp_rpos(r.stops, case when p_dir = -1 then -1 else 1 end, (e ->> 'b')::bigint, true) end;
       if (e ->> 'a' is not null and ia is null) or (e ->> 'b' is not null and ib is null) then raise exception '連結する駅がこの系統にありません'; end if;
       ka := case when ia is null then 1 when p_dir = -1 then ns - ia + 1 else ia end;
       kb := case when ib is null then ns when p_dir = -1 then ns - ib + 1 else ib end;
@@ -19906,8 +19925,8 @@ begin
   -- 途中始発・途中止まり（2026-10-28）：走る順で 始発駅 → 終着駅。系統の端なら null
   ns := array_length(r.stops, 1);
   if (p_sa is not null and not (p_sa = any(r.stops))) or (p_sb is not null and not (p_sb = any(r.stops))) then raise exception '始発駅・終着駅がこの系統にありません'; end if;
-  k0 := case when p_sa is null then 1 when p_dir = -1 then ns - array_position(r.stops, p_sa) + 1 else array_position(r.stops, p_sa) end;
-  k1 := case when p_sb is null then ns when p_dir = -1 then ns - array_position(r.stops, p_sb) + 1 else array_position(r.stops, p_sb) end;
+  k0 := coalesce(_mp_kpos(r.stops, case when p_dir = -1 then -1 else 1 end, p_sa, false), 1);   -- 環状線：はじめの駅は、始発なら前・終着ならうしろ（どちらも系統の端）
+  k1 := coalesce(_mp_kpos(r.stops, case when p_dir = -1 then -1 else 1 end, p_sb, true), ns);
   if k0 >= k1 then raise exception '始発駅は、終着駅より前（走る順）にしてください'; end if;
   sa_ := case when k0 > 1 then p_sa end; sb_ := case when k1 < ns then p_sb end;
   -- 指定は採時駅だけ
@@ -19938,17 +19957,17 @@ end $$;
 --   止まる最初の駅が始発、最後の駅が終着（系統の端なら null）。あいだの止まらない駅が通過。止まる駅が2つより少なければ ok = false
 create or replace function public._mp_pat_fit(stops bigint[], dir int, sa bigint, sb bigint, pat bigint[], out ok boolean, out nsa bigint, out nsb bigint, out nskip bigint[])
 language plpgsql immutable set search_path = public as $$
-declare n int := coalesce(array_length(stops, 1), 0); ord bigint[]; k0 int; k1 int; on_ bigint[];
+declare n int := coalesce(array_length(stops, 1), 0); ord bigint[]; k0 int; k1 int; ks int[];
 begin
   ok := false;
   if n < 2 then return; end if;
   ord := case when dir = -1 then array(select stops[i] from generate_series(n, 1, -1) i) else stops end;
-  k0 := coalesce(array_position(ord, sa), 1); k1 := coalesce(array_position(ord, sb), n);
+  k0 := coalesce(_mp_kpos(stops, dir, sa, false), 1); k1 := coalesce(_mp_kpos(stops, dir, sb, true), n);   -- 環状線：始発は前・終着はうしろのほう
   if k0 >= k1 then k0 := 1; k1 := n; end if;
-  on_ := array(select ord[i] from generate_series(k0, k1) i where not (ord[i] = any(coalesce(pat, '{}'::bigint[]))) order by i);
-  if coalesce(array_length(on_, 1), 0) < 2 then return; end if;
+  ks := array(select i from generate_series(k0, k1) i where not (ord[i] = any(coalesce(pat, '{}'::bigint[]))) order by i);   -- 止まる駅（走る順の何番目か）
+  if coalesce(array_length(ks, 1), 0) < 2 then return; end if;
   ok := true;
-  k0 := array_position(ord, on_[1]); k1 := array_position(ord, on_[array_length(on_, 1)]);
+  k0 := ks[1]; k1 := ks[array_length(ks, 1)];
   nsa := case when k0 > 1 then ord[k0] end; nsb := case when k1 < n then ord[k1] end;
   nskip := array(select ord[i] from generate_series(k0 + 1, k1 - 1) i where ord[i] = any(coalesce(pat, '{}'::bigint[])) order by i);
 end $$;
@@ -19977,8 +19996,8 @@ begin
   -- 途中始発・途中止まり（2026-10-28）
   ns := array_length(r.stops, 1);
   if (p_sa is not null and not (p_sa = any(r.stops))) or (p_sb is not null and not (p_sb = any(r.stops))) then raise exception '始発駅・終着駅がこの系統にありません'; end if;
-  k0 := case when p_sa is null then 1 when p_dir = -1 then ns - array_position(r.stops, p_sa) + 1 else array_position(r.stops, p_sa) end;
-  k1 := case when p_sb is null then ns when p_dir = -1 then ns - array_position(r.stops, p_sb) + 1 else array_position(r.stops, p_sb) end;
+  k0 := coalesce(_mp_kpos(r.stops, case when p_dir = -1 then -1 else 1 end, p_sa, false), 1);   -- 環状線：はじめの駅は、始発なら前・終着ならうしろ（どちらも系統の端）
+  k1 := coalesce(_mp_kpos(r.stops, case when p_dir = -1 then -1 else 1 end, p_sb, true), ns);
   if k0 >= k1 then raise exception '始発駅は、終着駅より前（走る順）にしてください'; end if;
   sa_ := case when k0 > 1 then p_sa end; sb_ := case when k1 < ns then p_sb end;
   -- 停車駅のパターン（t54h）：走る区間のうち、止まる最初の駅が始発・最後の駅が終着（2026-10-29）
@@ -20192,7 +20211,7 @@ begin
       -- 走る区間（途中始発・途中止まり。2026-10-28）：系統のうちの何割を走るか（cf）。本数・定員はその割合で数える
       cf := 1; ia := 1; ib := coalesce(array_length(r.stops, 1), 1);
       if tr.sa is not null or tr.sb is not null then
-        ia := array_position(r.stops, (tr.sched -> 0 ->> 0)::bigint); ib := array_position(r.stops, (tr.sched -> (jsonb_array_length(tr.sched) - 1) ->> 0)::bigint);
+        ia := _mp_rpos(r.stops, tr.dir, (tr.sched -> 0 ->> 0)::bigint, false); ib := _mp_rpos(r.stops, tr.dir, (tr.sched -> (jsonb_array_length(tr.sched) - 1) ->> 0)::bigint, true);   -- 環状線
         if ia is not null and ib is not null and km > 0 then
           cf := greatest(0.05, least(1, coalesce((select sum((l.v ->> 'd')::real) from jsonb_array_elements(r.legs) with ordinality l(v, lo) where l.lo >= least(ia, ib) and l.lo < greatest(ia, ib)), 0) / 1000 / km));
         else ia := 1; ib := coalesce(array_length(r.stops, 1), 1); end if;
@@ -23122,8 +23141,7 @@ begin
         if sb_ is null then errs := errs || format('運用 %s の %s本目（%s）：駅「%s」はこの系統にありません', lbl, j + 1, nm, tj ->> '終着駅'); continue; end if;
       end if;
       ns := array_length(r.stops, 1);
-      ka := case when sa_ is null then 1 when dir_ = -1 then ns - array_position(r.stops, sa_) + 1 else array_position(r.stops, sa_) end;
-      kb := case when sb_ is null then ns when dir_ = -1 then ns - array_position(r.stops, sb_) + 1 else array_position(r.stops, sb_) end;
+      ka := coalesce(_mp_kpos(r.stops, dir_, sa_, false), 1); kb := coalesce(_mp_kpos(r.stops, dir_, sb_, true), ns);   -- 環状線（2026-10-29）
       if ka >= kb then errs := errs || format('運用 %s の %s本目（%s）：始発駅は、終着駅より前（走る順）にしてください', lbl, j + 1, nm); continue; end if;
       sa_ := case when ka > 1 then sa_ end; sb_ := case when kb < ns then sb_ end;
       -- 採時駅の指定
@@ -23176,8 +23194,7 @@ begin
             cb := _mp_route_sta(r.stops, ce ->> '切りはなす駅');
             if cb is null then errs := errs || format('運用 %s の %s本目（%s）：駅「%s」はこの系統にありません', lbl, j + 1, nm, ce ->> '切りはなす駅'); x := 'null'; exit; end if;
           end if;
-          ka := case when ca is null then 1 when dir_ = -1 then ns - array_position(r.stops, ca) + 1 else array_position(r.stops, ca) end;
-          kb := case when cb is null then ns when dir_ = -1 then ns - array_position(r.stops, cb) + 1 else array_position(r.stops, cb) end;
+          ka := coalesce(_mp_kpos(r.stops, dir_, ca, false), 1); kb := coalesce(_mp_kpos(r.stops, dir_, cb, true), ns);
           if ka >= kb then errs := errs || format('運用 %s の %s本目（%s）：連結する駅は、切りはなす駅より前にしてください', lbl, j + 1, nm); x := 'null'; exit; end if;
           cl := cl || jsonb_build_array(jsonb_build_object('num', cnum, 'a', case when ka > 1 then ca end, 'b', case when kb < ns then cb end));
         end loop;
@@ -25767,14 +25784,14 @@ begin
             '_mp_ferry_use','_mp_fmtn','_mp_fmtq','_mp_form_drop','_mp_form_kind','_mp_form_perf','_mp_form_routes','_mp_form_rule',
             '_mp_form_rule_t','_mp_form_runs','_mp_g','_mp_geom_ok','_mp_goods','_mp_gov_build','_mp_gov_term','_mp_hm_parse',
             '_mp_hms','_mp_home_text','_mp_hourf','_mp_isl_at','_mp_jm_area','_mp_jm_json','_mp_jm_no','_mp_jm_office',
-            '_mp_kanji_num','_mp_kinds_of','_mp_kprio','_mp_land_fee','_mp_land_need','_mp_land_std','_mp_land_stop','_mp_lease_del',
+            '_mp_kanji_num','_mp_kinds_of','_mp_kpos','_mp_kprio','_mp_land_fee','_mp_land_need','_mp_land_std','_mp_land_stop','_mp_lease_del',
             '_mp_lease_quote','_mp_lease_set','_mp_leg_from','_mp_leg_time','_mp_len','_mp_line_cells','_mp_lock','_mp_lvmap_build',
             '_mp_maker_order','_mp_mcval','_mp_mine','_mp_minr','_mp_mvalue','_mp_notice_admins','_mp_npc_name','_mp_occ_set',
             '_mp_ok','_mp_okey','_mp_op_of_form','_mp_parcel_label','_mp_parcel_vals','_mp_parcel_vals_day','_mp_party','_mp_pat_fit','_mp_pay',
             '_mp_pick_trk','_mp_pkey','_mp_placeholder_names','_mp_pname','_mp_port_busy','_mp_port_isl','_mp_port_open','_mp_port_owner_trg',
             '_mp_port_pier','_mp_pref_road','_mp_pref_type','_mp_proj','_mp_pub_cells','_mp_pub_of','_mp_qnorm','_mp_rail_path',
             '_mp_rate','_mp_renet','_mp_resample','_mp_resched','_mp_rev','_mp_road_mul','_mp_road_v','_mp_road_w',
-            '_mp_role_kind','_mp_room','_mp_route_catch','_mp_route_sta','_mp_route_uses','_mp_routes_fix','_mp_run','_mp_run_check',
+            '_mp_role_kind','_mp_room','_mp_rpos','_mp_route_catch','_mp_route_sta','_mp_route_uses','_mp_routes_fix','_mp_run','_mp_run_check',
             '_mp_run_mark','_mp_rwy_cells','_mp_rwy_check','_mp_rwy_gone','_mp_rwy_name','_mp_rwy_names','_mp_same','_mp_sc_info',
             '_mp_sc_init','_mp_sc_kinds','_mp_sc_op','_mp_sc_owes','_mp_sc_recipes','_mp_sc_riders','_mp_sc_school_calc','_mp_sc_tick_hour',
             '_mp_sc_touch','_mp_sea','_mp_sea_leg','_mp_sea_seg','_mp_seg_blocked','_mp_seg_cells_arr','_mp_seg_chain','_mp_seg_join2',

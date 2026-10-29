@@ -2568,6 +2568,7 @@ function openHelp() {
     <p><b>駅と車庫</b>：駅はホームの長さ（20m単位）と番線の数を決めます（20mの車両がホームに入る両数まで。あとから駅の「ホーム・番線」で変えられます）。車両は車庫に車籍をおきます。</p>
     <p><b>車両</b>：122系0番台は国鉄103系とほぼ同じ性能（最高100km/h）。両はしに運転台つきの Tc（奇数向き・偶数向き）、まん中に Mp（パンタグラフつき）と M をはさんで編成にします。「編成で注文」で形式を先頭から順にえらんで、まとめて注文できます（編成番号は自分で決める）。車番は 122-0001 のように、形式の番号と4けたの番号です（Tc 奇数向き 0001〜・Mp 2001〜・M 4001〜・Tc 偶数向き 6001〜）。編成はほかの人・会社にゆずれます（相手が受けとったら移る）。</p>
     <p><b>系統とダイヤ</b>：止まる駅を順にえらんで系統をつくり、列車を入れます。時刻を決めるのは、会社が決めた採時駅だけ（着・発・番線）。ほかの駅は走る時間から自動で決まります。回送・試運転はお客を乗せません。日付をえらぶと、その日だけ走る臨時列車になります（過ぎたら消えます）。</p>
+    <p><b>環状線</b>：系統をつくるとき、さいごに、はじめの駅をもう一度えらぶと環状線になります。下りはその順に一周、上りは逆まわりで、はじめの駅にもどります。止まる駅で始発・終着を外すと、途中から・途中までも走れます。</p>
     <p><b>運用</b>：1つの編成が1日に走る列車のならびです。列車は運用に入れ、運用に編成を入れます（編成を入れかえると、その運用の列車ぜんぶが変わる）。「運用を自動で組む」で、編成ごとの運用をつくれます。運用ごとに JSON ファイルに書き出して、バックアップや AI にまかせたあと、読みこめます。</p>
     <p><b>待避と発着番線</b>：種別ごとに優先番号（0〜9。0 がいちばん優先）があります。優先番号の大きい列車は、待避できる駅で、うしろから来る優先番号の小さい列車に先をゆずって待ちます（待避）。追いつく列車は、前の列車のあとを走ります（続行）。時刻は自動でずれます。駅の番線ごとに、下り・上り・両方と、本線・待避線を決められます（駅をタップ →「発着番線」）。種別と優先番号は、系統の画面の「種別と優先番号」で。</p>
     <p><b>ほかの系統との待避・続行</b>：系統の画面で「ほかの系統と待避・続行」をオンにすると、その系統の列車は、同じ駅を通るほかの系統（乗り入れてくる他社の列車もふくむ）の列車のうち、優先番号の小さい列車（同じなら系統の番号の小さいほう）にもゆずります。相手の時刻は変わりません。同じ駅の同じ番線に重なる列車は、系統の画面の「重なりを直す」で直せます。</p>
@@ -2763,6 +2764,9 @@ function routeBuild(kind, edit) {
     if (kind === 'rail' && h.s.o !== myKey() && !thruHosts().has(h.s.o)) return toast('自分（この名義）の駅と、乗り入れの許可がある駅だけです（ほかの人・会社の駅は、タップ →「乗り入れを申請」）');
     if (kind === 'bus' && !h.s.mine && h.s.ln == null && !(edit && edit.stops.some(x => x.id === h.s.id))) return toast('このバス停は、持ち主が貸し出していません');
     if (st.stops.length && st.stops[st.stops.length - 1].id === h.s.id) return;
+    // 環状線（2026-10-29）：はじめの駅をもう一度えらぶと環状線。同じ駅を2回入れられるのは、このときだけ
+    if (st.stops.length >= 3 && st.stops[0].id === st.stops[st.stops.length - 1].id) return toast('環状線は、はじめの駅にもどったところでおわりです（駅を足すときは、さいごの駅を × でとってから）');
+    if (st.stops.some(x => x.id === h.s.id) && !(st.stops.length >= 2 && h.s.id === st.stops[0].id)) return toast('同じ駅を2回入れられるのは、環状線にするとき（さいごに、はじめの駅にもどる）だけです');
     st.stops.push({ id: h.s.id, n: h.s.n, x: h.s.fx, y: h.s.fy, ln: h.s.mine ? null : h.s.ln, o: h.s.o }); if (st.stops.length === 1 || st.stops.length === 2) st.timing.add(h.s.id); draw();
   };
   S.drawTool = (g, z) => {
@@ -2777,6 +2781,7 @@ function routeBuild(kind, edit) {
           <label class="small" style="margin-left:auto"><input type="checkbox" data-tm="${s.id}" ${st.timing.has(s.id) ? 'checked' : ''}> 採時駅</label><button class="btn" data-rm="${i}">×</button></div>`).join('') || '<p class="muted small">まだ駅がありません</p>'}</div>
       <div class="mp-row">停車時間 <input class="mp-inp mp-num" type="number" min="10" max="300" value="${st.dwell}" data-dw> 秒</div>
       <div class="mp-row"><button class="btn" data-cancel>キャンセル</button><button class="btn main" data-ok ${st.stops.length >= 2 ? '' : 'disabled'}>${edit ? 'この順に直す' : '系統をつくる'}（${esc(asName())}）</button></div>
+      ${st.stops.length >= 3 && st.stops[0].id === st.stops[st.stops.length - 1].id ? '<p class="small"><b>環状線</b>：はじめの駅にもどります。下りはこの順に一周、上りは逆まわりです</p>' : st.stops.length >= 2 ? '<p class="muted small">さいごに、はじめの駅をもう一度えらぶと、環状線になります</p>' : ''}
       <p class="muted small">採時駅：時刻表に時刻を決めて出す駅（はじめ・終わりなど）。ほかの駅は、走る時間から自動で決まります</p>`, s => {
       s.querySelector('[data-nm]').onchange = e => { st.name = e.target.value; };
       s.querySelector('[data-col]').oninput = e => { st.color = e.target.value; S.dirty = true; };
@@ -2789,7 +2794,7 @@ function routeBuild(kind, edit) {
         let paths = null;
         if (kind === 'bus') { paths = await busPaths(st.stops.map(x => x.id)); if (!paths) return; }
         const r = await api('mp_route_save', { p_id: edit ? edit.id : null, p_kind: kind, p_name: st.name, p_color: st.color, p_stops: st.stops.map(x => x.id),
-          p_timing: st.stops.map(x => x.id).filter(id => st.timing.has(id)), p_dwell: st.dwell, p_paths: paths, p_as: S.as });
+          p_timing: [...new Set(st.stops.map(x => x.id).filter(id => st.timing.has(id)))], p_dwell: st.dwell, p_paths: paths, p_as: S.as });
         if (r) { toast(T(edit ? '直しました' : '系統をつくりました。列車を入れましょう') + (r.stopfee ? SEP() + T(`（バス停の使用料 1日 ${fmt(r.stopfee)} X）`) : '')); setTool('look'); openDia(r.id); }
       };
     });
@@ -2855,7 +2860,6 @@ async function openDia(rid) {
   const load = async () => { D = await api('mp_dia', { p_route: rid }); if (!D) return m.close(); S.routeHi = { legs: D.legs, color: D.color, kind: D.kind }; S.dirty = true; draw(); };
   m.onclose = () => { S.routeHi = null; S.dirty = true; };
   const draw = () => {
-    const idx = new Map(D.stops.map((s, i) => [s.id, i]));
     m.set(D.name, `<p class="small" style="margin:0"><b style="color:${esc(D.color)}">■</b> <span>${KIND_L[D.kind] || D.kind}</span>・<span>${esc(D.owner)}</span>・<span>${D.km[D.km.length - 1]}km・停車 ${D.dwell}秒</span>
         ${D.ok ? '' : `<br><span class="mp-warn"><span>走れません：</span> <span>${esc(D.why || '')}</span></span>`}${D.last && D.last.revenue != null ? (D.last.load != null && D.last.speed != null ? `<br>さいきんの1時間：${fmt(D.last.served || 0)}人・${X(D.last.revenue || 0)}・${D.last.tph}本・混み具合${D.last.load}%・平均${D.last.speed}km/h`
           : `<br><span>さいきんの1時間：${fmt(D.last.served || 0)}人・${X(D.last.revenue || 0)}・${D.last.tph || 0}本</span>`) : ''}</p>
@@ -2871,7 +2875,7 @@ async function openDia(rid) {
       }; }
       const pane = b.querySelector('[data-pane]');
       if (tab === 'dia') diaCanvas(pane, D, t => trainEdit(D, t, load));
-      if (tab === 'tt1' || tab === 'tt2') pane.innerHTML = ttTable(D, tab === 'tt1' ? 1 : -1, idx);
+      if (tab === 'tt1' || tab === 'tt2') pane.innerHTML = ttTable(D, tab === 'tt1' ? 1 : -1);
       if (tab === 'list') {
         // 形式（編成の系列・両数）・種別・向きで絞りこむ。発車時刻・列車番号・種別・形式で並べかえる
         const serOf = t => t.fser ? t.fser + '|' + t.fn : '';   // 形式（系列）と両数
@@ -3023,24 +3027,31 @@ function patEdit(D, reload, kind0) {
   };
   draw();
 }
-function ttTable(D, dir, idx) {
-  const ord = dir === 1 ? D.stops : D.stops.slice().reverse();
+function ttTable(D, dir) {
+  const n = D.stops.length, ordI = Array.from({ length: n }, (_, i) => dir === 1 ? i : n - 1 - i);   // 系統の何番目の駅か（走る順。環状線は、はじめの駅が2回）
   const trs = D.trains.filter(t => t.dir === dir).sort((a, b) => a.dep - b.dep);
   if (!trs.length) return '<p class="muted small">列車はまだありません</p>';
-  const cell = (t, s) => {
-    const e = (t.sched || []).find(x => x[0] === s.id);
-    if (!e) { const i0 = t.sched.length ? idx.get(t.sched[0][0]) : -1, i1 = t.sched.length ? idx.get(t.sched[t.sched.length - 1][0]) : -1, i = idx.get(s.id);
-      return (Math.min(i0, i1) < i && i < Math.max(i0, i1)) ? '<span class="muted">レ</span>' : '<span class="muted">‥</span>'; }
+  const pm = new Map(trs.map(t => { const si = schedIdx(D, t), m = new Map(), ok = si.filter(x => x >= 0); (t.sched || []).forEach((e, j) => { if (si[j] >= 0) m.set(si[j], e); });
+    return [t.id, { m, lo: Math.min(...ok), hi: Math.max(...ok) }]; }));
+  const cell = (t, ri) => {
+    const P = pm.get(t.id), e = P.m.get(ri), s = D.stops[ri];
+    if (!e) return (P.lo < ri && ri < P.hi) ? '<span class="muted">レ</span>' : '<span class="muted">‥</span>';
     const tm = D.timing.includes(s.id);
     return `<span style="${tm ? 'font-weight:800' : ''}">${e[2] != null ? hms(e[2]) : hms(e[1]) + '着'}</span>${tm && e[3] ? `<br><small class="muted">${e[3]}番</small>` : ''}`;
   };
   return `<div class="mp-scroll"><table class="mp-tt"><tr><th></th>${trs.map(t => `<th style="color:${KIND_COL[t.kind] || '#222'}">${esc(t.num)}<br>${esc(kindL(t.kind))}${t.day ? `<br><small>${mdL(t.day)}</small>` : ''}</th>`).join('')}</tr>
-    ${ord.map(s => `<tr><td class="st">${esc(s.name)}${D.timing.includes(s.id) ? ' ◎' : ''}</td>${trs.map(t => `<td>${cell(t, s)}</td>`).join('')}</tr>`).join('')}
+    ${ordI.map(ri => `<tr><td class="st">${esc(D.stops[ri].name)}${D.timing.includes(D.stops[ri].id) ? ' ◎' : ''}</td>${trs.map(t => `<td>${cell(t, ri)}</td>`).join('')}</tr>`).join('')}
     <tr><td class="st">運用</td>${trs.map(t => `<td><small>${t.onum ? esc(t.onum) : '—'}</small></td>`).join('')}</tr>
     <tr><td class="st">編成</td>${trs.map(t => `<td><small>${t.fname ? esc(t.fname) : '—'}</small></td>`).join('')}</tr>
     <tr><td class="st">両数</td>${trs.map(t => `<td><small>${t.fn ? t.fn + (t.cplx || []).filter(c => c.ok).map(c => '+' + c.n).join('') : '—'}</small></td>`).join('')}</tr></table></div><p class="muted small">◎ 採時駅（太字の時刻）・レ 通過・日付があるのは臨時列車（その日だけ）</p>`;
 }
 // ダイヤグラム（よこ：時刻・たて：駅）。ドラッグでよこに動く・ピンチでよこに拡大
+// 環状線（2026-10-29）：列車の時刻（sched）の駅が、系統の何番目の駅か（走る順に見る。はじめの駅が最後にもう一度ある系統でも）
+function schedIdx(D, t) {
+  const n = D.stops.length, at = c => t.dir === -1 ? n - 1 - c : c, out = []; let c = 0;
+  for (const e of t.sched || []) { while (c < n && D.stops[at(c)].id !== e[0]) c++; out.push(c < n ? at(c) : -1); c++; }
+  return out;
+}
 function diaCanvas(pane, D, onTrain) {
   pane.innerHTML = `<canvas class="mp-dia"></canvas><p class="muted small" style="margin:4px 0 0">よこにドラッグで動かす・2本指でよこに拡大・列車の線をタップで編集（一点鎖線は臨時列車・灰色の点線は編成なし・太い線は連結している区間）</p>`;
   const cv = pane.querySelector('canvas'), dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -3062,17 +3073,17 @@ function diaCanvas(pane, D, onTrain) {
     D.stops.forEach((s, i) => { const y = Y(km[i]); g.strokeStyle = D.timing.includes(s.id) ? '#888' : '#ddd'; g.beginPath(); g.moveTo(ML, y); g.lineTo(W - 8, y); g.stroke();
       g.fillStyle = '#222'; g.textAlign = 'right'; g.fillText(s.name, ML - 6, y); });
     // 列車
-    const idx = new Map(D.stops.map((s, i) => [s.id, i]));
     D.paths = [];
     for (const t of D.trains) {
-      const pts = [], at = new Map();   // 駅 → [着の点, 発の点]
-      for (const e of t.sched || []) { const k = km[idx.get(e[0])], i0 = pts.length; if (e[1] != null) pts.push([X(e[1]), Y(k)]); if (e[2] != null) pts.push([X(e[2]), Y(k)]); at.set(e[0], [i0, pts.length - 1]); }
+      const pts = [], at = new Map(), atB = new Map(), si = schedIdx(D, t);   // 駅 → [着の点, 発の点]（環状線：つなぐ駅は前・切りはなす駅はうしろのほう）
+      (t.sched || []).forEach((e, j) => { if (si[j] < 0) return; const k = km[si[j]], i0 = pts.length; if (e[1] != null) pts.push([X(e[1]), Y(k)]); if (e[2] != null) pts.push([X(e[2]), Y(k)]);
+        if (!at.has(e[0])) at.set(e[0], [i0, pts.length - 1]); atB.set(e[0], [i0, pts.length - 1]); });
       if (pts.length < 2) continue;
       g.strokeStyle = t.form && !t.warn ? (KIND_COL[t.kind] || '#222') : t.form ? '#d23' : '#aaa'; g.lineWidth = 1.4; g.setLineDash(!t.form ? [4, 3] : t.day ? [9, 3, 2, 3] : []);
       g.beginPath(); pts.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.stroke(); g.setLineDash([]);
       // 連結している区間は太く
       for (const c of t.cplx || []) {
-        const a = c.ok && at.get(c.a), b = c.ok && at.get(c.b); if (!a || !b) continue;
+        const a = c.ok && at.get(c.a), b = c.ok && atB.get(c.b); if (!a || !b) continue;
         g.lineWidth = 3.4; g.beginPath(); for (let i = a[1]; i <= b[0]; i++) { if (i === a[1]) g.moveTo(pts[i][0], pts[i][1]); else g.lineTo(pts[i][0], pts[i][1]); } g.stroke();
       }
       D.paths.push([t, pts]);
@@ -3109,20 +3120,22 @@ async function trainEdit(D, t, reload) {
   if (!D.mine) return;
   const cl = await api('mp_cars_list', { p_as: S.as }); if (!cl) return;
   const forms = cl.forms.filter(f => fKind(f) === D.kind);
-  const tm = D.stops.filter(s => D.timing.includes(s.id));
+  const tm = D.stops.filter((s, i) => D.timing.includes(s.id) && D.stops.findIndex(x => x.id === s.id) === i);   // 採時駅（環状線のはじめの駅は1つ）
   const ops = (D.ops || []).slice();
   const st = t ? { ...t, tt: { ...(t.tt || {}) }, skip: new Set(t.skip || []), opv: t.op ? 'o:' + t.op : '', day: t.day || null, cpl: (t.cpl || []).map(c => ({ op: c.op, a: c.a, b: c.b })), sa: t.sa || null, sb: t.sb || null }
                : { dir: 1, num: '', kind: D.kind === 'rail' ? '普通' : '', dep: 7 * 3600, opv: '', day: null, tt: {}, skip: new Set(), cpl: [], sa: null, sb: null };
-  // 止まる駅（2026-10-29）：st.on = 止まる駅。止まる最初の駅が始発、最後の駅が終着（その外は走らない・あいだの止まらない駅は通過）
+  // 止まる駅（2026-10-29）：st.on = 止まる駅（系統の何番目の駅か。環状線は、はじめの駅が最後にもう一度ある）。止まる最初の駅が始発、最後の駅が終着（その外は走らない・あいだの止まらない駅は通過）
   const ordOf = d => d === 1 ? D.stops : D.stops.slice().reverse();
-  const ends = o => { const a = o.findIndex(s => st.on.has(s.id)), z = o.length - 1 - o.slice().reverse().findIndex(s => st.on.has(s.id)); return [a, z]; };
-  { const o = ordOf(st.dir); let a = st.sa ? o.findIndex(s => s.id === st.sa) : 0, z = st.sb ? o.findIndex(s => s.id === st.sb) : o.length - 1;
+  const RI = s => D.stops.indexOf(s);
+  const lastIdx = (o, f) => { for (let i = o.length - 1; i >= 0; i--) if (f(o[i])) return i; return -1; };
+  const ends = o => [o.findIndex(s => st.on.has(RI(s))), lastIdx(o, s => st.on.has(RI(s)))];
+  { const o = ordOf(st.dir); let a = st.sa ? o.findIndex(s => s.id === st.sa) : 0, z = st.sb ? lastIdx(o, s => s.id === st.sb) : o.length - 1;   // 環状線：終着は走る順でうしろのほう
     if (a < 0) a = 0; if (z < 0 || z <= a) z = o.length - 1;
-    st.on = new Set(o.filter((s, i) => i === a || i === z || (i > a && i < z && !st.skip.has(s.id))).map(s => s.id)); }
+    st.on = new Set(o.filter((s, i) => i === a || i === z || (i > a && i < z && !st.skip.has(s.id))).map(RI)); }
   const m = modal([t ? `列車 ${t.num}` : '列車をつくる', '']);
   const bus = D.kind !== 'rail', ship = D.kind === 'ship' || D.kind === 'air', air = D.kind === 'air';   // バス・船・飛行機は連結しない
   // 停車駅のパターンを当てはめる：いまの走る区間のうち、パターンで通過でない駅に止まる
-  const applyPat = P => { const o = ordOf(st.dir), [a, z] = ends(o), nw = new Set(o.slice(a, z + 1).filter(s => !P.has(s.id)).map(s => s.id));
+  const applyPat = P => { const o = ordOf(st.dir), [a, z] = ends(o), nw = new Set(o.slice(a, z + 1).filter(s => !P.has(s.id)).map(RI));
     if (nw.size < 2) { toast(T('パターンの止まる駅が、走る区間に2つ以上ありません')); return; } st.on = nw; };
   const opL = o => esc(o.fname ? T(ship ? `${o.num}（${o.fname}）` : bus ? `${o.num}（${o.fname}・${o.n}台）` : `${o.num}（${o.fname}・${o.n}両）`) : T(`${o.num}（編成なし）`));
   const fL = f => esc(T(ship ? `${f.name}（${f.perf.len}m）` : bus ? `${f.name}（${f.perf.n}台・${f.perf.len}m）` : `${f.name}（${f.perf.n}両・${f.perf.len}m）`));
@@ -3165,8 +3178,8 @@ async function trainEdit(D, t, reload) {
           発車<input class="mp-inp mp-num" data-d="${s.id}" value="${v.d != null ? hms(v.d) : ''}" placeholder="—">
           <select class="mp-inp" style="width:auto" data-tr="${s.id}"><option value="">${esc(T('番線（いつもの）'))}</option>${Array.from({ length: s.tracks }, (_, i) => `<option ${v.t === i + 1 ? 'selected' : ''} value="${i + 1}">${esc(s.trk && s.trk[i] ? trkL(s.trk[i], i) : T(`${i + 1}番線`))}</option>`).join('')}</select></div>`; }).join('')}
       <p class="muted small">空のところは、走る時間から自動で決まります（いちばん早い時刻）。遅くするときだけ入れます</p>
-      ${ord.length > 2 ? `<h4 style="margin:10px 0 4px">${air ? '寄る空港' : ship ? '寄る港' : '止まる駅'}${(D.pats || {})[st.kind] ? ` <button class="btn" style="padding:2px 8px;font-size:12px" data-pat1>${esc(T(`「${kindL(st.kind)}」のパターンにする`))}</button>` : ''}</h4><div class="mp-cars">${ord.map((s, i) => { const on = st.on.has(s.id), out = i < ia || i > ib;
-          return `<span class="mp-car ${on ? 'on' : ''}" data-sk="${s.id}"${out ? ' style="opacity:.5"' : ''}>${esc(s.name)}<span class="n">${on ? (i === ia ? (ship ? '出発' : '始発') : i === ib ? (ship ? '到着' : '終着') : '停車') : out ? (ship ? '寄らない' : '走らない') : '通過'}</span></span>`; }).join('')}</div>
+      ${ord.length > 2 ? `<h4 style="margin:10px 0 4px">${air ? '寄る空港' : ship ? '寄る港' : '止まる駅'}${(D.pats || {})[st.kind] ? ` <button class="btn" style="padding:2px 8px;font-size:12px" data-pat1>${esc(T(`「${kindL(st.kind)}」のパターンにする`))}</button>` : ''}</h4><div class="mp-cars">${ord.map((s, i) => { const on = st.on.has(RI(s)), out = i < ia || i > ib;
+          return `<span class="mp-car ${on ? 'on' : ''}" data-sk="${RI(s)}"${out ? ' style="opacity:.5"' : ''}>${esc(s.name)}<span class="n">${on ? (i === ia ? (ship ? '出発' : '始発') : i === ib ? (ship ? '到着' : '終着') : '停車') : out ? (ship ? '寄らない' : '走らない') : '通過'}</span></span>`; }).join('')}</div>
         <p class="muted small" style="margin:4px 0 0">${ship ? 'タップして、寄る・寄らないを切りかえます。寄る最初のところが出発、最後のところが到着になります' : '駅をタップして、停車・通過を切りかえます。停車する最初の駅が始発、最後の駅が終着になります'}</p>` : ''}
       ${t && t.warn ? `<p class="mp-warn">${warnH(t.warn)}</p>` : ''}
       <p class="muted small">回送・試運転はお客を乗せません</p>
@@ -3184,9 +3197,9 @@ async function trainEdit(D, t, reload) {
       // 走る区間をえらびなおす：外になった駅は走らない、新しく入った駅は停車
       if (q('[data-sa]')) {
         q('[data-sa]').onchange = e => { keep(); const v = Number(e.target.value) || null, na = v ? ord.findIndex(s => s.id === v) : 0;
-          ord.forEach((s, i) => { if (i < na) st.on.delete(s.id); else if (i < ia) st.on.add(s.id); }); st.on.add(ord[na].id); draw(); };
-        q('[data-sb]').onchange = e => { keep(); const v = Number(e.target.value) || null, nb = v ? ord.findIndex(s => s.id === v) : ord.length - 1;
-          ord.forEach((s, i) => { if (i > nb) st.on.delete(s.id); else if (i > ib) st.on.add(s.id); }); st.on.add(ord[nb].id); draw(); };
+          ord.forEach((s, i) => { if (i < na) st.on.delete(RI(s)); else if (i < ia) st.on.add(RI(s)); }); st.on.add(RI(ord[na])); draw(); };
+        q('[data-sb]').onchange = e => { keep(); const v = Number(e.target.value) || null, nb = v ? lastIdx(ord, s => s.id === v) : ord.length - 1;
+          ord.forEach((s, i) => { if (i > nb) st.on.delete(RI(s)); else if (i > ib) st.on.add(RI(s)); }); st.on.add(RI(ord[nb])); draw(); };
       }
       q('[data-kind]').onchange = () => { keep(); const p = (D.pats || {})[st.kind]; if (p) applyPat(new Set(p)); draw(); };   // 停車駅のパターン
       if (q('[data-pat1]')) q('[data-pat1]').onclick = () => { keep(); applyPat(new Set((D.pats || {})[st.kind] || [])); draw(); };
@@ -3199,8 +3212,8 @@ async function trainEdit(D, t, reload) {
         } else st.opv = e.target.value;
         draw();
       };
-      b.querySelectorAll('[data-sk]').forEach(x => x.onclick = () => { keep(); const id = Number(x.dataset.sk);
-        if (st.on.has(id)) { if (st.on.size <= 2) return toast(ship ? '寄るところは2つ以上いります' : '止まる駅は2つ以上いります'); st.on.delete(id); } else st.on.add(id); draw(); });
+      b.querySelectorAll('[data-sk]').forEach(x => x.onclick = () => { keep(); const ri = Number(x.dataset.sk);   // 系統の何番目の駅か
+        if (st.on.has(ri)) { if (st.on.size <= 2) return toast(ship ? '寄るところは2つ以上いります' : '止まる駅は2つ以上いります'); st.on.delete(ri); } else st.on.add(ri); draw(); });
       if (q('[data-cadd]')) q('[data-cadd]').onclick = () => { keep(); st.cpl.push({ op: null, a: null, b: null }); draw(); };
       b.querySelectorAll('[data-cx]').forEach(x => x.onclick = () => { keep(); st.cpl.splice(Number(x.dataset.cx), 1); draw(); });
       if (q('[data-del]')) q('[data-del]').onclick = async () => { if (await api('mp_train_del', { p_ids: [t.id], p_as: S.as }, '消しました')) { m.close(); reload(); } };
@@ -3208,7 +3221,7 @@ async function trainEdit(D, t, reload) {
         keep(); if (!st.num.trim()) return toast('列車番号を入れてください');
         const pop = st.opv.startsWith('o:') ? Number(st.opv.slice(2)) : null, pf = st.opv.startsWith('f:') ? Number(st.opv.slice(2)) : null;
         // 止まる最初の駅が始発・最後の駅が終着（系統の端なら null）。あいだの止まらない駅が通過
-        const sa = ia > 0 ? ord[ia].id : null, sb = ib < ord.length - 1 ? ord[ib].id : null, skip = ord.slice(ia + 1, ib).filter(s => !st.on.has(s.id)).map(s => s.id);
+        const sa = ia > 0 ? ord[ia].id : null, sb = ib < ord.length - 1 ? ord[ib].id : null, skip = ord.slice(ia + 1, ib).filter(s => !st.on.has(RI(s))).map(s => s.id);
         const r = await api('mp_train_save', { p_id: t ? t.id : null, p_route: D.id, p_dir: st.dir, p_num: st.num, p_kind: st.kind, p_dep: st.dep, p_form: pf, p_tt: st.tt, p_skip: skip, p_as: S.as,
           p_op: pop, p_day: st.day || null, p_cpl: bus ? [] : st.cpl.filter(c => c.op).map(c => ({ op: c.op, a: c.a || null, b: c.b || null })), p_sa: sa, p_sb: sb });
         if (r) { toast(r.warn || (r.cplx || []).some(c => !c.ok) ? '保存しました（注意があります）' : '保存しました'); m.close(); reload(); }
