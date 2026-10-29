@@ -2946,7 +2946,7 @@ function loadScript(src){ return new Promise((res,rej)=>{ const s=document.creat
 async function srvInit(){
   if(SRV.sb) return true;
   if(!SRV.loading) SRV.loading=(async()=>{
-    if(!window.AILINAX_CONFIG) await loadScript('../config.js');
+    if(!window.AILINAX_CONFIG) await loadScript('../config.js?v=20261029');
     if(!window.supabase) await loadScript('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2');
     const C=window.AILINAX_CONFIG;
     if(!C||!C.url||!window.supabase) throw new Error('config');
