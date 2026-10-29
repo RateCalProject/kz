@@ -3322,6 +3322,32 @@ function saveJson(name, obj) {
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
 const ymd = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+// 運用のバックアップ（2026-10-29）：いまの運用をのこす（新しい10こまで）・その時にもどす・消す
+async function opsBackup(reload) {
+  const m = modal(['運用のバックアップ', '<p class="muted small">読みこんでいます…</p>']);
+  let L = await api('mp_op_backup_list', { p_as: S.as }); if (!L) return m.close();
+  const draw = () => m.set('運用のバックアップ', `<p class="small" style="margin-top:0">${esc(asName())}</p>
+    <div class="mp-row"><button class="btn main" data-bsave>いまの運用をバックアップする</button></div>
+    <div class="mp-list">${L.map(x => `<div class="mp-item"><b>${jdt(x.at)}</b>${x.label ? ` <span>${esc(x.label)}</span>` : ''}<br><small class="muted"><span>運用 ${x.nops}つ・列車 ${x.ntr}本</span></small>
+        <div class="mp-row small" style="margin-bottom:0"><button class="btn" data-bres="${x.id}">この時にもどす</button><button class="btn" data-bdel="${x.id}">消す</button></div></div>`).join('') || '<p class="muted small">まだありません</p>'}</div>
+    <p class="muted small">新しい10こまでのこります（古いものから消えます）。もどすと、運用（運用番号・編成・メモ）と、列車の運用・連結が、そのときにもどります。バックアップのあとにつくった運用は消えます。列車の時刻は変わりません。もどす前の運用も、自動でバックアップします</p>`, b => {
+      b.querySelector('[data-bsave]').onclick = async () => {
+        const lbl = prompt(T('バックアップの名前（なくてもよい）'), ''); if (lbl === null) return;
+        const r = await api('mp_op_backup_save', { p_label: lbl, p_as: S.as }, 'バックアップしました'); if (r) { L = r.list; draw(); }
+      };
+      b.querySelectorAll('[data-bres]').forEach(x => x.onclick = async () => {
+        const it = L.find(y => y.id === Number(x.dataset.bres)); if (!it) return;
+        if (!confirm(T(`${jdt(it.at)} の運用にもどしますか？（運用 ${it.nops}つ・列車 ${it.ntr}本。いまの運用は、自動でバックアップします）`))) return;
+        const r = await api('mp_op_backup_restore', { p_id: it.id, p_as: S.as });
+        if (r) { toast(T(`もどしました（運用 ${r.ops}つ・列車 ${r.trains}本）`)); L = r.list; draw(); if (reload) reload(); }
+      });
+      b.querySelectorAll('[data-bdel]').forEach(x => x.onclick = async () => {
+        if (!confirm(T('このバックアップを消しますか？'))) return;
+        const r = await api('mp_op_backup_del', { p_id: Number(x.dataset.bdel), p_as: S.as }, '消しました'); if (r) { L = r; draw(); }
+      });
+    });
+  draw();
+}
 async function openOps() {
   const m = modal(['運用', '<p class="muted small">読みこんでいます…</p>'], null, 'mp-wide');
   let D = null, kind = 'rail', flt = 'all';
@@ -3344,7 +3370,7 @@ async function openOps() {
           <div class="mp-row small" style="align-items:center"><span>編成</span><select class="mp-inp" style="flex:1 1 140px" data-of="${o.id}"><option value="">（入れない）</option>${forms.map(f => `<option value="${f.id}" ${o.form === f.id ? 'selected' : ''} ${f.ok ? '' : 'disabled'}>${esc(T(f.op && f.op !== o.num ? (kind === 'ship' || kind === 'air' ? `${f.name}・いまは運用 ${f.op}` : kind === 'bus' ? `${f.name}（${f.perf.n}台）・いまは運用 ${f.op}` : `${f.name}（${f.perf.n}両）・いまは運用 ${f.op}`) : kind === 'ship' || kind === 'air' ? f.name : kind === 'bus' ? `${f.name}（${f.perf.n}台）` : `${f.name}（${f.perf.n}両）`))}</option>`).join('')}</select>
             <button class="btn" data-oren="${o.id}">運用番号</button><button class="btn" data-oex="${o.id}">書き出す</button><button class="btn" data-odel="${o.id}">消す</button></div></div>`).join('')
         || (LK.length ? '<p class="muted small">この絞りこみにあう運用はありません</p>' : '<p class="muted small">まだありません。「＋ 運用」でつくるか、系統の「運用を自動で組む」でつくれます</p>')}</div>
-      <div class="mp-row"><button class="btn main" data-onew>＋ 運用</button><button class="btn" data-oall>ぜんぶ書き出す</button><button class="btn" data-oimp>ファイルを読みこむ</button><button class="btn" data-odall ${LK.length ? '' : 'disabled'}>ぜんぶ消す</button>
+      <div class="mp-row"><button class="btn main" data-onew>＋ 運用</button><button class="btn" data-oall>ぜんぶ書き出す</button><button class="btn" data-oimp>ファイルを読みこむ</button><button class="btn" data-obk>バックアップ</button><button class="btn" data-odall ${LK.length ? '' : 'disabled'}>ぜんぶ消す</button>
         <input type="file" accept=".json,application/json" data-ofile hidden></div>
       <p class="muted small">列車は運用に入れ、運用に編成を入れます。編成を変えると、その運用の列車ぜんぶの編成が変わります（ほかの運用に入っていた編成は、そちらからはずれます）。運用ファイル（JSON）を読みこむと、ファイルにある運用の列車が、ファイルの列車に入れかわります${D.free ? `<span>（運用に入っていない列車 ${D.free}本）</span>` : ''}</p>`, b => {
       b.querySelectorAll('[data-kind]').forEach(x => x.onclick = () => { kind = x.dataset.kind; draw(); });
@@ -3379,10 +3405,12 @@ async function openOps() {
         if (await api('mp_op_save', { p_id: null, p_num: nm, p_form: null, p_note: '', p_kind: kind, p_as: S.as }, '運用をつくりました')) load();
       };
       b.querySelector('[data-oall]').onclick = () => exportOps(null, `運用_ぜんぶ_${ymd()}.json`);
+      b.querySelector('[data-obk]').onclick = () => opsBackup(load);
       // ぜんぶ消す（2026-10-29）：いまのタブ（鉄道・バス・船・飛行機）の運用をぜんぶ。列車は消えずに、運用なし・編成なしになる。500ずつ
       b.querySelector('[data-odall]').onclick = async () => {
         const all = LK.map(o => o.id), kl = { rail: '鉄道', bus: 'バス', ship: '船', air: '飛行機' }[kind] || '';
-        if (!all.length || !confirm(T(`${kl}の運用 ${all.length}つ を、ぜんぶ消しますか？（列車は消えずに、運用なし・編成なしになります。消した運用はもどせないので、先に「ぜんぶ書き出す」でファイルにのこしておくと安心です）`))) return;
+        if (!all.length || !confirm(T(`${kl}の運用 ${all.length}つ を、ぜんぶ消しますか？（列車は消えずに、運用なし・編成なしになります。消す前の運用は自動でバックアップするので、「バックアップ」からもどせます）`))) return;
+        if (!await api('mp_op_backup_save', { p_label: 'ぜんぶ消す前（自動）', p_as: S.as })) return;   // 消す前に、自動でバックアップ
         let n = 0;
         for (let i = 0; i < all.length; i += 500) { const r = await api('mp_ops_bulk', { p_ids: all.slice(i, i + 500), p_act: 'del', p_arg: {}, p_as: S.as }); if (!r) break; n += r.n; }
         if (n) toast(T(`運用を ${n}つ 消しました`)); sel.clear(); load();

@@ -23006,6 +23006,139 @@ begin
   return jsonb_build_object('ok', true, 'n', n, 'trains', nt, 'routes', coalesce(array_length(rids, 1), 0));
 end $$;
 
+/* ---------- 運用のバックアップ（2026-10-29） ----------
+   名義ごとに、運用（運用番号・種類・メモ・編成）と、列車の運用・連結（列車の id ごと）をのこす（新しい10こまで）。
+   もどすと：バックアップにない運用は消し（その列車は運用なし・編成なし）、バックアップの運用をつくる・直して、いまもある列車の運用・連結をそのときにもどす。
+   列車の時刻（ダイヤ）は変えない。もどす前の運用も、自動でバックアップする */
+create table if not exists public.mp_op_backups (
+  id    bigserial primary key,
+  own_u uuid references public.profiles(id) on delete cascade,
+  own_c int references public.companies(id) on delete cascade,
+  at    timestamptz not null default now(),
+  label text not null default '',
+  nops  int not null default 0,      -- 運用の数
+  ntr   int not null default 0,      -- 運用に入っている列車の数
+  data  jsonb not null               -- {ops: [{num, kind, note, form}], trains: [{id, op（運用番号）, cpl: [{op（運用番号）, a, b}]}]}
+);
+create index if not exists mp_op_backups_own on public.mp_op_backups (coalesce(own_u::text, ''), coalesce(own_c, 0), at desc);
+alter table public.mp_op_backups enable row level security;   -- 読み書きは下の関数だけ
+revoke all on public.mp_op_backups from anon, authenticated;
+create or replace function public._mp_op_snapshot(pu uuid, pc int) returns jsonb
+language sql stable set search_path = public as $$
+  select jsonb_build_object(
+    'ops', coalesce((select jsonb_agg(jsonb_build_object('num', o.num, 'kind', o.kind, 'note', o.note, 'form', o.form) order by o.num)
+                       from mp_ops o where o.own_u is not distinct from pu and o.own_c is not distinct from pc), '[]'::jsonb),
+    'trains', coalesce((select jsonb_agg(jsonb_build_object('id', t.id, 'op', (select o.num from mp_ops o where o.id = t.op),
+                         'cpl', (select coalesce(jsonb_agg(jsonb_build_object('op', (select o2.num from mp_ops o2 where o2.id = (c.v ->> 'op')::bigint), 'a', c.v -> 'a', 'b', c.v -> 'b') order by c.o), '[]'::jsonb)
+                                   from jsonb_array_elements(coalesce(t.cpl, '[]'::jsonb)) with ordinality c(v, o))) order by t.id)
+                          from mp_trains t join mp_routes r on r.id = t.route
+                         where r.own_u is not distinct from pu and r.own_c is not distinct from pc and (t.op is not null or jsonb_array_length(coalesce(t.cpl, '[]'::jsonb)) > 0)), '[]'::jsonb))
+$$;
+-- バックアップの一覧（新しい順）
+create or replace function public.mp_op_backup_list(p_as text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); pa record;
+begin
+  perform _mp_ok(u);
+  select * into pa from _mp_party(u, p_as);
+  return coalesce((select jsonb_agg(jsonb_build_object('id', b.id, 'at', b.at, 'label', b.label, 'nops', b.nops, 'ntr', b.ntr) order by b.at desc, b.id desc)
+                     from mp_op_backups b where b.own_u is not distinct from pa.pu and b.own_c is not distinct from pa.pc), '[]'::jsonb);
+end $$;
+-- いまの運用をバックアップする（新しい10こまで。p_keep は消さないバックアップ）
+create or replace function public._mp_op_backup_put(pu uuid, pc int, lbl text, p_keep bigint default null) returns bigint
+language plpgsql set search_path = public as $$
+declare d jsonb := _mp_op_snapshot(pu, pc); bid bigint;
+begin
+  insert into mp_op_backups(own_u, own_c, label, nops, ntr, data)
+  values (pu, pc, left(trim(coalesce(lbl, '')), 40), jsonb_array_length(d -> 'ops'), (select count(*) from jsonb_array_elements(d -> 'trains') x where x ->> 'op' is not null), d)
+  returning id into bid;
+  delete from mp_op_backups b where b.own_u is not distinct from pu and b.own_c is not distinct from pc and b.id is distinct from p_keep
+     and b.id not in (select x.id from mp_op_backups x where x.own_u is not distinct from pu and x.own_c is not distinct from pc order by x.at desc, x.id desc limit 10);
+  return bid;
+end $$;
+create or replace function public.mp_op_backup_save(p_label text, p_as text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); pa record; bid bigint;
+begin
+  perform _mp_ok(u);
+  select * into pa from _mp_party(u, p_as);
+  if pa.gv then raise exception '運用は人か会社のものです'; end if;
+  perform _mp_lock(pa.pu, pa.pc);
+  bid := _mp_op_backup_put(pa.pu, pa.pc, p_label);
+  return jsonb_build_object('id', bid, 'list', mp_op_backup_list(p_as));
+end $$;
+create or replace function public.mp_op_backup_del(p_id bigint, p_as text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); pa record;
+begin
+  perform _mp_ok(u);
+  select * into pa from _mp_party(u, p_as);
+  delete from mp_op_backups b where b.id = p_id and b.own_u is not distinct from pa.pu and b.own_c is not distinct from pa.pc;
+  if not found then raise exception 'バックアップが見つかりません'; end if;
+  return mp_op_backup_list(p_as);
+end $$;
+-- バックアップのときの運用にもどす
+create or replace function public.mp_op_backup_restore(p_id bigint, p_as text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); pa record; b mp_op_backups; d jsonb; e jsonb; o mp_ops; fid bigint; rids bigint[]; rr bigint; keep text[]; nt int; ndel int;
+begin
+  perform _mp_ok(u);
+  select * into pa from _mp_party(u, p_as);
+  if pa.gv then raise exception '運用は人か会社のものです'; end if;
+  select * into b from mp_op_backups x where x.id = p_id and x.own_u is not distinct from pa.pu and x.own_c is not distinct from pa.pc;
+  if not found then raise exception 'バックアップが見つかりません'; end if;
+  perform _mp_lock(pa.pu, pa.pc);
+  d := b.data;
+  perform _mp_op_backup_put(pa.pu, pa.pc, 'もどす前（自動）', b.id);   -- もどす前の運用ものこす
+  keep := array(select x ->> 'num' from jsonb_array_elements(d -> 'ops') x);
+  -- 変わる系統：いま運用・連結がある列車と、バックアップの列車
+  rids := array(select distinct t.route from mp_trains t join mp_routes r on r.id = t.route
+                 where r.own_u is not distinct from pa.pu and r.own_c is not distinct from pa.pc
+                   and (t.op is not null or jsonb_array_length(coalesce(t.cpl, '[]'::jsonb)) > 0
+                        or t.id in (select (x ->> 'id')::bigint from jsonb_array_elements(d -> 'trains') x)));
+  foreach rr in array rids loop perform _mp_dia_snap(rr, 'バックアップから運用をもどした'); end loop;
+  -- 1) バックアップにない運用を消す（その列車は運用なし・編成なし。連結からもはずす）
+  update mp_trains t set op = null, form = null
+   where t.op in (select o2.id from mp_ops o2 where o2.own_u is not distinct from pa.pu and o2.own_c is not distinct from pa.pc and not (o2.num = any(keep)));
+  update mp_trains t set cpl = coalesce((select jsonb_agg(c.v order by c.o) from jsonb_array_elements(t.cpl) with ordinality c(v, o)
+                                           where (c.v ->> 'op')::bigint in (select o2.id from mp_ops o2 where o2.num = any(keep) and o2.own_u is not distinct from pa.pu and o2.own_c is not distinct from pa.pc)), '[]'::jsonb)
+   where jsonb_array_length(coalesce(t.cpl, '[]'::jsonb)) > 0
+     and t.route in (select r.id from mp_routes r where r.own_u is not distinct from pa.pu and r.own_c is not distinct from pa.pc);
+  delete from mp_ops o2 where o2.own_u is not distinct from pa.pu and o2.own_c is not distinct from pa.pc and not (o2.num = any(keep));
+  get diagnostics ndel = row_count;
+  -- 2) バックアップの運用をつくる・直す（編成はいったんはずして、3) で入れる）
+  update mp_ops o2 set form = null where o2.own_u is not distinct from pa.pu and o2.own_c is not distinct from pa.pc;
+  for e in select x from jsonb_array_elements(d -> 'ops') x loop
+    o := null;
+    select * into o from mp_ops x where x.own_u is not distinct from pa.pu and x.own_c is not distinct from pa.pc and x.num = e ->> 'num';
+    if o.id is null then
+      insert into mp_ops(own_u, own_c, num, kind, note) values (pa.pu, pa.pc, left(e ->> 'num', 12), coalesce(e ->> 'kind', 'rail'), coalesce(e ->> 'note', ''));
+    else
+      update mp_ops set kind = coalesce(e ->> 'kind', kind), note = coalesce(e ->> 'note', '') where id = o.id;
+    end if;
+  end loop;
+  -- 3) 編成（いまもある、この名義の編成だけ。1つの編成は1つの運用）
+  for e in select x from jsonb_array_elements(d -> 'ops') x where x ->> 'form' is not null loop
+    fid := (select f.id from mp_forms f where f.id = (e ->> 'form')::bigint and f.own_u is not distinct from pa.pu and f.own_c is not distinct from pa.pc);
+    if fid is null or exists (select 1 from mp_ops x where x.form = fid) then continue; end if;
+    update mp_ops x set form = fid where x.own_u is not distinct from pa.pu and x.own_c is not distinct from pa.pc and x.num = e ->> 'num';
+  end loop;
+  -- 4) 列車：そのときの運用・連結（いまもある、この名義の系統の列車だけ）
+  update mp_trains t set op = o2.id, form = null,
+         cpl = coalesce((select jsonb_agg(jsonb_build_object('op', o3.id, 'a', c.v -> 'a', 'b', c.v -> 'b') order by c.o)
+                           from jsonb_array_elements(coalesce(x.v -> 'cpl', '[]'::jsonb)) with ordinality c(v, o)
+                           join mp_ops o3 on o3.num = c.v ->> 'op' and o3.own_u is not distinct from pa.pu and o3.own_c is not distinct from pa.pc), '[]'::jsonb)
+    from jsonb_array_elements(d -> 'trains') x(v)
+    left join mp_ops o2 on o2.num = x.v ->> 'op' and o2.own_u is not distinct from pa.pu and o2.own_c is not distinct from pa.pc
+   where t.id = (x.v ->> 'id')::bigint and t.route in (select r.id from mp_routes r where r.own_u is not distinct from pa.pu and r.own_c is not distinct from pa.pc);
+  get diagnostics nt = row_count;
+  -- 5) 列車の編成は、その運用の編成
+  update mp_trains t set form = o2.form from mp_ops o2
+   where t.op = o2.id and o2.own_u is not distinct from pa.pu and o2.own_c is not distinct from pa.pc and t.form is distinct from o2.form;
+  foreach rr in array rids loop perform _mp_resched(rr); perform _mp_chg('route', rr, 'set', null); end loop;
+  return jsonb_build_object('ok', true, 'ops', jsonb_array_length(d -> 'ops'), 'trains', nt, 'del', ndel, 'routes', coalesce(array_length(rids, 1), 0), 'list', mp_op_backup_list(p_as));
+end $$;
+
 /* ---------- 運用ファイル（JSON） ---------- */
 -- 時刻の文字（H:MM・HH:MM・HH:MM:SS）→ 0時からの秒。読めなければ null
 create or replace function public._mp_hm_parse(s text) returns int
@@ -25787,7 +25920,7 @@ begin
             '_mp_kanji_num','_mp_kinds_of','_mp_kpos','_mp_kprio','_mp_land_fee','_mp_land_need','_mp_land_std','_mp_land_stop','_mp_lease_del',
             '_mp_lease_quote','_mp_lease_set','_mp_leg_from','_mp_leg_time','_mp_len','_mp_line_cells','_mp_lock','_mp_lvmap_build',
             '_mp_maker_order','_mp_mcval','_mp_mine','_mp_minr','_mp_mvalue','_mp_notice_admins','_mp_npc_name','_mp_occ_set',
-            '_mp_ok','_mp_okey','_mp_op_of_form','_mp_parcel_label','_mp_parcel_vals','_mp_parcel_vals_day','_mp_party','_mp_pat_fit','_mp_pay',
+            '_mp_ok','_mp_okey','_mp_op_of_form','_mp_op_snapshot','_mp_op_backup_put','_mp_parcel_label','_mp_parcel_vals','_mp_parcel_vals_day','_mp_party','_mp_pat_fit','_mp_pay',
             '_mp_pick_trk','_mp_pkey','_mp_placeholder_names','_mp_pname','_mp_port_busy','_mp_port_isl','_mp_port_open','_mp_port_owner_trg',
             '_mp_port_pier','_mp_pref_road','_mp_pref_type','_mp_proj','_mp_pub_cells','_mp_pub_of','_mp_qnorm','_mp_rail_path',
             '_mp_rate','_mp_renet','_mp_resample','_mp_resched','_mp_rev','_mp_road_mul','_mp_road_v','_mp_road_w',
@@ -25807,7 +25940,7 @@ begin
             'mp_form_order','mp_form_set','mp_home_clear','mp_home_get','mp_home_set','mp_jm_cert','mp_jm_file','mp_jm_get',
             'mp_jm_mine','mp_jm_residents','mp_jm_seal','mp_kinds_list','mp_kinds_set','mp_land_buy','mp_land_decide','mp_land_req',
             'mp_land_req_del','mp_land_reqs','mp_ledger_days','mp_ledger_page','mp_makers','mp_op_del','mp_op_export','mp_op_import',
-            'mp_op_save','mp_ops_list','mp_parcel_buy','mp_parcel_merge','mp_parcel_rent','mp_parcel_sell','mp_parcel_split','mp_poll',
+            'mp_op_save','mp_op_backup_list','mp_op_backup_save','mp_op_backup_del','mp_op_backup_restore','mp_ops_list','mp_parcel_buy','mp_parcel_merge','mp_parcel_rent','mp_parcel_sell','mp_parcel_split','mp_poll',
             'mp_route_del','mp_route_pat','mp_route_save','mp_routes_list','mp_rwy_build','mp_rwy_del','mp_sc_list','mp_sc_set',
             'mp_seg_build','mp_seg_del','mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_speed','mp_seg_split','mp_slot_admin',
             'mp_slot_answer','mp_slot_apply','mp_slot_bid','mp_slot_cancel','mp_slot_get','mp_slot_list','mp_slot_return','mp_spot',
@@ -25845,7 +25978,7 @@ begin
   for f in select p.oid::regprocedure sig from pg_proc p join pg_namespace n on n.oid = p.pronamespace
             where n.nspname = 'public' and p.proname in ('mp_dia_undo', 'mp_form_set', 'mp_kinds_set', 'mp_op_del', 'mp_op_import', 'mp_op_save',
               'mp_route_pat', 'mp_route_save', 'mp_rwy_build', 'mp_rwy_del', 'mp_seg_build', 'mp_seg_del', 'mp_seg_edit', 'mp_seg_join', 'mp_seg_opts',
-              'mp_sta_resize', 'mp_sta_trk_set', 'mp_thru_end', 'mp_route_xwait', 'mp_ops_bulk', 'mp_form_order_many', 'mp_train_autoform', 'mp_train_bulk', 'mp_train_del', 'mp_train_save') loop
+              'mp_sta_resize', 'mp_sta_trk_set', 'mp_thru_end', 'mp_route_xwait', 'mp_ops_bulk', 'mp_op_backup_restore', 'mp_form_order_many', 'mp_train_autoform', 'mp_train_bulk', 'mp_train_del', 'mp_train_save') loop
     execute format('alter function %s set statement_timeout = %L', f.sig, '20s');
   end loop;
 end $$;
