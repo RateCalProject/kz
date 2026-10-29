@@ -20097,40 +20097,53 @@ begin
           from mp_routes r where r.own_u is not distinct from pa.pu and r.own_c is not distinct from pa.pc);
 end $$;
 -- 運用を自動で組む：系統の列車を時刻の順に見て、始発駅にいて2分前までにあいている編成をわりあてる（いなければ、まだ使っていない編成）
-create or replace function public.mp_train_autoform(p_route bigint, p_forms bigint[], p_as text) returns jsonb
+--   p_kinds（2026-10-29）：わりあてなおす種別（null・空はぜんぶ）。えらばなかった種別の列車はそのまま。その列車に入っている編成は使わない（busy）
+drop function if exists public.mp_train_autoform(bigint, bigint[], text);   -- 前の形（p_kinds なし。同じ名前が2つあると API がえらべない）
+create or replace function public.mp_train_autoform(p_route bigint, p_forms bigint[], p_as text, p_kinds text[] default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); pa record; r mp_routes; t record; i int; best int; locs bigint[]; frees int[]; n int := coalesce(array_length(p_forms, 1), 0); ok int := 0; ng int := 0; perf jsonb; ops bigint[];
+declare u uuid := _me(); pa record; r mp_routes; t record; i int; best int; locs bigint[]; frees int[]; n int; ok int := 0; ng int := 0; perf jsonb; ops bigint[];
+        fz bigint[]; nall int; ks text[] := case when coalesce(cardinality(p_kinds), 0) = 0 then null else p_kinds end;
 begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
   select * into r from mp_routes where id = p_route and own_u is not distinct from pa.pu and own_c is not distinct from pa.pc;
   if not found then raise exception '系統が見つかりません'; end if;
-  if n = 0 then raise exception '編成をえらんでください'; end if;
-  for i in 1..n loop
-    if not exists (select 1 from mp_forms where id = p_forms[i] and own_u is not distinct from pa.pu and own_c is not distinct from pa.pc) then raise exception '編成が見つかりません'; end if;
-    perf := _mp_form_perf(p_forms[i]);
+  fz := array(select q.x from (select distinct on (z.x) z.x, z.o from unnest(p_forms) with ordinality z(x, o) where z.x is not null order by z.x, z.o) q order by q.o);
+  nall := coalesce(array_length(fz, 1), 0);
+  if nall = 0 then raise exception '編成をえらんでください'; end if;
+  for i in 1..nall loop
+    if not exists (select 1 from mp_forms where id = fz[i] and own_u is not distinct from pa.pu and own_c is not distinct from pa.pc) then raise exception '編成が見つかりません'; end if;
+    perf := _mp_form_perf(fz[i]);
     if (perf ->> 'rail')::boolean <> (r.kind = 'rail') then raise exception '%', case when r.kind = 'rail' then '鉄道の系統にはバスを使えません' else 'バスの系統には電車を使えません' end; end if;
   end loop;
-  perform _mp_dia_snap(p_route, '運用を自動で組んだ');
-  ops := array(select _mp_op_of_form(x) from unnest(p_forms) with ordinality z(x, o) order by z.o);   -- 編成ごとの運用（なければつくる）
-  -- この系統の毎日の列車だけを、わりあてなおす（臨時列車はそのまま）
-  update mp_trains set form = null, op = null where route = p_route and day is null;
+  if ks is not null then
+    if not exists (select 1 from mp_trains where route = p_route and day is null and kind = any(ks)) then raise exception 'その種別の列車がありません'; end if;
+    -- えらばなかった種別の列車（毎日の列車）に入っている編成は使わない
+    fz := array(select z.x from unnest(fz) with ordinality z(x, o)
+                 where not exists (select 1 from mp_trains tr where tr.route = p_route and tr.day is null and tr.form = z.x and not (tr.kind = any(ks))) order by z.o);
+  end if;
+  n := coalesce(array_length(fz, 1), 0);
+  if n = 0 then raise exception 'えらんだ編成は、ほかの種別の列車に入っています'; end if;
+  perform _mp_dia_snap(p_route, case when ks is null then '運用を自動で組んだ' else format('運用を自動で組んだ（%s）', array_to_string(ks, '・')) end);
+  ops := array(select _mp_op_of_form(x) from unnest(fz) with ordinality z(x, o) order by z.o);   -- 編成ごとの運用（なければつくる）
+  -- この系統の毎日の列車（えらんだ種別だけ）を、わりあてなおす（臨時列車はそのまま）
+  update mp_trains set form = null, op = null where route = p_route and day is null and (ks is null or kind = any(ks));
   perform _mp_resched(p_route);
   locs := array_fill(null::bigint, array[n]); frees := array_fill(-1, array[n]);
   for t in select id, (sched -> 0 ->> 0)::bigint fs, (sched -> 0 ->> 2)::int ft,
                   (sched -> (jsonb_array_length(sched) - 1) ->> 0)::bigint es, (sched -> (jsonb_array_length(sched) - 1) ->> 1)::int et
-             from mp_trains where route = p_route and day is null and jsonb_array_length(sched) > 1 order by 3, id loop
+             from mp_trains where route = p_route and day is null and (ks is null or kind = any(ks)) and jsonb_array_length(sched) > 1 order by 3, id loop
     best := null;
     for i in 1..n loop   -- 始発駅にいて、まにあう編成のうち、いちばん早くあいたもの
       if locs[i] = t.fs and frees[i] + 120 <= t.ft and (best is null or frees[i] < frees[best]) then best := i; end if;
     end loop;
     if best is null then for i in 1..n loop if locs[i] is null then best := i; exit; end if; end loop; end if;
     if best is null then ng := ng + 1; continue; end if;
-    update mp_trains set form = p_forms[best], op = ops[best] where id = t.id;
+    update mp_trains set form = fz[best], op = ops[best] where id = t.id;
     locs[best] := t.es; frees[best] := t.et; ok := ok + 1;
   end loop;
   perform _mp_resched(p_route);
-  return jsonb_build_object('ok', ok, 'none', ng, 'used', (select count(distinct form) from mp_trains where route = p_route and form is not null));
+  return jsonb_build_object('ok', ok, 'none', ng, 'used', (select count(distinct form) from mp_trains where route = p_route and form is not null), 'busy', nall - n);
 end $$;
 
 /* ---------- 1時間ごと：運賃・家賃・維持費・使用料。毎日（朝4時）：地価・固定資産税・まちの成長 ----------
