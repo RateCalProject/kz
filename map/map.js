@@ -3273,7 +3273,7 @@ async function autoForm(D, reload) {
   const cl = await api('mp_cars_list', { p_as: S.as }); if (!cl) return;
   const forms = cl.forms.filter(f => fKind(f) === D.kind);
   if (!forms.length) return toast(D.kind === 'air' ? '飛行機がありません（≡ →「車両と編成」で空港をえらんで注文してください）' : D.kind === 'ship' ? '船がありません（≡ →「車両と編成」で港をえらんで注文してください）' : '編成がありません（車両と編成で組んでください）');
-  const pick = new Set(forms.filter(f => f.trains === 0 || D.trains.some(t => t.form === f.id)).map(f => f.id));
+  const pick = new Set();   // はじめは何もえらばない（2026-10-29。絞りこんでから「表示中をぜんぶえらぶ」かタップで）
   // わりあてる列車（2026-10-29）：種別でえらぶ（毎日の列車。臨時列車はそのまま）。えらばなかった種別の列車はいまのまま
   const daily = D.trains.filter(t => !t.day);
   const ko = k => { const x = (D.kinds || []).find(y => y.name === k); return x ? x.prio * 100 + (KINDS.indexOf(k) + 1) : 999; };   // 優先番号の順
@@ -3344,7 +3344,7 @@ async function openOps() {
           <div class="mp-row small" style="align-items:center"><span>編成</span><select class="mp-inp" style="flex:1 1 140px" data-of="${o.id}"><option value="">（入れない）</option>${forms.map(f => `<option value="${f.id}" ${o.form === f.id ? 'selected' : ''} ${f.ok ? '' : 'disabled'}>${esc(T(f.op && f.op !== o.num ? (kind === 'ship' || kind === 'air' ? `${f.name}・いまは運用 ${f.op}` : kind === 'bus' ? `${f.name}（${f.perf.n}台）・いまは運用 ${f.op}` : `${f.name}（${f.perf.n}両）・いまは運用 ${f.op}`) : kind === 'ship' || kind === 'air' ? f.name : kind === 'bus' ? `${f.name}（${f.perf.n}台）` : `${f.name}（${f.perf.n}両）`))}</option>`).join('')}</select>
             <button class="btn" data-oren="${o.id}">運用番号</button><button class="btn" data-oex="${o.id}">書き出す</button><button class="btn" data-odel="${o.id}">消す</button></div></div>`).join('')
         || (LK.length ? '<p class="muted small">この絞りこみにあう運用はありません</p>' : '<p class="muted small">まだありません。「＋ 運用」でつくるか、系統の「運用を自動で組む」でつくれます</p>')}</div>
-      <div class="mp-row"><button class="btn main" data-onew>＋ 運用</button><button class="btn" data-oall>ぜんぶ書き出す</button><button class="btn" data-oimp>ファイルを読みこむ</button>
+      <div class="mp-row"><button class="btn main" data-onew>＋ 運用</button><button class="btn" data-oall>ぜんぶ書き出す</button><button class="btn" data-oimp>ファイルを読みこむ</button><button class="btn" data-odall ${LK.length ? '' : 'disabled'}>ぜんぶ消す</button>
         <input type="file" accept=".json,application/json" data-ofile hidden></div>
       <p class="muted small">列車は運用に入れ、運用に編成を入れます。編成を変えると、その運用の列車ぜんぶの編成が変わります（ほかの運用に入っていた編成は、そちらからはずれます）。運用ファイル（JSON）を読みこむと、ファイルにある運用の列車が、ファイルの列車に入れかわります${D.free ? `<span>（運用に入っていない列車 ${D.free}本）</span>` : ''}</p>`, b => {
       b.querySelectorAll('[data-kind]').forEach(x => x.onclick = () => { kind = x.dataset.kind; draw(); });
@@ -3379,6 +3379,14 @@ async function openOps() {
         if (await api('mp_op_save', { p_id: null, p_num: nm, p_form: null, p_note: '', p_kind: kind, p_as: S.as }, '運用をつくりました')) load();
       };
       b.querySelector('[data-oall]').onclick = () => exportOps(null, `運用_ぜんぶ_${ymd()}.json`);
+      // ぜんぶ消す（2026-10-29）：いまのタブ（鉄道・バス・船・飛行機）の運用をぜんぶ。列車は消えずに、運用なし・編成なしになる。500ずつ
+      b.querySelector('[data-odall]').onclick = async () => {
+        const all = LK.map(o => o.id), kl = { rail: '鉄道', bus: 'バス', ship: '船', air: '飛行機' }[kind] || '';
+        if (!all.length || !confirm(T(`${kl}の運用 ${all.length}つ を、ぜんぶ消しますか？（列車は消えずに、運用なし・編成なしになります。系統の「↶ 取り消す」でもどせます）`))) return;
+        let n = 0;
+        for (let i = 0; i < all.length; i += 500) { const r = await api('mp_ops_bulk', { p_ids: all.slice(i, i + 500), p_act: 'del', p_arg: {}, p_as: S.as }); if (!r) break; n += r.n; }
+        if (n) toast(T(`運用を ${n}つ 消しました`)); sel.clear(); load();
+      };
       const fi = b.querySelector('[data-ofile]');
       b.querySelector('[data-oimp]').onclick = () => fi.click();
       fi.onchange = async () => {
