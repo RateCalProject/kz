@@ -19934,12 +19934,31 @@ begin
   perform _mp_resched(p_route);
   return (select jsonb_build_object('id', t.id, 'sched', t.sched, 'warn', t.warn, 'cplx', t.cplx) from mp_trains t where t.id = tid);
 end $$;
+-- 停車駅のパターンを列車に当てはめる（2026-10-29）：走る区間（sa → sb。null は系統の端）のうち、パターンで通過でない駅に止まる。
+--   止まる最初の駅が始発、最後の駅が終着（系統の端なら null）。あいだの止まらない駅が通過。止まる駅が2つより少なければ ok = false
+create or replace function public._mp_pat_fit(stops bigint[], dir int, sa bigint, sb bigint, pat bigint[], out ok boolean, out nsa bigint, out nsb bigint, out nskip bigint[])
+language plpgsql immutable set search_path = public as $$
+declare n int := coalesce(array_length(stops, 1), 0); ord bigint[]; k0 int; k1 int; on_ bigint[];
+begin
+  ok := false;
+  if n < 2 then return; end if;
+  ord := case when dir = -1 then array(select stops[i] from generate_series(n, 1, -1) i) else stops end;
+  k0 := coalesce(array_position(ord, sa), 1); k1 := coalesce(array_position(ord, sb), n);
+  if k0 >= k1 then k0 := 1; k1 := n; end if;
+  on_ := array(select ord[i] from generate_series(k0, k1) i where not (ord[i] = any(coalesce(pat, '{}'::bigint[]))) order by i);
+  if coalesce(array_length(on_, 1), 0) < 2 then return; end if;
+  ok := true;
+  k0 := array_position(ord, on_[1]); k1 := array_position(ord, on_[array_length(on_, 1)]);
+  nsa := case when k0 > 1 then ord[k0] end; nsb := case when k1 < n then ord[k1] end;
+  nskip := array(select ord[i] from generate_series(k0 + 1, k1 - 1) i where ord[i] = any(coalesce(pat, '{}'::bigint[])) order by i);
+end $$;
 -- 列車をまとめてつくる（始発から終電まで、何分おきに）。p_op：運用（なければ運用なし）。p_day：臨時（この日だけ）
 drop function if exists public.mp_train_bulk(bigint, int, int, int, int, text, text, bigint, text, bigint, date);   -- 前の形（p_sa・p_sb なし）
 create or replace function public.mp_train_bulk(p_route bigint, p_dir int, p_from int, p_to int, p_every int, p_kind text, p_prefix text, p_form bigint, p_as text,
                                                 p_op bigint default null, p_day date default null, p_sa bigint default null, p_sb bigint default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); pa record; r mp_routes; t int; n int := 0; have int; base int; o mp_ops; oid_ bigint; fid bigint; ns int; k0 int; k1 int; sa_ bigint; sb_ bigint;
+        kd text := left(coalesce(nullif(trim(p_kind), ''), '普通'), 8); pf record;
 begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
@@ -19962,6 +19981,10 @@ begin
   k1 := case when p_sb is null then ns when p_dir = -1 then ns - array_position(r.stops, p_sb) + 1 else array_position(r.stops, p_sb) end;
   if k0 >= k1 then raise exception '始発駅は、終着駅より前（走る順）にしてください'; end if;
   sa_ := case when k0 > 1 then p_sa end; sb_ := case when k1 < ns then p_sb end;
+  -- 停車駅のパターン（t54h）：走る区間のうち、止まる最初の駅が始発・最後の駅が終着（2026-10-29）
+  select * into pf from _mp_pat_fit(r.stops, case when p_dir = -1 then -1 else 1 end, sa_, sb_,
+    coalesce(array(select x::bigint from jsonb_array_elements_text(r.pats -> kd) x where x::bigint = any(r.stops)), '{}'));
+  if not pf.ok then raise exception '止まる駅が2つ以上ありません（走る区間と、停車駅のパターンをみなおしてください）'; end if;
   if p_from < 0 or p_to >= 86400 or p_to < p_from then raise exception '時刻がちがいます'; end if;
   select count(*) into have from mp_trains where route = p_route;
   if have + (p_to - p_from) / (p_every * 60) + 1 > 900 then raise exception '1つの系統の列車は900本までです'; end if;
@@ -19971,17 +19994,18 @@ begin
   while t <= p_to loop
     n := n + 1;
     insert into mp_trains(route, dir, num, kind, dep, form, op, day, skip, sa, sb) values (p_route, case when p_dir = -1 then -1 else 1 end,
-      left(coalesce(nullif(trim(p_prefix), ''), '') || ((t / 3600) * 100 + base + 2 * ((t / 60) % 60 / greatest(1, p_every)))::text, 12), left(coalesce(nullif(trim(p_kind), ''), '普通'), 8), t, fid, oid_, p_day,
-      coalesce(array(select x::bigint from jsonb_array_elements_text(r.pats -> left(coalesce(nullif(trim(p_kind), ''), '普通'), 8)) x where x::bigint = any(r.stops)), '{}'), sa_, sb_);   -- 停車駅のパターン（t54h）
+      left(coalesce(nullif(trim(p_prefix), ''), '') || ((t / 3600) * 100 + base + 2 * ((t / 60) % 60 / greatest(1, p_every)))::text, 12), kd, t, fid, oid_, p_day,
+      coalesce(pf.nskip, '{}'), pf.nsa, pf.nsb);
     t := t + p_every * 60;
   end loop;
   perform _mp_resched(p_route);
   return jsonb_build_object('n', n);
 end $$;
 -- 停車駅のパターン（t54h）：種別ごとに通過する駅を決める（p_skip が null ならパターンを消す）。p_apply なら、この系統のその種別の列車ぜんぶに当てはめる
+--   2026-10-29：端の駅も通過にできる（止まる最初の駅が始発、最後の駅が終着）。列車には、その列車の走る区間のうちで当てはめる（_mp_pat_fit）
 create or replace function public.mp_route_pat(p_route bigint, p_kind text, p_skip bigint[], p_apply boolean, p_as text) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); pa record; r mp_routes; k text := left(trim(coalesce(p_kind, '')), 8); sk bigint[]; n int := 0;
+declare u uuid := _me(); pa record; r mp_routes; k text := left(trim(coalesce(p_kind, '')), 8); sk bigint[]; n int := 0; tr record; pf record;
 begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
@@ -19992,18 +20016,21 @@ begin
     update mp_routes set pats = pats - k where id = r.id;
     return jsonb_build_object('pats', (select pats from mp_routes where id = r.id), 'n', 0);
   end if;
-  sk := array(select s from unnest(r.stops) with ordinality z(s, o) where s = any(p_skip) and o > 1 and o < array_length(r.stops, 1) order by o);   -- 始発・終点は止まる
+  sk := array(select s from unnest(r.stops) with ordinality z(s, o) where s = any(p_skip) order by o);
+  if (select count(*) from unnest(r.stops) s where not (s = any(sk))) < 2 then raise exception '止まる駅を2つ以上にしてください'; end if;
   if (select count(*) from mp_routes x where x.id = r.id and jsonb_typeof(x.pats) = 'object' and (select count(*) from jsonb_object_keys(x.pats)) >= 30 and not x.pats ? k) > 0 then
     raise exception 'パターンは30までです';
   end if;
   update mp_routes set pats = pats || jsonb_build_object(k, to_jsonb(sk)) where id = r.id;
-  if p_apply then
-    select count(*) into n from mp_trains where route = r.id and kind = k;
-    if n > 0 then
-      perform _mp_dia_snap(r.id, format('「%s」の停車駅をパターンにあわせた', k));
-      update mp_trains set skip = sk where route = r.id and kind = k;
-      perform _mp_resched(r.id);
-    end if;
+  if p_apply and exists (select 1 from mp_trains where route = r.id and kind = k) then
+    perform _mp_dia_snap(r.id, format('「%s」の停車駅をパターンにあわせた', k));
+    for tr in select id, dir, sa, sb from mp_trains where route = r.id and kind = k loop
+      select * into pf from _mp_pat_fit(r.stops, tr.dir, tr.sa, tr.sb, sk);
+      if not pf.ok then continue; end if;   -- 走る区間に止まる駅が2つもない列車は、そのまま
+      update mp_trains set skip = coalesce(pf.nskip, '{}'), sa = pf.nsa, sb = pf.nsb where id = tr.id;
+      n := n + 1;
+    end loop;
+    perform _mp_resched(r.id);
   end if;
   return jsonb_build_object('pats', (select pats from mp_routes where id = r.id), 'n', n);
 end $$;
@@ -25730,7 +25757,7 @@ begin
             '_mp_kanji_num','_mp_kinds_of','_mp_kprio','_mp_land_fee','_mp_land_need','_mp_land_std','_mp_land_stop','_mp_lease_del',
             '_mp_lease_quote','_mp_lease_set','_mp_leg_from','_mp_leg_time','_mp_len','_mp_line_cells','_mp_lock','_mp_lvmap_build',
             '_mp_maker_order','_mp_mcval','_mp_mine','_mp_minr','_mp_mvalue','_mp_notice_admins','_mp_npc_name','_mp_occ_set',
-            '_mp_ok','_mp_okey','_mp_op_of_form','_mp_parcel_label','_mp_parcel_vals','_mp_parcel_vals_day','_mp_party','_mp_pay',
+            '_mp_ok','_mp_okey','_mp_op_of_form','_mp_parcel_label','_mp_parcel_vals','_mp_parcel_vals_day','_mp_party','_mp_pat_fit','_mp_pay',
             '_mp_pick_trk','_mp_pkey','_mp_placeholder_names','_mp_pname','_mp_port_busy','_mp_port_isl','_mp_port_open','_mp_port_owner_trg',
             '_mp_port_pier','_mp_pref_road','_mp_pref_type','_mp_proj','_mp_pub_cells','_mp_pub_of','_mp_qnorm','_mp_rail_path',
             '_mp_rate','_mp_renet','_mp_resample','_mp_resched','_mp_rev','_mp_road_mul','_mp_road_v','_mp_road_w',
