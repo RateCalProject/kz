@@ -3382,7 +3382,7 @@ async function openOps() {
       // ぜんぶ消す（2026-10-29）：いまのタブ（鉄道・バス・船・飛行機）の運用をぜんぶ。列車は消えずに、運用なし・編成なしになる。500ずつ
       b.querySelector('[data-odall]').onclick = async () => {
         const all = LK.map(o => o.id), kl = { rail: '鉄道', bus: 'バス', ship: '船', air: '飛行機' }[kind] || '';
-        if (!all.length || !confirm(T(`${kl}の運用 ${all.length}つ を、ぜんぶ消しますか？（列車は消えずに、運用なし・編成なしになります。系統の「↶ 取り消す」でもどせます）`))) return;
+        if (!all.length || !confirm(T(`${kl}の運用 ${all.length}つ を、ぜんぶ消しますか？（列車は消えずに、運用なし・編成なしになります。消した運用はもどせないので、先に「ぜんぶ書き出す」でファイルにのこしておくと安心です）`))) return;
         let n = 0;
         for (let i = 0; i < all.length; i += 500) { const r = await api('mp_ops_bulk', { p_ids: all.slice(i, i + 500), p_act: 'del', p_arg: {}, p_as: S.as }); if (!r) break; n += r.n; }
         if (n) toast(T(`運用を ${n}つ 消しました`)); sel.clear(); load();
