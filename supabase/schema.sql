@@ -11910,6 +11910,54 @@ begin
   return admin_ai();
 end $$;
 
+-- =====================================================================
+-- 管理：国庫から渡す（2026-10-30・管理者だけ。更新 20261030-04）
+--   「新しく発行して渡す」は国庫の発行額がふえる。「国庫の残高から渡す」は国庫が減る（たりなければ止める）
+--   受けとった人には、お知らせと「国庫から支給」の記録が残る。相手の所持金は返さない。AI・国のアカウントには渡せない
+-- 渡す相手を確かめる（名前とIDだけ）
+create or replace function public.admin_grant_who(p_uid text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); p profiles;
+begin
+  if coalesce(_role(u), '') <> 'admin' then raise exception '管理者だけが使えます'; end if;
+  if nullif(btrim(coalesce(p_uid, '')), '') is null then select * into p from profiles where id = u;
+  else select * into p from profiles where account_no = btrim(p_uid); end if;
+  if not found then raise exception 'その人は見つかりません'; end if;
+  if p.ai is not null then raise exception 'AI・国のアカウントには渡せません'; end if;
+  return jsonb_build_object('name', p.nickname, 'uid', p.account_no, 'badge', _badge(p.id), 'self', p.id = u);
+end $$;
+
+-- 渡す
+create or replace function public.admin_grant(p_uid text, p_amount bigint, p_from text, p_note text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); p profiles; tr treasury; nt text := left(btrim(coalesce(p_note, '')), 60);
+begin
+  if coalesce(_role(u), '') <> 'admin' then raise exception '管理者だけが使えます'; end if;
+  if nullif(btrim(coalesce(p_uid, '')), '') is null then select * into p from profiles where id = u;
+  else select * into p from profiles where account_no = btrim(p_uid); end if;
+  if not found then raise exception 'その人は見つかりません'; end if;
+  if p.ai is not null then raise exception 'AI・国のアカウントには渡せません'; end if;
+  if p_amount is null or p_amount < 1 or p_amount > 1000000000000000 then raise exception '額は1 X〜1000兆 X にしてください'; end if;
+  if coalesce(p_from, '') not in ('mint', 'bal') then raise exception 'どこから渡すかをえらんでください'; end if;
+  select * into tr from treasury where id = 1 for update;
+  if p_from = 'bal' and tr.balance < p_amount then raise exception '国庫の残高がたりません'; end if;
+  if p_from = 'mint' then
+    update treasury set issued_total = issued_total + p_amount where id = 1;   -- 発行して、そのまま渡す（国庫の残高は変わらない）
+  else
+    update treasury set balance = balance - p_amount where id = 1;
+  end if;
+  update profiles set balance = balance + p_amount where id = p.id;
+  perform _log(p.id, 'grant', 0, p_amount, jsonb_build_object('note', coalesce(nullif(nt, ''), '国庫から支給'), 'from', p_from));
+  perform _notice(p.id, format('国庫から %s X を受けとりました。', to_char(p_amount, 'FM999,999,999,999,999,999'))
+                        || case when nt <> '' then format('（%s）', nt) else '' end);
+  return jsonb_build_object('ok', true, 'name', p.nickname, 'uid', p.account_no, 'self', p.id = u, 'amount', p_amount, 'from', p_from);
+end $$;
+
+revoke all on function public.admin_grant_who(text) from public, anon;
+grant execute on function public.admin_grant_who(text) to authenticated;
+revoke all on function public.admin_grant(text, bigint, text, text) from public, anon;
+grant execute on function public.admin_grant(text, bigint, text, text) to authenticated;
+
 -- 毎分 AI を動かす（pg_cron があるとき。なければ何もしない）
 do $$
 begin
@@ -25946,7 +25994,7 @@ begin
             '_stock_width','_jday_start','_stock_base','_stock_band','_stock_day','_tnow','info_today','_stock_exec','stock_chart','home_widgets',
             '_ai_uid','_randn','_ai_name','_ai_account','_ai_fund','_ai_hire','_ai_ceo','_ai_stock_value','_ai_fair','_ai_article','_ai_event',
             '_ai_business','_ai_settle_week','_ai_news_morning','_ai_news_items','_ai_news_flash','_ai_invest','_ai_market','_ai_market_cancel',
-            '_ai_setup','_ai_add_investors','_ai_tick','_fx_exec','_stock_width_x','_ai_buzz_target','_ai_fair_p','_ai_found','_ok7_ins','_stock_last','_stock_cancel_all','stock_split','admin_stock_reprice','admin_gov_share_give','admin_ai_news','_gov_uid','_gov_sweep','_fx_last','admin_iv_state','admin_intervene','_ai_err','admin_ai','admin_ai_set','admin_ai_fund',
+            '_ai_setup','_ai_add_investors','_ai_tick','_fx_exec','_stock_width_x','_ai_buzz_target','_ai_fair_p','_ai_found','_ok7_ins','_stock_last','_stock_cancel_all','stock_split','admin_stock_reprice','admin_gov_share_give','admin_ai_news','_gov_uid','_gov_sweep','_fx_last','admin_iv_state','admin_intervene','_ai_err','admin_ai','admin_ai_set','admin_ai_fund','admin_grant_who','admin_grant',
             'stock_order','stock_cancel','stock_list_apply','stock_list_withdraw','admin_stock_decide','admin_stock_delist','_unlock_orders',
             '_kb_wx','admin_kb_extras','admin_kb_extra','admin_kb_extra_cancel','banner_list','admin_banners','admin_banner_save','admin_banner_end',
             'prefs_save','_admin_ids','_msg_unread','_is_guest','_me_g','_is_event','_staff_list','admin_staff','admin_staff_set',
