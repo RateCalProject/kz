@@ -75,8 +75,8 @@ async function m3Open() {
   r.setPixelRatio(Math.min(2, window.devicePixelRatio || 1)); r.setSize(S.W, S.H, false);
   const sc = new T3.Scene(); sc.background = new T3.Color('#b9d3ea'); sc.fog = new T3.Fog('#b9d3ea', 200, 900);
   const cam = new T3.PerspectiveCamera(45, S.W / Math.max(1, S.H), 0.05, 4000);
-  sc.add(new T3.HemisphereLight('#e8f0ff', '#7d7566', 0.58));
-  const sun = new T3.DirectionalLight('#fff6e8', 0.55); sun.position.set(-0.55, 1, -0.35); sc.add(sun);
+  sc.add(new T3.HemisphereLight('#e8f0ff', '#7d7566', 0.68));
+  const sun = new T3.DirectionalLight('#fff6e8', 0.55); sun.position.set(-0.35, 1.2, 0.55); sc.add(sun);   // 南西の高いところから（北を見るとき、手前の壁が明るい）
   const sea = new T3.Mesh(new T3.PlaneGeometry(20000, 20000), new T3.MeshLambertMaterial({ color: '#4680ba' })); sea.rotation.x = -Math.PI / 2; sea.position.y = -0.4; sc.add(sea);   // チャンクのない深い海（チャンクの海は高さ 0）
   const grpT = new T3.Group(), grpB = new T3.Group(), grpR = new T3.Group(); sc.add(grpT, grpB, grpR);
   Object.assign(M3, { on: true, T: T3, r, sc, cam, sea, grpT, grpB, grpR, cv, cm: new Map(), bKey: '', rKey: '', tex: null,
@@ -103,9 +103,9 @@ const alertMsg = m => { try { hint(m); setTimeout(() => hint(''), 3500); } catch
 function m3WinTex(T3) {
   const mk = draw => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, 64, 64); draw(g); const t = new T3.CanvasTexture(c); t.wrapS = t.wrapT = T3.RepeatWrapping; t.anisotropy = 4; return t; };
   return {
-    glass: mk(g => { g.fillStyle = '#6f8fae'; g.fillRect(2, 8, 60, 46); g.fillStyle = 'rgba(255,255,255,.35)'; g.fillRect(2, 8, 60, 6); g.fillStyle = '#d8dee4'; g.fillRect(30, 8, 3, 46); }),
-    grid: mk(g => { g.fillStyle = '#7b8fa3'; g.fillRect(12, 14, 40, 30); g.fillStyle = 'rgba(255,255,255,.3)'; g.fillRect(12, 14, 40, 5); }),
-    house: mk(g => { g.fillStyle = '#8a9aa8'; g.fillRect(20, 18, 24, 22); g.fillStyle = '#fff'; g.fillRect(31, 18, 2, 22); }),
+    glass: mk(g => { g.fillStyle = '#a3bdd3'; g.fillRect(2, 8, 60, 46); g.fillStyle = 'rgba(255,255,255,.35)'; g.fillRect(2, 8, 60, 6); g.fillStyle = '#d8dee4'; g.fillRect(30, 8, 3, 46); }),
+    grid: mk(g => { g.fillStyle = '#a9b8c6'; g.fillRect(12, 14, 40, 30); g.fillStyle = 'rgba(255,255,255,.3)'; g.fillRect(12, 14, 40, 5); }),
+    house: mk(g => { g.fillStyle = '#a5b2bd'; g.fillRect(20, 18, 24, 22); g.fillStyle = '#fff'; g.fillRect(31, 18, 2, 22); }),
     none: null
   };
 }
