@@ -1129,34 +1129,35 @@ function drawRunLayer() {
   for (const o of list) {
     const k = o.R.k, sel = runIsSel(o);
     if (k === 'rail' || k === 'bus') {
-      const wd = k === 'rail' ? Math.max(9, Math.min(22, 0.34 * z)) : Math.max(7, Math.min(16, 0.26 * z));
-      const off = (wd / 2 + 1.5) / z, hx = o.x + Math.sin(o.a) * off, hy = o.y - Math.cos(o.a) * off;   // 進む向きの左
-      if (o.len * z >= 12) {
+      // 太さは地図といっしょに大きくなる（決まった大きさ。t62：遠くから見ても大きすぎないように）
+      const wd = k === 'rail' ? clamp(0.42 * z, 2.5, 22) : clamp(0.3 * z, 2, 16), hl = Math.max(1.2, wd * 0.3);
+      const off = (wd / 2 + hl) / z, hx = o.x + Math.sin(o.a) * off, hy = o.y - Math.cos(o.a) * off;   // 進む向きの左
+      if (o.len * z >= 10) {
         // 車両の形：線路・道路にそって、頭から うしろへ。両ごとにすきま
         const pts = runOff(runSub(o.H, o.d - o.len, o.d), off).map(q => [sx(q[0]), sy(q[1])]);
         const path = () => { g.beginPath(); pts.forEach((q, i) => i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1])); };
         g.setLineDash([]); g.lineCap = 'round';
-        if (sel) { path(); g.strokeStyle = 'rgba(255,205,0,.95)'; g.lineWidth = wd + 11; g.stroke(); }
-        path(); g.strokeStyle = 'rgba(255,255,255,.96)'; g.lineWidth = wd + 4.5; g.stroke();
-        path(); g.strokeStyle = 'rgba(22,22,22,.92)'; g.lineWidth = wd + 1.8; g.stroke();
+        if (sel) { path(); g.strokeStyle = 'rgba(255,205,0,.95)'; g.lineWidth = wd + 2 * hl + 7; g.stroke(); }
+        path(); g.strokeStyle = 'rgba(255,255,255,.96)'; g.lineWidth = wd + 2 * hl; g.stroke();
+        path(); g.strokeStyle = 'rgba(22,22,22,.92)'; g.lineWidth = wd + Math.min(1.8, hl); g.stroke();
         g.lineCap = 'butt';
         const cpx = o.car * z; if (k === 'rail' && cpx >= 8) g.setLineDash([cpx - 1.8, 1.8]);
         path(); g.strokeStyle = o.R.c; g.lineWidth = wd; g.stroke(); g.setLineDash([]);
-        const h = pts[pts.length - 1]; g.fillStyle = '#fff'; g.beginPath(); g.arc(h[0], h[1], Math.max(2.2, wd * 0.3), 0, 6.3); g.fill();   // 頭（前のまど）
-        RUN.hits.push({ o, pts, r: wd / 2 + 8 });
+        if (wd >= 5) { const h = pts[pts.length - 1]; g.fillStyle = '#fff'; g.beginPath(); g.arc(h[0], h[1], wd * 0.3, 0, 6.3); g.fill(); }   // 頭（前のまど）
+        RUN.hits.push({ o, pts, r: wd / 2 + 10 });
       } else {
-        // 遠いとき：向きのある丸
-        const r = k === 'rail' ? 6.5 : 5.5, X = sx(hx), Y = sy(hy);
+        // 遠いとき：小さな丸（地図といっしょに小さく）
+        const r = clamp(o.len * z * 0.35, 2.2, 4.5), X = sx(hx), Y = sy(hy);
         g.save(); g.translate(X, Y); g.rotate(o.a);
         if (sel) { g.beginPath(); g.arc(0, 0, r + 6, 0, 6.3); g.fillStyle = 'rgba(255,205,0,.95)'; g.fill(); }
-        g.beginPath(); g.arc(0, 0, r, Math.PI * 0.22, Math.PI * 1.78); g.lineTo(r + 4.5, 0); g.closePath();
-        g.fillStyle = o.R.c; g.fill(); g.lineWidth = 2; g.strokeStyle = '#fff'; g.stroke(); g.restore();
-        RUN.hits.push({ o, pts: [[X, Y]], r: r + 10 });
+        g.beginPath(); g.arc(0, 0, r, 0, 6.3);
+        g.fillStyle = o.R.c; g.fill(); g.lineWidth = 1.4; g.strokeStyle = '#fff'; g.stroke(); g.restore();
+        RUN.hits.push({ o, pts: [[X, Y]], r: r + 12 });
       }
       if (z >= 14 || sel) lb.push([o, sx(hx), sy(hy)]);
     } else {
-      // 船・飛行機：向きのある しるし
-      const r = 7.5, X = sx(o.x), Y = sy(o.y);
+      // 船・飛行機：向きのある しるし（地図といっしょに大きさを変える）
+      const r = clamp(0.45 * z + 2.5, 3.5, 8), X = sx(o.x), Y = sy(o.y);
       g.save(); g.translate(X, Y); g.rotate(o.a);
       if (sel) { g.beginPath(); g.arc(0, 0, r + 7, 0, 6.3); g.fillStyle = 'rgba(255,205,0,.95)'; g.fill(); }
       g.beginPath(); g.moveTo(r + 3, 0); g.lineTo(-r, r * 0.85); g.lineTo(-r * 0.4, 0); g.lineTo(-r, -r * 0.85); g.closePath();

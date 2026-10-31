@@ -356,7 +356,7 @@ function m3Blds(v) {
 }
 
 /* ---------- 走行位置（t61・t62）：列車は両ごと、バス・船・飛行機は1つの箱。線路・道路・航路の上を、ダイヤのとおりに。
-   遠くても見えるように、画面で 9px ぐらいの太さまで大きくする（近いときは本物の大きさ）。上りと下りは進む向きの左にずらす ---------- */
+   大きさは決まった大きさ（遠くから見ても大きくしない）。上りと下りは進む向きの左にずらす ---------- */
 function m3Runs(v) {
   const T3 = M3.T;
   M3.runHit = []; M3.selLab = null;
@@ -374,12 +374,10 @@ function m3Runs(v) {
   let i = 0, selP = null;
   for (const o of list) {
     const k = o.R.k, cars = k === 'rail' ? o.T.fn : 1, sel = runIsSel(o);
-    let hh = (k === 'rail' ? 3.8 : k === 'bus' ? 3.1 : k === 'ship' ? 9 : 5) * M3_U, ww = (k === 'rail' ? 2.9 : k === 'bus' ? 2.5 : k === 'ship' ? 16 : 30) * M3_U;
-    const wmin = (k === 'ship' || k === 'air' ? 11 : 9) * ppx;
-    if (ww < wmin) { hh *= wmin / ww; ww = wmin; }
-    hh = Math.min(hh, ww * 1.35);
-    const cl = Math.max(o.car, ww * (k === 'rail' ? 1.6 : 1.3)), gap = k === 'rail' ? cl * 0.05 : 0;
-    const off = k === 'rail' || k === 'bus' ? ww / 2 + Math.max(0.5 * M3_U, 1.5 * ppx) : 0;   // 進む向きの左
+    // 大きさは決まった大きさ（t62：遠くから見ても大きくしない）。見やすいように、はばと高さは本物より少し大きめ
+    const hh = (k === 'rail' ? 4.6 : k === 'bus' ? 3.6 : k === 'ship' ? 9 : 5) * M3_U, ww = (k === 'rail' ? 5.5 : k === 'bus' ? 4 : k === 'ship' ? 16 : 30) * M3_U;
+    const cl = o.car, gap = k === 'rail' ? cl * 0.05 : 0;
+    const off = k === 'rail' || k === 'bus' ? ww / 2 + 0.8 * M3_U : 0;   // 進む向きの左
     col.set(o.R.c || '#d23');
     for (let c = 0; c < cars; c++) {
       const p = runPt(o.H, o.d - (c + 0.5) * cl), px = p[0] + Math.sin(p[2]) * off, pz = p[1] - Math.cos(p[2]) * off;
