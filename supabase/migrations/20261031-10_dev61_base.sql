@@ -5,10 +5,15 @@ declare bid bigint; sid bigint; r record; q jsonb; rid bigint; n int; nm text; b
 begin
   select b.id into bid from mp_blds b join mp_parcels p on p.id = b.parcel where p.gov and b.kind = 'airport_m' and b.name = '若宮基地';
   if bid is null then
-    bid := _mp_gov_build(array(select vv from generate_series(840, 874) yy, generate_series(-735, -706) xx, lateral unnest(array[xx, yy]) vv), 'airport_m', 0, 'full', null, '若宮基地');
+    begin   -- 土地があいていない（あとから筆・道路などができた）ときは、飛行場を作らずに先へ（2026-10-31 なおし）
+      bid := _mp_gov_build(array(select vv from generate_series(840, 874) yy, generate_series(-735, -706) xx, lateral unnest(array[xx, yy]) vv), 'airport_m', 0, 'full', null, '若宮基地');
+    exception when others then
+      raise warning '若宮基地：飛行場を作れませんでした（%）。飛行場と滑走路は作らずに先へ進みます', sqlerrm;
+      return;
+    end;
   end if;
   select id into sid from mp_stations where bld = bid and kind = 'air';
-  if sid is null then raise exception '若宮基地の乗り場ができませんでした'; end if;
+  if sid is null then raise warning '若宮基地の乗り場ができませんでした。滑走路は引かずに先へ進みます'; return; end if;
   update mp_slots set lic = true where st = sid and not lic;   -- 発着口はぜんぶ国の認可制（入札に出さない）
   perform _mp_chg('sta', sid, 'set', (select box(point(s.x / 100.0 - 3, s.y / 100.0 - 3), point(s.x / 100.0 + 3, s.y / 100.0 + 3)) from mp_stations s where s.id = sid));
   for r in select * from (values (-15650, 14110, -14690, 19610), (-16550, 14590, -15650, 19690)) v(x0, y0, x1, y1) loop
