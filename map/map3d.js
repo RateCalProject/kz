@@ -30,7 +30,20 @@ const M3_SPECIAL = {
   diet: { roof: 'dome', win: 'grid' }, natstad: { roof: 'none' }, pgym: { roof: 'gable', win: 'none' }, ugym: { roof: 'gable', win: 'none' },
   arena: { roof: 'dome', win: 'none' }, stadium_dome: { roof: 'dome', win: 'none' }, obstower: { roof: 'flat', win: 'glass' }, radiotower: { roof: 'flat', win: 'none', wc: ['#d94f3d', '#f2f2f2'] },
   lighthouse: { roof: 'flat', win: 'none', wc: ['#ffffff'] }, hangar: { roof: 'gable', win: 'none', rc: ['#8d9196'] }, warehouse: { roof: 'gable', win: 'none' },
-  fueltank: { roof: 'dome', win: 'none', wc: ['#e8e8e2'] }, oilport: { roof: 'dome', win: 'none' }
+  fueltank: { roof: 'dome', win: 'none', wc: ['#e8e8e2'] }, oilport: { roof: 'dome', win: 'none' },
+  // t61 でふやしたプリセット
+  ctower: { roof: 'flat', win: 'glass' }, radar: { roof: 'dome', win: 'none', wc: ['#f2f2f2'] }, barracks: { roof: 'flat', win: 'grid' }, mro: { roof: 'gable', win: 'none' },
+  milschool: { roof: 'hip', win: 'grid', rc: ['#5a6050'] }, navpier: { roof: 'none' }, drydock: { roof: 'none' }, arsenal: { roof: 'saw', win: 'none' },
+  uminoie: { roof: 'gable', win: 'none', rc: ['#3f7fb3', '#c0392b', '#e1a03a'], wc: ['#f3ead8'] }, seaside: { roof: 'gable', win: 'house', rc: ['#3f7fb3', '#f2f2f2'], wc: ['#ffffff', '#e8f3f7'] },
+  beachhouse: { roof: 'flat', win: 'house', wc: ['#ffffff', '#f1f4f6'] }, cottage: { roof: 'gable', win: 'house', rc: ['#5a4030', '#3f5a3a'], wc: ['#b9875a', '#a87a50'] },
+  glamping: { roof: 'dome', win: 'none', wc: ['#f4efe2'] }, beachclub: { roof: 'flat', win: 'glass' }, oceanview: { roof: 'flat', win: 'glass' }, resortcondo: { roof: 'flat', win: 'grid' },
+  aquapark: { roof: 'none' }, teitaku: { roof: 'hip', win: 'house' }, poolvilla: { roof: 'flat', win: 'glass', wc: ['#f4f2ec', '#ffffff'] }, residence: { roof: 'flat', win: 'grid' },
+  terrace: { roof: 'gable', win: 'house' }, courtyard: { roof: 'hip', win: 'house', rc: ['#3f3a36', '#5a4a42'] }, koban: { roof: 'gable', win: 'house' },
+  kishodai: { roof: 'dome', win: 'grid' }, cemetery: { roof: 'none' }, sewage: { roof: 'flat', win: 'none' }, geihinkan: { roof: 'hip', win: 'grid', rc: ['#5f7f8f'], wc: ['#f6f1e4'] },
+  embassy: { roof: 'hip', win: 'grid' }, garden: { roof: 'none' }, observatory: { roof: 'dome', win: 'none', wc: ['#f2f4f6'] },
+  domestadium: { roof: 'dome', win: 'none' }, bigtemple: { roof: 'hip', win: 'none', rc: ['#45403a'], wc: ['#8b3a2a'] }, taisha: { roof: 'hip', win: 'none', rc: ['#3f3a36'], wc: ['#b03a2e'] },
+  substation: { roof: 'flat', win: 'none' }, hydro: { roof: 'flat', win: 'none' }, geothermal: { roof: 'dome', win: 'none' }, heliport: { roof: 'none' },
+  glassoffice: { roof: 'flat', win: 'glass' }, twintower: { roof: 'flat', win: 'glass' }, mixeduse: { roof: 'flat', win: 'grid' }
 };
 const M3_HOUSE_RC = ['#4b4f55', '#5a4a42', '#7a3f35', '#3f5a5f', '#6f6a63', '#2f3338', '#8a5a3a'];   // 家の屋根の色（ばらつき）
 const M3_HOUSE_WC = ['#efe9df', '#f6f3ec', '#e6dccb', '#d9d5cf', '#f1e6d2', '#e2e4e6', '#efe0cf'];

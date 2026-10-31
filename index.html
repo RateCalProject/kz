@@ -1013,7 +1013,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=b91dbcf4","zh-TW":"zh-TW.js?v=7ac1d12e","zh-CN":"zh-CN.js?v=234efc41","ko":"ko.js?v=69c73383","ko-Hani":"ko-Hani.js?v=5e4f696e"};
+  window.AX_LANGS = {"en":"en.js?v=3ad738b0","zh-TW":"zh-TW.js?v=0257b787","zh-CN":"zh-CN.js?v=fe2ab977","ko":"ko.js?v=0ae9dbf4","ko-Hani":"ko-Hani.js?v=79d48b94"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -4909,7 +4909,7 @@ const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
 // 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
-const MAPV = '95';
+const MAPV = '96';
 let mapLoading = null;
 function mapScripts() {
   if (window.MapApp) return Promise.resolve();
