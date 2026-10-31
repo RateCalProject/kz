@@ -1013,7 +1013,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=685301ba","zh-TW":"zh-TW.js?v=acef21cc","zh-CN":"zh-CN.js?v=75aa24af","ko":"ko.js?v=92d16f6d","ko-Hani":"ko-Hani.js?v=b9613eba"};
+  window.AX_LANGS = {"en":"en.js?v=80ebed4d","zh-TW":"zh-TW.js?v=4b487e4a","zh-CN":"zh-CN.js?v=eaddaa4a","ko":"ko.js?v=26eebc10","ko-Hani":"ko-Hani.js?v=e54b83ce"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -2101,7 +2101,7 @@ function subStep(d) {
 const GAME_GROUPS = [
   ['公営競技', '', ['vRace', 'vOwner', 'vBike', 'vBoat'], '🏇'],
   ['ミニゲーム', 'その他', ['vSlot', 'vBj', 'vRou', 'vHilo', 'reversi', 'chess', 'shogi', 'onecard', 'mahjong', 'koikoi', 'auction', 'vFish'], '🎲'],
-  ['風の芽製作所', 'オリジナル', ['battle', 'ebifry', 'vLot'], '🌱'],   // 風の芽製作所は、うちの作品だけ（花札・競り市・釣りはミニゲームへ）
+  ['風の芽製作所', 'オリジナル', ['battle', 'ebifry', 'karuta', 'vLot'], '🌱'],   // 風の芽製作所は、うちの作品だけ（花札・競り市・釣りはミニゲームへ）
   ['メダカ研究所', '', ['kani'], '🐟'],
 ];
 const GAME_LIST = [
@@ -2111,6 +2111,7 @@ const GAME_LIST = [
   ['vBoat', '🚤', '競艇', '毎日 朝 9:30〜11:20（12R）と ミッドナイト 22:40〜23:50（8R）。6艇で3周。単勝から3連単まで7種類の舟券'],
   ['battle', '⚔', '市区町村バトル', '日本全国の市区町村の地図で遊ぶ陣取り将棋（最大16人）。賭けありの部屋では、所持金を賭けて対戦できます（観戦して賭けることも）'],
   ['ebifry', '🍤', '空飛ぶエビフライ', '武器・調味料・パーツ・わざを、重さの許すかぎりくっつけて飛ぶエビフライの空中バトル（CPUと1対1・3体と乱戦・最大6人のネット対戦。所持金は使いません）'],
+  ['karuta', '🎴', '百人一首', 'かるた対戦（AI は Lv1〜10・同じ端末で最大4人・練習で百首をおぼえる）。強さとプレイ時間で賞、強いAI（Lv7〜）に勝つと X（1日の上限あり）'],
   ['auction', '🔨', '競り市', '魚市場や骨董市の競り（2〜6人）。自分だけの目利きで値打ちを見きわめて値をつけ、落札した品の値打ちをそのまま受け取る'],
   ['koikoi', '🎴', '花札こいこい', 'ふたりで遊ぶ花札。同じ月の札を合わせてとり、役をそろえる。「こいこい」でつづけるか「勝負」で上がるか（3・6・12か月。コンピューターとも）'],
   ['vFish', '🎣', '釣り', '堤防・磯・沖・川・湖で釣る。季節と時間で釣れる魚がかわる。釣った魚は競り市で売れる。毎日16:00から夕まずめ釣り大会'],
@@ -2163,6 +2164,7 @@ $('#gameList').onclick = ev => {
   if (g === 'battle') { location.href = 'battle/?bet=1'; return; }
   if (g === 'kani') { location.href = 'kani/'; return; }       // カニノケンカ 3D（メダカ研究所。ログインなしでも遊べる別のページ）
   if (g === 'ebifry') { location.href = 'ebifry/'; return; }   // 空飛ぶエビフライ（風の芽製作所。ログインなしでも遊べる別のページ）
+  if (g === 'karuta') { location.href = 'karuta/'; return; }   // 百人一首（風の芽製作所。ログインなしでも遊べる別のページ。賞と X はログインしているとき）
   if (g.startsWith('v')) return go(g);
   if (!BOARD_GAMES[g]) return toast('準備中です。もうしばらくお待ちください');
   LB.game = g; go('vLobby');
