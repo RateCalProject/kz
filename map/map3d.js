@@ -5,8 +5,8 @@
 (function () {
 'use strict';
 // map.js の中のもの（window.MapInt）を使う
-let S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, PAL;
-function m3Init() { ({ S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer } = window.MapInt); PAL = window.MapPal; }
+let S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runIsSel, runName, runDest, showTrain, runFollow, PAL;
+function m3Init() { ({ S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runIsSel, runName, runDest, showTrain, runFollow } = window.MapInt); PAL = window.MapPal; }
 const M3 = { on: false, loading: false };
 const M3_LIB = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
 const M3_FH = 3.4;          // 1階の高さ（m）
@@ -97,7 +97,7 @@ async function m3Open() {
   M3.tex = m3WinTex(T3);
   S.v3 = M3; S.wrap.classList.add('mp-3d');
   m3Bind(cv);
-  hint('3D は見るだけです（指でうごかす・2本指で回す／かたむける）'); setTimeout(() => { if (M3.on) hint(''); }, 4000);
+  hint(S.layer.run ? '3D は見るだけです（指でうごかす・2本指で回す／かたむける・列車をタップで情報）' : '3D は見るだけです（指でうごかす・2本指で回す／かたむける）'); setTimeout(() => { if (M3.on) hint(''); }, 4000);
   S.dirty = true;
 }
 function m3Close() {
@@ -106,6 +106,8 @@ function m3Close() {
   S.cam.x = M3.tx; S.cam.y = M3.ty; S.cam.z = Math.max(1.2, Math.min(40, S.H / Math.max(4, M3.d * 1.05)));
   for (const g of [M3.grpT, M3.grpB, M3.grpR]) m3Clear(g);
   if (M3.run) { M3.run.geometry.dispose(); M3.run.material.dispose(); M3.run = null; M3.runCap = 0; }
+  if (M3.mark) { M3.mark.geometry.dispose(); M3.mark.material.dispose(); M3.mark = null; }
+  M3.runHit = []; M3.selLab = null;
   M3.glide = null; M3.labs = []; if (clearRunLayer) clearRunLayer();
   M3.r.dispose(); M3.cv.remove();
   M3.on = false; S.v3 = null; S.v3rect = null; S.wrap.classList.remove('mp-3d');
@@ -209,13 +211,14 @@ function m3Blds(v) {
   const bs = [...it.blds.values()].filter(b => b.bb[2] >= v.x0 && b.bb[0] <= v.x1 && b.bb[3] >= v.y0 && b.bb[1] <= v.y1);
   const segs = [...it.segs.values()].filter(s => s.bb[2] >= v.x0 && s.bb[0] <= v.x1 && s.bb[3] >= v.y0 && s.bb[1] <= v.y1);
   const rws = [...(it.rwys ? it.rwys.values() : [])].filter(r => r.bb && r.bb[2] >= v.x0 && r.bb[0] <= v.x1 && r.bb[3] >= v.y0 && r.bb[1] <= v.y1);
+  const sts = [...it.stas.values()].filter(t => t.fx >= v.x0 - 2 && t.fx <= v.x1 + 2 && t.fy >= v.y0 - 2 && t.fy <= v.y1 + 2);   // 駅（t62）
   const key = bs.length + ':' + bs.reduce((a, b) => (a + b.id * 31 + b.floors) % 1e9, 0) + '|' + segs.length + ':' + segs.reduce((a, s) => (a + s.id * 17) % 1e9, 0) + '|' + M3.cm.size
-            + '|' + rws.length + ':' + rws.reduce((a, r) => (a + r.id * 13) % 1e9, 0);
+            + '|' + rws.length + ':' + rws.reduce((a, r) => (a + r.id * 13) % 1e9, 0) + '|' + sts.length + ':' + sts.reduce((a, t) => (a + t.id * 7 + (t.pl || 0) * 3 + (t.tr || 0)) % 1e9, 0);
   if (key === M3.bKey) return;
   M3.bKey = key;
   m3Clear(M3.grpB); m3Clear(M3.grpR);
   const T3 = M3.T;
-  M3.labs = [];   // 建物の名前（t61）：[{x, y, h, n}]
+  M3.labs = [];   // 建物の名前（t61）：[{x, y, h, n}]。駅（t62）は st
   // 区画（10m）→ 行ごとの長方形 → 同じ横はばの行をまとめる
   const W = { glass: [], grid: [], house: [], none: [] }, RF = [];
   const push = (arr, x, y, z, nx, ny, nz, c, u, w) => arr.push(x, y, z, nx, ny, nz, c[0], c[1], c[2], u, w);
@@ -286,6 +289,38 @@ function m3Blds(v) {
     const m = new T3.MeshLambertMaterial({ vertexColors: true, map: tex || null, side: T3.DoubleSide });
     grp.add(new T3.Mesh(g, m));
   };
+  // 駅（t62）：ホーム（両がわ）・屋根・橋の上の駅舎。バス停は小さな待合所。名前は上に
+  {
+    const quad = (a, b, c, d, nn, col) => { for (const p of [a, c, b, a, d, c]) push(RF, p[0], p[1], p[2], nn[0], nn[1], nn[2], col, 0, 0); };   // 外から見て表になる向き
+    const obox = (cx, cz, ang, L, Wd, y0, y1, col) => {
+      const c = Math.cos(ang), sn = Math.sin(ang), P = (u, w) => [cx + c * u - sn * w, cz + sn * u + c * w];
+      const A = P(-L / 2, -Wd / 2), B = P(L / 2, -Wd / 2), C = P(L / 2, Wd / 2), D = P(-L / 2, Wd / 2);
+      quad([A[0], y1, A[1]], [B[0], y1, B[1]], [C[0], y1, C[1]], [D[0], y1, D[1]], [0, 1, 0], col);
+      const side = (p, q2, nx, nz) => quad([p[0], y0, p[1]], [q2[0], y0, q2[1]], [q2[0], y1, q2[1]], [p[0], y1, p[1]], [nx, 0, nz], col);
+      side(A, B, sn, -c); side(B, C, c, sn); side(C, D, -sn, c); side(D, A, -c, -sn);
+    };
+    const BED = [0.50, 0.47, 0.44], PLAT = [0.84, 0.84, 0.81], EDGE = [0.93, 0.80, 0.25], ROOF = [0.42, 0.52, 0.60], HALL = [0.94, 0.93, 0.89], HALLR = [0.62, 0.66, 0.70], BUS = [0.26, 0.45, 0.78];
+    for (const t of sts) {
+      const g0 = m3Ground(t.fx, t.fy);
+      if (t.k === 'rail') {
+        const L = Math.max(0.4, (t.pl || 120) / 50), Wd = 0.22 * Math.max(1, t.tr || 1) + 0.18, pw = 0.11, a = t.a || 0, c = Math.cos(a), sn = Math.sin(a);
+        obox(t.fx, t.fy, a, L + 0.06, Wd, g0 - 0.2 * M3_U, g0 + 0.15 * M3_U, BED);   // 線路の敷地
+        for (const sd of [-1, 1]) {   // ホーム（駅の両はし）と、その上の屋根
+          const w = sd * (Wd / 2 - pw / 2), cx = t.fx - sn * w, cz = t.fy + c * w;
+          obox(cx, cz, a, L, pw, g0, g0 + 1.1 * M3_U, PLAT);
+          { const we = sd * (Wd / 2 - pw + 0.012); obox(t.fx - sn * we, t.fy + c * we, a, L, 0.016, g0 + 1.1 * M3_U, g0 + 1.16 * M3_U, EDGE); }   // 黄色い線（ホームのはし）
+          obox(cx, cz, a, L * 0.62, pw + 0.03, g0 + 4.0 * M3_U, g0 + 4.5 * M3_U, ROOF);
+        }
+        const Lh = Math.min(0.6, L * 0.16 + 0.12);   // 橋の上の駅舎（線路の上をまたぐ）
+        obox(t.fx, t.fy, a, Lh, Wd + 0.08, g0 + 6.5 * M3_U, g0 + 11 * M3_U, HALL);
+        obox(t.fx, t.fy, a, Lh + 0.02, Wd + 0.1, g0 + 11 * M3_U, g0 + 11.6 * M3_U, HALLR);
+        M3.labs.push({ x: t.fx, y: t.fy, h: g0 + 16 * M3_U, n: t.n, f: 99, st: 'rail' });
+      } else if (t.k === 'bus') {
+        obox(t.fx, t.fy, t.a || 0, 0.12, 0.04, g0, g0 + 2.6 * M3_U, BUS);
+        M3.labs.push({ x: t.fx, y: t.fy, h: g0 + 5 * M3_U, n: t.n, f: 0, st: 'bus' });
+      } else M3.labs.push({ x: t.fx, y: t.fy, h: g0 + 20 * M3_U, n: t.n, f: 99, st: t.k });
+    }
+  }
   for (const k of Object.keys(W)) mkMesh(W[k], M3.tex[k], M3.grpB);
   mkMesh(RF, null, M3.grpB);
   // 道路・線路：地面の少し上に帯で（道のはば・地面の高さにそって）
@@ -320,55 +355,101 @@ function m3Blds(v) {
   }
 }
 
-/* ---------- 走行位置（t61）：列車は両ごと、バス・船・飛行機は1つの箱。線路・道路・航路の上を、ダイヤのとおりに ---------- */
+/* ---------- 走行位置（t61・t62）：列車は両ごと、バス・船・飛行機は1つの箱。線路・道路・航路の上を、ダイヤのとおりに。
+   遠くても見えるように、画面で 9px ぐらいの太さまで大きくする（近いときは本物の大きさ）。上りと下りは進む向きの左にずらす ---------- */
 function m3Runs(v) {
   const T3 = M3.T;
-  if (!S.layer.run) { if (M3.run) M3.run.visible = false; return; }
+  M3.runHit = []; M3.selLab = null;
+  if (!S.layer.run) { if (M3.run) M3.run.visible = false; if (M3.mark) M3.mark.visible = false; return; }
   const list = runList(visibleItems(), v);
   let n = 0; for (const o of list) n += o.R.k === 'rail' ? o.T.fn : 1;
   if (!M3.run || M3.runCap < n) {
     if (M3.run) { M3.sc.remove(M3.run); M3.run.geometry.dispose(); M3.run.material.dispose(); }
     M3.runCap = Math.max(64, Math.ceil(n * 1.5));
-    M3.run = new T3.InstancedMesh(new T3.BoxGeometry(1, 1, 1), new T3.MeshLambertMaterial({ color: '#ffffff' }), M3.runCap);
+    M3.run = new T3.InstancedMesh(new T3.BoxGeometry(1, 1, 1), new T3.MeshLambertMaterial({ color: '#ffffff', emissive: '#2a2a2a' }), M3.runCap);
     M3.run.instanceMatrix.setUsage(T3.DynamicDrawUsage); M3.run.frustumCulled = false; M3.sc.add(M3.run);
   }
+  const ppx = 0.828 * M3.d / Math.max(300, S.H);   // 画面の 1px が、だいたい何マスか（まん中の距離で）
   const m = new T3.Matrix4(), q = new T3.Quaternion(), pos = new T3.Vector3(), sc = new T3.Vector3(), up = new T3.Vector3(0, 1, 0), col = new T3.Color();
-  let i = 0;
+  let i = 0, selP = null;
   for (const o of list) {
-    const k = o.R.k, cars = k === 'rail' ? o.T.fn : 1, cl = o.car;
-    const hh = (k === 'rail' ? 3.8 : k === 'bus' ? 3.1 : k === 'ship' ? 9 : 5) * M3_U, ww = (k === 'rail' ? 2.9 : k === 'bus' ? 2.5 : k === 'ship' ? 16 : 30) * M3_U;
+    const k = o.R.k, cars = k === 'rail' ? o.T.fn : 1, sel = runIsSel(o);
+    let hh = (k === 'rail' ? 3.8 : k === 'bus' ? 3.1 : k === 'ship' ? 9 : 5) * M3_U, ww = (k === 'rail' ? 2.9 : k === 'bus' ? 2.5 : k === 'ship' ? 16 : 30) * M3_U;
+    const wmin = (k === 'ship' || k === 'air' ? 11 : 9) * ppx;
+    if (ww < wmin) { hh *= wmin / ww; ww = wmin; }
+    hh = Math.min(hh, ww * 1.35);
+    const cl = Math.max(o.car, ww * (k === 'rail' ? 1.6 : 1.3)), gap = k === 'rail' ? cl * 0.05 : 0;
+    const off = k === 'rail' || k === 'bus' ? ww / 2 + Math.max(0.5 * M3_U, 1.5 * ppx) : 0;   // 進む向きの左
     col.set(o.R.c || '#d23');
     for (let c = 0; c < cars; c++) {
-      const p = runPt(o.H, o.d - (c + 0.5) * cl);
-      let y = k === 'ship' ? 0.05 * M3_U : m3Ground(p[0], p[1]) + 0.3 * M3_U;
+      const p = runPt(o.H, o.d - (c + 0.5) * cl), px = p[0] + Math.sin(p[2]) * off, pz = p[1] - Math.cos(p[2]) * off;
+      let y = k === 'ship' ? 0.05 * M3_U : m3Ground(px, pz) + 0.3 * M3_U;
       if (k === 'air') { const f = o.H.len > 0 ? o.d / o.H.len : 0; y = Math.max(y, Math.min(1, 6 * f, 6 * (1 - f)) * 900 * M3_U); }   // 飛行機：まん中は 900m の高さ
-      pos.set(p[0], y + hh / 2, p[1]); q.setFromAxisAngle(up, -p[2]); sc.set(cl * (k === 'rail' ? 0.94 : 1), hh, ww);
+      pos.set(px, y + hh / 2, pz); q.setFromAxisAngle(up, -p[2]); sc.set(cl - gap, hh, ww);
       m.compose(pos, q, sc); M3.run.setMatrixAt(i, m); M3.run.setColorAt(i, col); i++;
+      M3.runHit.push({ o, x: px, y: y + hh / 2, z: pz });
+      if (c === 0 && sel) selP = [px, y + hh, pz, ww];
     }
   }
   M3.run.count = i; M3.run.visible = i > 0;
   M3.run.instanceMatrix.needsUpdate = true; if (M3.run.instanceColor) M3.run.instanceColor.needsUpdate = true;
+  // えらんだ列車のしるし（黄色の、下向きの三角）と名前
+  if (!M3.mark) { M3.mark = new T3.Mesh(new T3.ConeGeometry(0.5, 1, 4), new T3.MeshBasicMaterial({ color: '#ffc400' })); M3.mark.rotation.x = Math.PI; M3.sc.add(M3.mark); }
+  if (selP) {
+    const z = Math.max(selP[3] * 1.3, 16 * ppx); M3.mark.scale.set(z, z * 1.4, z); M3.mark.position.set(selP[0], selP[1] + z * 1.3, selP[2]); M3.mark.visible = true;
+    const sl = list.find(o => runIsSel(o)); if (sl) M3.selLab = { x: selP[0], y: selP[2], h: selP[1] + z * 2.2, n: runName(sl.T) + ' → ' + runDest(sl.R, sl.T) };
+  } else M3.mark.visible = false;
+}
+// 3D をタップ：いちばん近い列車・バス（画面で 26px まで）の情報
+function m3Tap(cx, cy) {
+  if (!S.layer.run || !M3.runHit || !M3.runHit.length) return;
+  const r = M3.cv.getBoundingClientRect(), X = cx - r.left, Y = cy - r.top, v = new M3.T.Vector3();
+  let best = null, bd = Infinity;
+  for (const h of M3.runHit) {
+    v.set(h.x, h.y, h.z).project(M3.cam); if (v.z > 1 || v.z < -1) continue;
+    const d = Math.hypot((v.x + 1) / 2 * S.W - X, (1 - v.y) / 2 * S.H - Y);
+    if (d < 26 && d < bd) { bd = d; best = h.o; }
+  }
+  if (best) showTrain(best.R, best.T);
 }
 /* ---------- 建物の名前（t61）：上がきのキャンバスに、近いものから・重ならないように ---------- */
 function m3Labels() {
   const g = S.ctxr; if (!g) return;
   g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, S.cvr.width, S.cvr.height);
-  if (!S.v3names || !M3.labs || !M3.labs.length || M3.d > 260) return;
+  const labs = M3.labs || [];
+  if (!labs.length && !M3.selLab) return;
   g.setTransform(S.dpr, 0, 0, S.dpr, 0, 0);
   const v = new M3.T.Vector3(), cam = M3.cam, cx = cam.position.x, cz = cam.position.z, used = [];
-  const L = M3.labs.map(l => [l, (l.x - cx) ** 2 + (l.y - cz) ** 2 - l.f * 4]).sort((a, b) => a[1] - b[1]);
-  g.font = '700 12px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'bottom'; g.lineJoin = 'round';
+  const at = l => { v.set(l.x, l.h, l.y).project(cam); if (v.z > 1 || v.z < -1 || v.x < -1.05 || v.x > 1.05 || v.y < -1.05 || v.y > 1.05) return null; return [(v.x + 1) / 2 * S.W, (1 - v.y) / 2 * S.H - 3]; };
+  const box = (t, X, Y, font, fg, bg, bd) => {
+    g.font = font; const w = g.measureText(t).width + 10, h = 19;
+    if (Y < 50 || used.some(r => X - w / 2 < r[2] && X + w / 2 > r[0] && Y - h < r[3] && Y > r[1])) return false;
+    used.push([X - w / 2, Y - h, X + w / 2, Y]);
+    if (bg) { g.fillStyle = bg; g.strokeStyle = bd; g.lineWidth = 1.5; g.beginPath(); g.rect(X - w / 2, Y - h, w, h); g.fill(); g.stroke(); g.fillStyle = fg; g.fillText(t, X, Y - 3.5); }
+    else { g.lineWidth = 3.5; g.strokeStyle = 'rgba(255,255,255,.95)'; g.strokeText(t, X, Y - 2); g.fillStyle = fg; g.fillText(t, X, Y - 2); }
+    return true;
+  };
+  g.textAlign = 'center'; g.textBaseline = 'bottom'; g.lineJoin = 'round';
+  // えらんだ列車（いちばん上）
+  if (M3.selLab) { const p = at(M3.selLab); if (p) box(M3.selLab.n, p[0], p[1], '700 12px system-ui, sans-serif', '#222', 'rgba(255,236,150,.97)', '#c99a00'); }
+  // 駅（t62）：近いものから。遠すぎるときは出さない
+  if (M3.d <= 420) {
+    let n = 0;
+    for (const [l] of labs.filter(l => l.st && (l.st !== 'bus' || M3.d <= 70)).map(l => [l, (l.x - cx) ** 2 + (l.y - cz) ** 2]).sort((a, b) => a[1] - b[1])) {
+      if (n >= 40) break;
+      const p = at(l); if (!p) continue;
+      if (l.st === 'bus') { if (box(l.n, p[0], p[1], '700 11px system-ui, sans-serif', '#164f99', null)) n++; }
+      else if (box(l.n, p[0], p[1], '800 13px system-ui, sans-serif', '#123a7a', 'rgba(255,255,255,.96)', '#1f5fbf')) n++;
+    }
+  }
+  // 建物の名前（設定で）
+  if (!S.v3names || M3.d > 260) return;
+  const L = labs.filter(l => !l.st).map(l => [l, (l.x - cx) ** 2 + (l.y - cz) ** 2 - l.f * 4]).sort((a, b) => a[1] - b[1]);
   let n = 0;
   for (const [l] of L) {
     if (n >= 70) break;
-    v.set(l.x, l.h, l.y).project(cam);
-    if (v.z > 1 || v.z < -1 || v.x < -1 || v.x > 1 || v.y < -1 || v.y > 1) continue;
-    const X = (v.x + 1) / 2 * S.W, Y = (1 - v.y) / 2 * S.H - 3, w = g.measureText(l.n).width + 6;
-    if (Y < 50) continue;
-    if (used.some(r => X - w / 2 < r[2] && X + w / 2 > r[0] && Y - 15 < r[3] && Y > r[1])) continue;
-    used.push([X - w / 2, Y - 15, X + w / 2, Y]);
-    g.lineWidth = 3.5; g.strokeStyle = 'rgba(255,255,255,.95)'; g.strokeText(l.n, X, Y); g.fillStyle = '#1d2733'; g.fillText(l.n, X, Y);
-    n++;
+    const p = at(l); if (!p) continue;
+    if (box(l.n, p[0], p[1], '700 12px system-ui, sans-serif', '#1d2733', null)) n++;
   }
 }
 
@@ -399,14 +480,17 @@ function m3Bind(cv) {
     }
     hist = [];
   };
-  cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); P.set(e.pointerId, { x: e.clientX, y: e.clientY, b: e.button, sh: e.shiftKey }); last = null; cv.style.cursor = 'grabbing'; M3.glide = null; hist = []; });
+  let tap0 = null;   // タップ（列車の情報。t62）：ほとんど動かさずに、すぐはなしたとき
+  cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); P.set(e.pointerId, { x: e.clientX, y: e.clientY, b: e.button, sh: e.shiftKey }); last = null; cv.style.cursor = 'grabbing'; M3.glide = null; hist = [];
+    tap0 = P.size === 1 && e.button === 0 ? { x: e.clientX, y: e.clientY, t: now(), id: e.pointerId } : null; });
   cv.addEventListener('pointermove', e => {
     const p = P.get(e.pointerId); if (!p) return;
     M3.glide = null;
+    if (tap0 && Math.hypot(e.clientX - tap0.x, e.clientY - tap0.y) > 8) tap0 = null;
     const dx = e.clientX - p.x, dy = e.clientY - p.y;
     if (P.size === 1) {
       if (p.b === 2 || p.sh) { M3.yaw -= dx * 0.006 * (S.v3x ? -1 : 1); M3.pitch = Math.max(0.22, Math.min(1.5, M3.pitch + dy * 0.005)); }
-      else pan(dx, dy);
+      else { pan(dx, dy); if (!tap0 && RUN && RUN.follow) runFollow(0); }   // 自分でうごかしたら、追跡をやめる（t62）
     } else if (P.size === 2) {
       const [a, b] = [...P.values()], ids = [...P.keys()];
       const na = ids[0] === e.pointerId ? { x: e.clientX, y: e.clientY } : a, nb = ids[1] === e.pointerId ? { x: e.clientX, y: e.clientY } : b;
@@ -421,6 +505,8 @@ function m3Bind(cv) {
     p.x = e.clientX; p.y = e.clientY; S.dirty = true; mark(e);
   });
   const up = e => { const n0 = P.size; P.delete(e.pointerId); if (!P.size) cv.style.cursor = 'grab';
+    if (e.type === 'pointerup' && tap0 && tap0.id === e.pointerId && n0 === 1 && now() - tap0.t < 500) { const tp = tap0; tap0 = null; m3Tap(tp.x, tp.y); return; }
+    tap0 = null;
     if (e.type === 'pointerup' && n0 === 1 && P.size === 0) letGo(e); else if (e.type === 'pointerup' && P.size === 1 && n0 === 2) letGo(e); };   // 2本指をはなしたら、回る惰性
   cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
   cv.addEventListener('contextmenu', e => e.preventDefault());

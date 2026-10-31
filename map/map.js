@@ -921,6 +921,7 @@ function drawScale(g, z) {
 function frame() {
   if (!S.open) return;
   glideStep();   // 惰性（t61）
+  runFollowStep();   // 追跡（t62）
   if (S.v3) {   // 3D（map3d.js）
     if (S.layer.run && now() - RUN.drawn > 120) S.v3.dirty = true;   // 走行位置：ときどき描きなおす
     if (S.dirty || S.v3.dirty) { S.dirty = false; S.v3.dirty = false; try { m3Frame(); } catch (e) { console.error(e); } RUN.drawn = now(); }
@@ -944,51 +945,68 @@ function glideStep() {
   if (Math.hypot(g.vx, g.vy) * S.cam.z < 0.015) S.glide = null;
 }
 
-/* ---------- 走行位置（t61）：列車・バス・船・飛行機が、ダイヤ（時刻）のとおりに動く。近いと車両の形、遠いと点 ---------- */
-const RUN = { routes: new Map(), busy: 0, need: 0, drawn: 0 };
-function runReset() { if (!S.layer.run) { RUN.routes.clear(); clearRunLayer(); } RUN.need = 0; }
+/* ---------- 走行位置（t61・t62）：列車・バス・船・飛行機が、ダイヤ（時刻）のとおりに動く。近いと車両の形、遠いと点。
+   上りと下りは、進む向きの左にずらして描く（日本は左側通行。重ならないように）。タップで列車の情報・追跡。しぼりこみ・さがす ---------- */
+const RUN = { routes: new Map(), busy: 0, need: 0, drawn: 0, hits: [], sel: null, selT: 0, follow: null, ft: 0, keep: new Set(),
+              f: { k: ['rail', 'bus', 'ship', 'air'], dir: 0, kind: '', rid: 0 } };   // f：しぼりこみ（種類・向き 1 下り/-1 上り・種別・系統）
+try { const v = JSON.parse(localStorage.getItem('mp_runf') || 'null'); if (v && Array.isArray(v.k)) Object.assign(RUN.f, v); } catch (e) {}
+const RUN_K = { rail: '列車', bus: 'バス', ship: '船', air: '飛行機' }, RUN_IC = { rail: '🚃', bus: '🚌', ship: '⛴', air: '✈' };
+function runFiltered() { const f = RUN.f; return f.k.length < 4 || !!f.dir || !!f.kind || !!f.rid; }
+function runPass(R, tn) {
+  const f = RUN.f;
+  if (!f.k.includes(R.k) || (f.rid && R.id !== f.rid)) return false;
+  return !tn || ((!f.dir || tn.dir === f.dir) && (!f.kind || tn.kind === f.kind));
+}
+function runSetF(f) { RUN.f = f; try { localStorage.setItem('mp_runf', JSON.stringify(f)); } catch (e) {} runBar(); S.dirty = true; if (S.v3) S.v3.dirty = true; }
+function runReset() { if (!S.layer.run) { RUN.routes.clear(); RUN.follow = null; RUN.sel = null; clearRunLayer(); } RUN.need = 0; runBar(); }
 function clearRunLayer() { if (S.ctxr) { S.ctxr.setTransform(1, 0, 0, 1, 0, 0); S.ctxr.clearRect(0, 0, S.cvr.width, S.cvr.height); } }
 // いまの時刻（日本時間）：その日の 0 時からの秒・今日と きのうの日付
 function jstNow() {
   const t = Date.now() / 1000 + 9 * 3600, d = Math.floor(t / 86400), ds = n => new Date(n * 86400000).toISOString().slice(0, 10);
   return { sec: t - d * 86400, date: ds(d), prev: ds(d - 1) };
 }
-// 見えている駅・バス停・港・空港を通る系統のダイヤを読む（10分ごとに読みなおす）
+// 1つの系統のダイヤを読む（10分ごとに読みなおす）。true 読みはじめた・false もうある・null いそがしい（3つまで）
+function runLoad(id) {
+  const R = RUN.routes.get(id);
+  if (R && (R.loading || now() - R.at < 600000)) return false;
+  if (RUN.busy >= 3) return null;
+  if (R) R.loading = true; else RUN.routes.set(id, { id, loading: true, at: 0, tr: [], st: [], legs: [] });
+  RUN.busy++;
+  call('mp_dia', { p_route: id }).then(D => { if (D) RUN.routes.set(id, prepRun(D)); })
+    .catch(() => { const r = RUN.routes.get(id); if (r) { r.loading = false; r.at = now(); } })
+    .finally(() => { RUN.busy--; RUN.need = 0; S.dirty = true; if (S.v3) S.v3.dirty = true; });
+  return true;
+}
+// 見えている駅・バス停・港・空港を通る系統のダイヤを読む
 function runNeed(it) {
   if (now() - RUN.need < 1500) return; RUN.need = now();
   const ids = new Set();
   for (const st of it.stas.values()) for (const r of (st.rt || [])) ids.add(r.id);
   for (const l of it.lanes.values()) ids.add(l.id);
-  for (const id of ids) {
-    const R = RUN.routes.get(id);
-    if (R && (R.loading || now() - R.at < 600000)) continue;
-    if (RUN.busy >= 3) break;
-    if (R) R.loading = true; else RUN.routes.set(id, { id, loading: true, at: 0, tr: [], st: [], legs: [] });
-    RUN.busy++;
-    call('mp_dia', { p_route: id }).then(D => { if (D) RUN.routes.set(id, prepRun(D)); })
-      .catch(() => { const r = RUN.routes.get(id); if (r) { r.loading = false; r.at = now(); } })
-      .finally(() => { RUN.busy--; RUN.need = 0; S.dirty = true; if (S.v3) S.v3.dirty = true; });
-  }
-  if (RUN.routes.size > 160) {   // 多くなったら、いま見えていない系統からすてる
-    for (const [id, R] of RUN.routes) { if (RUN.routes.size <= 120) break; if (!ids.has(id) && !R.loading) RUN.routes.delete(id); }
+  if (RUN.follow) ids.add(RUN.follow.rid);
+  for (const id of ids) if (runLoad(id) === null) break;
+  if (RUN.routes.size > 160) {   // 多くなったら、いま見えていない系統からすてる（追跡中・さがした系統はのこす）
+    for (const [id, R] of RUN.routes) { if (RUN.routes.size <= 120) break; if (!ids.has(id) && !RUN.keep.has(id) && !R.loading) RUN.routes.delete(id); }
   }
 }
 function prepRun(D) {
-  const R = { id: D.id, k: D.kind, c: D.color || '#d23', n: D.name, at: now(), loading: false, legs: D.legs || [], lp: [], hop: new Map(), tr: [],
-              st: (D.stops || []).map(x => ({ id: x.id, x: x.x / 100, y: x.y / 100 })) };
+  const R = { id: D.id, k: D.kind, c: D.color || '#d23', n: D.name || '', own: D.owner || '', at: now(), loading: false, legs: D.legs || [], lp: [], hop: new Map(), tr: [],
+              st: (D.stops || []).map(x => ({ id: x.id, x: x.x / 100, y: x.y / 100, n: x.name || '' })) };
+  R.sn = new Map(R.st.map(s => [s.id, s.n]));
   for (const t of D.trains || []) {
     const sc = t.sched; if (t.bad || !Array.isArray(sc) || sc.length < 2) continue;
     const t0 = sc[0][2], t1 = sc[sc.length - 1][1]; if (t0 == null || t1 == null) continue;
-    R.tr.push({ id: t.id, dir: t.dir, num: t.num, kind: t.kind, day: t.day, fn: Math.max(1, t.fn || 1), s: sc, t0, t1, idx: null });
+    R.tr.push({ id: t.id, dir: t.dir, num: t.num, kind: t.kind, day: t.day, fn: Math.max(1, t.fn || 1), s: sc, t0, t1, idx: null,
+                fname: t.fname || '', fser: t.fser || '', onum: t.onum || '' });
   }
   return R;
 }
 // 列車のとまる駅が、系統の駅の何番目か（行きは前から、帰りはうしろから。同じ駅が2回出る環状線も）
-function runIdx(R, T) {
-  const ids = R.st.map(x => x.id), out = []; let p = T.dir === -1 ? ids.length - 1 : 0;
-  for (const e of T.s) {
+function runIdx(R, tn) {
+  const ids = R.st.map(x => x.id), out = []; let p = tn.dir === -1 ? ids.length - 1 : 0;
+  for (const e of tn.s) {
     let q = -1;
-    if (T.dir === -1) { for (let k = p; k >= 0; k--) if (ids[k] === e[0]) { q = k; break; } }
+    if (tn.dir === -1) { for (let k = p; k >= 0; k--) if (ids[k] === e[0]) { q = k; break; } }
     else { for (let k = p; k < ids.length; k++) if (ids[k] === e[0]) { q = k; break; } }
     if (q < 0) q = ids.indexOf(e[0]);
     out.push(q); if (q >= 0) p = q;
@@ -1016,6 +1034,7 @@ function runLeg(R, i, it) {
 }
 // 駅 a → b（系統の何番目か）の線。帰りは逆向き
 function runHop(R, a, b, it) {
+  if (a < 0 || b < 0) return null;
   const key = a + '>' + b, c = R.hop.get(key);
   if (c && c.exact) return c;
   const lo = Math.min(a, b), hi = Math.max(a, b), parts = [];
@@ -1041,84 +1060,290 @@ function runSub(H, d0, d1) {
   for (let k = 1; k < H.pts.length - 1; k++) if (H.cum[k] > d0 && H.cum[k] < d1) out.push(H.pts[k]);
   out.push(runPt(H, d1)); return out;
 }
-// いま走っている車両：[{R, T, H, d（頭の位置）, len（長さ・マス）}]。v：見るはんい（マス）
+// 進む向きの左に off（マス）ずらした折れ線
+function runOff(pts, off) {
+  if (!off) return pts;
+  const n = pts.length, out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
+    let dx = b[0] - a[0], dy = b[1] - a[1]; const L = Math.hypot(dx, dy) || 1; dx /= L; dy /= L;
+    out[i] = [pts[i][0] + dy * off, pts[i][1] - dx * off];
+  }
+  return out;
+}
+// 列車 tn の、時刻 tm の位置：{H（走っている線）, d（頭の位置）, x, y, a, at（止まっている駅：sched の何番目）, nx（つぎに着く駅）, tt（その日の秒）} か null（走っていない）
+function runPos(R, tn, tm, it) {
+  let tt = null;
+  if ((!tn.day || tn.day === tm.date) && tm.sec >= tn.t0 && tm.sec <= tn.t1) tt = tm.sec;
+  else if ((!tn.day || tn.day === tm.prev) && tm.sec + 86400 >= tn.t0 && tm.sec + 86400 <= tn.t1) tt = tm.sec + 86400;   // 日をまたぐ列車（24時すぎ）
+  if (tt == null) return null;
+  if (!tn.idx) tn.idx = runIdx(R, tn);
+  const sc = tn.s; let H = null, d = 0, at = -1, nx = -1;
+  for (let i = 0; i < sc.length; i++) {
+    const ar = sc[i][1], dp = sc[i][2];
+    if (ar != null && dp != null && tt >= ar && tt <= dp) {   // 駅にとまっている：来た線の終わり（頭が駅）
+      at = i;
+      if (i > 0) { H = runHop(R, tn.idx[i - 1], tn.idx[i], it); if (H) d = H.len; }
+      else if (i + 1 < sc.length) { H = runHop(R, tn.idx[0], tn.idx[1], it); if (H) d = Math.min(H.len, 0.4 * tn.fn); }
+      break;
+    }
+    if (i + 1 < sc.length && dp != null && sc[i + 1][1] != null && tt >= dp && tt <= sc[i + 1][1]) {
+      nx = i + 1; H = runHop(R, tn.idx[i], tn.idx[i + 1], it); if (!H) break;
+      const f = (tt - dp) / Math.max(1, sc[i + 1][1] - dp), g = R.k === 'air' || R.k === 'ship' ? f : f * f * (3 - 2 * f);   // 電車・バスは、はじめとおわりがゆっくり
+      d = g * H.len; break;
+    }
+    if (i + 1 === sc.length && ar != null && tt >= ar) { at = i; if (i > 0) { H = runHop(R, tn.idx[i - 1], tn.idx[i], it); if (H) d = H.len; } }
+  }
+  if (!H) return null;
+  const p = runPt(H, d);
+  return { H, d, x: p[0], y: p[1], a: p[2], at, nx, tt };
+}
+const runCarL = k => k === 'rail' ? 0.4 : k === 'bus' ? 0.24 : k === 'ship' ? 2.4 : 0.9;   // 1両（1台）の長さ（マス）
+// いま走っている車両（しぼりこみのとおり）：[{R, T, H, d（頭の位置）, x, y, a, len（長さ・マス）, car}]。v：見るはんい（マス）
 function runList(it, v) {
   runNeed(it);
   const tm = jstNow(), out = [], pad = 3;
   for (const R of RUN.routes.values()) {
-    if (!R.tr || !R.tr.length || !R.st.length) continue;
-    const carL = R.k === 'rail' ? 0.4 : R.k === 'bus' ? 0.24 : R.k === 'ship' ? 2.4 : 0.9;
-    for (const T of R.tr) {
-      // 日をまたぐ列車（24時すぎ）は、きのうの列車として見る
-      let tt = null;
-      if ((!T.day || T.day === tm.date) && tm.sec >= T.t0 && tm.sec <= T.t1) tt = tm.sec;
-      else if ((!T.day || T.day === tm.prev) && tm.sec + 86400 >= T.t0 && tm.sec + 86400 <= T.t1) tt = tm.sec + 86400;
-      if (tt == null) continue;
-      if (!T.idx) T.idx = runIdx(R, T);
-      const sc = T.s; let H = null, d = 0;
-      for (let i = 0; i < sc.length; i++) {
-        const ar = sc[i][1], dp = sc[i][2];
-        if (ar != null && dp != null && tt >= ar && tt <= dp) {   // 駅にとまっている：来た線の終わり（頭が駅）
-          if (i > 0) { H = runHop(R, T.idx[i - 1], T.idx[i], it); if (H) d = H.len; }
-          else if (i + 1 < sc.length) { H = runHop(R, T.idx[0], T.idx[1], it); if (H) d = Math.min(H.len, 0.4 * T.fn); }
-          break;
-        }
-        if (i + 1 < sc.length && dp != null && sc[i + 1][1] != null && tt >= dp && tt <= sc[i + 1][1]) {
-          H = runHop(R, T.idx[i], T.idx[i + 1], it); if (!H) break;
-          const f = (tt - dp) / Math.max(1, sc[i + 1][1] - dp), g = R.k === 'air' || R.k === 'ship' ? f : f * f * (3 - 2 * f);   // 電車・バスは、はじめとおわりがゆっくり
-          d = g * H.len; break;
-        }
-        if (i + 1 === sc.length && ar != null && tt >= ar) { if (i > 0) { H = runHop(R, T.idx[i - 1], T.idx[i], it); if (H) d = H.len; } }
-      }
-      if (!H) continue;
-      const p = runPt(H, d);
-      if (p[0] < v.x0 - pad || p[0] > v.x1 + pad || p[1] < v.y0 - pad || p[1] > v.y1 + pad) continue;
-      out.push({ R, T, H, d, x: p[0], y: p[1], a: p[2], len: carL * (R.k === 'rail' ? T.fn : 1), car: carL });
+    if (!R.tr || !R.tr.length || !R.st.length || !runPass(R)) continue;
+    const carL = runCarL(R.k);
+    for (const tn of R.tr) {
+      if (!runPass(R, tn)) continue;
+      const p = runPos(R, tn, tm, it); if (!p) continue;
+      if (p.x < v.x0 - pad || p.x > v.x1 + pad || p.y < v.y0 - pad || p.y > v.y1 + pad) continue;
+      out.push({ R, T: tn, H: p.H, d: p.d, x: p.x, y: p.y, a: p.a, at: p.at, nx: p.nx, len: carL * (R.k === 'rail' ? tn.fn : 1), car: carL });
     }
   }
   return out;
 }
+const runIsSel = o => (!!RUN.sel && RUN.sel.rid === o.R.id && RUN.sel.tid === o.T.id) || (!!RUN.follow && RUN.follow.rid === o.R.id && RUN.follow.tid === o.T.id);   // えらんだ・追跡中
 // 2D・2.5D：上がきのキャンバスに描く
 function drawRunLayer() {
-  RUN.drawn = now();
+  RUN.drawn = now(); RUN.hits = [];
   if (!S.ctxr) return;
   clearRunLayer();
   if (!S.layer.run || S.v3 || !S.vis) return;
   const g = S.ctxr, z = S.cam.z, list = runList(S.vis, view());
-  g.setTransform(S.dpr, 0, 0, S.dpr, 0, 0); g.lineCap = 'butt'; g.lineJoin = 'round';
+  g.setTransform(S.dpr, 0, 0, S.dpr, 0, 0); g.lineJoin = 'round';
   const lb = [];
+  list.sort((a, b) => runIsSel(a) - runIsSel(b));   // えらんだ列車はいちばん上に
   for (const o of list) {
-    const px = o.len * z, sxp = sx(o.x), syp = sy(o.y);
-    if ((o.R.k === 'rail' || o.R.k === 'bus') && px >= 7) {
-      // 車両の形：線路・道路にそって、頭から うしろへ。両ごとにすきま
-      const pts = runSub(o.H, o.d - o.len, o.d), wd = o.R.k === 'rail' ? Math.max(5, 0.22 * z) : Math.max(4, 0.17 * z);
-      g.beginPath(); pts.forEach((q, i) => i ? g.lineTo(sx(q[0]), sy(q[1])) : g.moveTo(sx(q[0]), sy(q[1])));
-      g.setLineDash([]); g.strokeStyle = 'rgba(15,15,15,.85)'; g.lineWidth = wd + 3; g.stroke();
-      g.strokeStyle = o.R.c; g.lineWidth = wd;
-      const cpx = o.car * z; if (o.R.k === 'rail' && cpx >= 6) g.setLineDash([cpx - 1.2, 1.2]);
-      g.stroke(); g.setLineDash([]);
-      g.fillStyle = '#fff'; g.beginPath(); g.arc(sxp, syp, Math.max(1.6, wd * 0.28), 0, 6.3); g.fill();   // 頭（前のまど）
-      if (z >= 14) lb.push(o);
+    const k = o.R.k, sel = runIsSel(o);
+    if (k === 'rail' || k === 'bus') {
+      const wd = k === 'rail' ? Math.max(9, Math.min(22, 0.34 * z)) : Math.max(7, Math.min(16, 0.26 * z));
+      const off = (wd / 2 + 1.5) / z, hx = o.x + Math.sin(o.a) * off, hy = o.y - Math.cos(o.a) * off;   // 進む向きの左
+      if (o.len * z >= 12) {
+        // 車両の形：線路・道路にそって、頭から うしろへ。両ごとにすきま
+        const pts = runOff(runSub(o.H, o.d - o.len, o.d), off).map(q => [sx(q[0]), sy(q[1])]);
+        const path = () => { g.beginPath(); pts.forEach((q, i) => i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1])); };
+        g.setLineDash([]); g.lineCap = 'round';
+        if (sel) { path(); g.strokeStyle = 'rgba(255,205,0,.95)'; g.lineWidth = wd + 11; g.stroke(); }
+        path(); g.strokeStyle = 'rgba(255,255,255,.96)'; g.lineWidth = wd + 4.5; g.stroke();
+        path(); g.strokeStyle = 'rgba(22,22,22,.92)'; g.lineWidth = wd + 1.8; g.stroke();
+        g.lineCap = 'butt';
+        const cpx = o.car * z; if (k === 'rail' && cpx >= 8) g.setLineDash([cpx - 1.8, 1.8]);
+        path(); g.strokeStyle = o.R.c; g.lineWidth = wd; g.stroke(); g.setLineDash([]);
+        const h = pts[pts.length - 1]; g.fillStyle = '#fff'; g.beginPath(); g.arc(h[0], h[1], Math.max(2.2, wd * 0.3), 0, 6.3); g.fill();   // 頭（前のまど）
+        RUN.hits.push({ o, pts, r: wd / 2 + 8 });
+      } else {
+        // 遠いとき：向きのある丸
+        const r = k === 'rail' ? 6.5 : 5.5, X = sx(hx), Y = sy(hy);
+        g.save(); g.translate(X, Y); g.rotate(o.a);
+        if (sel) { g.beginPath(); g.arc(0, 0, r + 6, 0, 6.3); g.fillStyle = 'rgba(255,205,0,.95)'; g.fill(); }
+        g.beginPath(); g.arc(0, 0, r, Math.PI * 0.22, Math.PI * 1.78); g.lineTo(r + 4.5, 0); g.closePath();
+        g.fillStyle = o.R.c; g.fill(); g.lineWidth = 2; g.strokeStyle = '#fff'; g.stroke(); g.restore();
+        RUN.hits.push({ o, pts: [[X, Y]], r: r + 10 });
+      }
+      if (z >= 14 || sel) lb.push([o, sx(hx), sy(hy)]);
     } else {
-      // 点（遠いとき）・船・飛行機は向きのある しるし
-      const r = o.R.k === 'rail' ? 4 : o.R.k === 'bus' ? 3.2 : 5;
-      g.save(); g.translate(sxp, syp);
-      if (o.R.k === 'ship' || o.R.k === 'air') {
-        g.rotate(o.a); g.beginPath(); g.moveTo(r + 2, 0); g.lineTo(-r, r * 0.8); g.lineTo(-r * 0.4, 0); g.lineTo(-r, -r * 0.8); g.closePath();
-      } else { g.beginPath(); g.arc(0, 0, r, 0, 6.3); }
-      g.fillStyle = o.R.c; g.fill(); g.lineWidth = 1.6; g.strokeStyle = '#fff'; g.stroke(); g.restore();
-      if (z >= 9 && (o.R.k === 'ship' || o.R.k === 'air')) lb.push(o);
+      // 船・飛行機：向きのある しるし
+      const r = 7.5, X = sx(o.x), Y = sy(o.y);
+      g.save(); g.translate(X, Y); g.rotate(o.a);
+      if (sel) { g.beginPath(); g.arc(0, 0, r + 7, 0, 6.3); g.fillStyle = 'rgba(255,205,0,.95)'; g.fill(); }
+      g.beginPath(); g.moveTo(r + 3, 0); g.lineTo(-r, r * 0.85); g.lineTo(-r * 0.4, 0); g.lineTo(-r, -r * 0.85); g.closePath();
+      g.fillStyle = o.R.c; g.fill(); g.lineWidth = 1.8; g.strokeStyle = '#fff'; g.stroke(); g.restore();
+      RUN.hits.push({ o, pts: [[X, Y]], r: r + 11 });
+      if (z >= 9 || sel) lb.push([o, X, Y]);
     }
   }
-  // 列車の名前（近いとき・重ならないように）
+  // 列車の名前（近いとき・えらんだ列車。重ならないように）
   g.font = '700 11px system-ui, sans-serif'; g.textBaseline = 'middle'; g.textAlign = 'left';
   const used = [];
-  for (const o of lb.slice(0, 40)) {
-    const t = (o.T.kind ? T(o.T.kind) + ' ' : '') + o.T.num, w = g.measureText(t).width + 8, x = sx(o.x) + 8, y = sy(o.y) - 10;
-    if (used.some(r => x < r[2] && x + w > r[0] && y - 8 < r[3] && y + 8 > r[1])) continue;
+  lb.sort((a, b) => runIsSel(b[0]) - runIsSel(a[0]));
+  for (const [o, X, Y] of lb.slice(0, 40)) {
+    const sel = runIsSel(o), t = runName(o.T, o.R.k) + (sel || z >= 20 ? ' → ' + runDest(o.R, o.T) : ''), w = g.measureText(t).width + 8, x = X + 9, y = Y - 12;
+    if (!sel && used.some(r => x < r[2] && x + w > r[0] && y - 8 < r[3] && y + 8 > r[1])) continue;
     used.push([x, y - 8, x + w, y + 8]);
-    g.fillStyle = 'rgba(255,255,255,.88)'; g.fillRect(x, y - 8, w, 16); g.fillStyle = '#222'; g.fillText(t, x + 4, y);
+    g.fillStyle = sel ? 'rgba(255,236,150,.97)' : 'rgba(255,255,255,.9)'; g.fillRect(x, y - 8, w, 16); g.fillStyle = '#222'; g.fillText(t, x + 4, y);
   }
+}
+const runName = (tn, k) => (tn.kind && (k === 'rail' || !k || tn.kind !== '普通') ? T(kindL(tn.kind)) + ' ' : '') + tn.num;   // バス・船・飛行機は「普通」を出さない
+function runDest(R, tn) { const e = tn.s[tn.s.length - 1]; return (e && R.sn && R.sn.get(e[0])) || ''; }
+// タップした列車（2D：描いた形の近く）
+const runSegD = (px, py, a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], L = dx * dx + dy * dy; const t = L ? Math.max(0, Math.min(1, ((px - a[0]) * dx + (py - a[1]) * dy) / L)) : 0; return Math.hypot(px - a[0] - dx * t, py - a[1] - dy * t); };
+function runHit(px, py) {
+  let best = null, bd = Infinity;
+  for (const h of RUN.hits) {
+    const P = h.pts; let d = P.length === 1 ? Math.hypot(px - P[0][0], py - P[0][1]) : Infinity;
+    for (let i = 0; i + 1 < P.length; i++) d = Math.min(d, runSegD(px, py, P[i], P[i + 1]));
+    if (d <= h.r && d < bd) { bd = d; best = h.o; }
+  }
+  return best;
+}
+// 列車の情報（下のシート）。2秒ごとに「いま」を書きなおす。3D でも出す
+function showTrain(R, tn) {
+  RUN.sel = { rid: R.id, tid: tn.id }; S.sel = null; S.dirty = true; if (S.v3) S.v3.dirty = true;
+  const key = R.id + ':' + tn.id, rail = R.k === 'rail', sc = tn.s;
+  const rows = sc.map((e, i) => `<div class="mp-ttr" data-i="${i}"><span class="n">${esc(R.sn.get(e[0]) || '')}</span><span class="t">${e[1] != null ? `<span>${hms(e[1])}着</span>` : ''}</span><span class="t">${e[2] != null ? `<span>${hms(e[2])}発</span>` : ''}</span><span class="k">${rail && e[3] ? `<span>${e[3]}番線</span>` : ''}</span></div>`).join('');
+  sheet(`<div class="mp-s3in"><h4 data-trn="${key}"><span style="color:${esc(R.c)}">■</span> <span>${esc(R.n)}</span></h4>
+    <div class="mp-kv"><b>${RUN_K[R.k] || '列車'}</b><span><b translate="no">${esc(runName(tn, R.k))}</b>　<span>${esc(runDest(R, tn))}行き</span>${tn.day ? ' <small class="mp-tag">臨時</small>' : ''}</span>
+      <b>いま</b><span data-now></span><b>つぎ</b><span data-next></span>
+      ${tn.fname ? `<b>${rail ? '編成' : '車両'}</b><span><span translate="no">${esc(tn.fname)}</span>${tn.fser ? `<small class="muted">（<span>${esc(tn.fser)}</span>）</small>` : ''}${rail ? `・<span>${tn.fn}両</span>` : ''}</span>` : ''}
+      ${tn.onum ? `<b>運用</b><span>${esc(tn.onum)}</span>` : ''}
+      <b>持ち主</b><span>${esc(R.own)}</span></div>
+    <div class="mp-row"><button class="btn main" data-fol></button><button class="btn" data-dia>系統のダイヤ</button></div>
+    <div class="mp-ttl">${rows}</div></div>`, sh => {
+    sh.querySelector('[data-dia]').onclick = () => openDia(R.id);
+    sh.querySelector('[data-fol]').onclick = () => { const on = !(RUN.follow && RUN.follow.rid === R.id && RUN.follow.tid === tn.id); runFollow(on ? R.id : 0, tn.id); upd(); };
+  });
+  S.sheet.classList.add('mp-s3');
+  const upd = () => {
+    const h = S.sheet.querySelector('[data-trn]');
+    if (!h || h.dataset.trn !== key || !RUN.sel || RUN.sel.rid !== R.id || RUN.sel.tid !== tn.id) { clearInterval(RUN.selT); if (!h || h.dataset.trn !== key) { RUN.sel = null; S.dirty = true; } return; }
+    const R2 = RUN.routes.get(R.id) || R, t2 = (R2.tr || []).find(x => x.id === tn.id) || tn, p = runPos(R2, t2, jstNow(), S.vis || visibleItems()), nm = i => esc(R.sn.get(sc[i][0]) || '');
+    let now_ = '', nxt = '';
+    if (!p) {
+      const tm = jstNow(), tt = tm.sec;
+      now_ = tt < tn.t0 ? `<span>まだ出ていません</span>（<span>${nm(0)}</span> <span>${hms(tn.t0)}発</span>）` : '<span>走りおわりました</span>';
+    } else if (p.at >= 0) {
+      now_ = `<b>${p.at === sc.length - 1 ? `${nm(p.at)}着（終点）` : `${nm(p.at)}に停車中`}</b>${rail && sc[p.at][3] ? `（<span>${sc[p.at][3]}番線</span>）` : ''}`;
+      if (p.at + 1 < sc.length) nxt = `<span>${nm(p.at + 1)}</span> <span>${hms(sc[p.at + 1][1] != null ? sc[p.at + 1][1] : sc[p.at + 1][2])}着</span>　<small class="muted"><span>${hms(sc[p.at][2])}発</span></small>`;
+    } else if (p.nx > 0) {
+      now_ = `<span>${nm(p.nx - 1)} → ${nm(p.nx)} を走っています</span>`;
+      nxt = `<b>${nm(p.nx)}</b> <span>${hms(sc[p.nx][1])}着</span>`;
+    }
+    const a = S.sheet.querySelector('[data-now]'), b = S.sheet.querySelector('[data-next]'); if (a) a.innerHTML = now_; if (b) b.innerHTML = nxt || '—';
+    const fol = RUN.follow && RUN.follow.rid === R.id && RUN.follow.tid === tn.id, fb = S.sheet.querySelector('[data-fol]');
+    if (fb) { fb.textContent = T(fol ? '📍 追跡をやめる' : '📍 追跡する'); fb.classList.toggle('on', fol); }
+    const cur = p ? (p.at >= 0 ? p.at : p.nx) : -1, tt = p ? p.tt : -1;
+    S.sheet.querySelectorAll('.mp-ttr').forEach(r => { const i = Number(r.dataset.i), e = sc[i];
+      r.classList.toggle('now', i === cur); r.classList.toggle('past', !!p && i !== cur && (e[2] != null ? e[2] : e[1]) < tt); });
+  };
+  clearInterval(RUN.selT); RUN.selT = setInterval(upd, 2000); upd();
+  { const r = S.sheet.querySelector('.mp-ttr.now'), box = S.sheet.querySelector('.mp-ttl'); if (r && box) box.scrollTop = Math.max(0, r.offsetTop - box.offsetTop - 44); }
+  S.onSheetClose = () => { RUN.sel = null; clearInterval(RUN.selT); S.dirty = true; if (S.v3) S.v3.dirty = true; };
+}
+// 追跡：地図がその列車についていく（自分で地図をうごかすと、やめる）
+function runFollow(rid, tid) {
+  RUN.follow = rid ? { rid, tid } : null; RUN.ft = 0;
+  if (rid) { RUN.keep.add(rid); RUN.sel = { rid, tid }; }
+  runBar(); S.dirty = true; if (S.v3) S.v3.dirty = true;
+}
+function runFollowStep() {
+  const f = RUN.follow; if (!f || !S.layer.run) return;
+  const t = now(); if (t - RUN.ft < 33) return; RUN.ft = t;
+  const R = RUN.routes.get(f.rid); if (!R || !R.tr || !R.tr.length) return;
+  const tn = R.tr.find(x => x.id === f.tid), p = tn && runPos(R, tn, jstNow(), S.vis || visibleItems());
+  if (!p) { RUN.follow = null; runBar(); toast(T('列車が走りおわりました（追跡をやめました）')); return; }
+  const q = runPt(p.H, p.d - runCarL(R.k) * (R.k === 'rail' ? tn.fn : 1) / 2);   // 列車のまん中
+  if (S.v3) { if (Math.hypot(q[0] - S.v3.tx, q[1] - S.v3.ty) > 1e-4) { m3Target(q[0], q[1]); S.v3.dirty = true; } }
+  else if (Math.hypot(q[0] - S.cam.x, q[1] - S.cam.y) * S.cam.z > 0.4) setCam(q[0], q[1], S.cam.z);
+}
+// 追跡中・しぼりこみ中のしるし（地図の左上）
+function runBar() {
+  if (!S.wrap) return;
+  let b = S.wrap.querySelector('.mp-runbar');
+  if (!b) { b = el('<div class="mp-runbar" hidden></div>'); S.wrap.appendChild(b); }
+  const f = RUN.follow, R = f && RUN.routes.get(f.rid), tn = R && R.tr && R.tr.find(x => x.id === f.tid), parts = [];
+  if (f && S.layer.run) parts.push(`<button data-rbf>📍 <span>追跡中</span>${tn ? `：<b translate="no">${esc(runName(tn, R.k))}</b>` : ''}</button><button data-rbfx title="追跡をやめる">✕</button>`);
+  if (S.layer.run && runFiltered()) parts.push(`<button data-rbs>🔎 <span>しぼりこみ中</span></button><button data-rbsx title="しぼりこみをやめる">✕</button>`);
+  b.innerHTML = parts.join(''); b.hidden = !parts.length;
+  const q = s => b.querySelector(s);
+  if (q('[data-rbf]')) q('[data-rbf]').onclick = () => { if (R && tn) showTrain(R, tn); };
+  if (q('[data-rbfx]')) q('[data-rbfx]').onclick = () => runFollow(0);
+  if (q('[data-rbs]')) q('[data-rbs]').onclick = () => openRunFind();
+  if (q('[data-rbsx]')) q('[data-rbsx]').onclick = () => runSetF({ k: ['rail', 'bus', 'ship', 'air'], dir: 0, kind: '', rid: 0 });
+}
+// 列車・バスをさがす・しぼりこむ（🔍 → 列車・バス）。いま走っているものを、系統ごとに
+async function runAllIds() {
+  if (!RUN.noPub) { try { const r = await call('mp_routes_pub', {}); if (Array.isArray(r)) return { ids: r.map(x => x.id), all: true }; } catch (e) { RUN.noPub = true; } }   // サーバーの更新の前は、1回だけためす
+  // サーバーの更新の前：読んだところ（見えていないところも）の駅・港・空港を通る系統
+  const ids = new Set();
+  for (const c of S.cells.values()) { const d = c && c.data; if (!d) continue; for (const s of d.stas || []) for (const r of (s.rt || [])) ids.add(r.id); for (const l of d.lanes || []) ids.add(l.id); }
+  for (const id of RUN.routes.keys()) ids.add(id);
+  return { ids: [...ids], all: false };
+}
+function openRunFind() {
+  if (!S.layer.run) setOpt('run', true);
+  const st = { q: '', all: null, prog: '', tmr: 0, qt: 0, shown: [] };
+  const m = modal(['🔍 列車・バスをさがす', '<p class="muted small">読みこんでいます…</p>'], null, 'mp-wide');
+  m.onclose = () => { clearInterval(st.tmr); clearTimeout(st.qt); };
+  const loadAll = async () => {
+    const r = await runAllIds(); st.all = r.all;
+    for (const id of r.ids) RUN.keep.add(id);
+    const q = r.ids.filter(id => { const R = RUN.routes.get(id); return !R || (!R.loading && now() - R.at >= 600000); });
+    let done = r.ids.length - q.length, last = 0;
+    const tick = () => { st.prog = `${done} / ${r.ids.length}`; if (now() - last > 700) { last = now(); drawAll(); } };
+    const work = async () => { while (q.length) { const id = q.shift(); try { const D = await call('mp_dia', { p_route: id }); if (D) RUN.routes.set(id, prepRun(D)); } catch (e) {} done++; tick(); } };
+    tick();
+    await Promise.all([work(), work(), work()]);
+    st.prog = ''; if (document.body.contains(m)) drawAll(); S.dirty = true; if (S.v3) S.v3.dirty = true;
+  };
+  const routesNow = () => [...RUN.routes.values()].filter(R => R.tr && R.st && R.st.length).sort((a, b) => a.k.localeCompare(b.k) || a.n.localeCompare(b.n, 'ja'));
+  // 一覧（さがすことば・しぼりこみのとおり）
+  const drawList = () => {
+    const res = m.querySelector('[data-res]'); if (!res) return;
+    const tm = jstNow(), it = S.vis || visibleItems(), q = hw(st.q).trim().toLowerCase(), L = [];
+    for (const R of routesNow()) {
+      if (!runPass(R)) continue;
+      for (const tn of R.tr) {
+        if (!runPass(R, tn)) continue;
+        const p = runPos(R, tn, tm, it); if (!p) continue;
+        if (q) { const hay = [tn.num, tn.kind, kindL(tn.kind), R.n, runDest(R, tn), tn.fname, tn.onum, ...tn.s.map(e => R.sn.get(e[0]) || '')].join(' ').toLowerCase(); if (!hay.includes(q)) continue; }
+        L.push({ R, tn, p });
+      }
+    }
+    const where = o => { const R = o.R, sc = o.tn.s, nm = i => esc(R.sn.get(sc[i][0]) || ''); return o.p.at >= 0 ? `<span>${o.p.at === sc.length - 1 ? `${nm(o.p.at)}着` : `${nm(o.p.at)}に停車中`}</span>` : `<span>${nm(o.p.nx - 1)}</span> → <span>${nm(o.p.nx)}</span>`; };
+    st.shown = L.slice(0, 300);
+    res.innerHTML = `<p class="small" style="margin:4px 0"><b><span>いま走っている</span> <span>${L.length}本</span></b>${L.length > st.shown.length ? `（<span>はじめの</span> <span>${st.shown.length}本</span>）` : ''}</p>
+      <div class="mp-list">${st.shown.map((o, i) => `<button class="mp-item" style="text-align:left" data-i="${i}"><b><span style="color:${esc(o.R.c)}">■</span> <span translate="no">${esc(runName(o.tn, o.R.k))}</span></b> → <span>${esc(runDest(o.R, o.tn))}</span>
+          <br><small><span>${esc(o.R.n)}</span>・${where(o)}${o.tn.fname ? `・<span>${esc(o.tn.fname)}</span>` : ''}</small></button>`).join('') || '<p class="muted small">条件にあう列車・バスは、いま走っていません</p>'}</div>`;
+    res.querySelectorAll('[data-i]').forEach(x => x.onclick = () => {
+      const o = st.shown[Number(x.dataset.i)]; m.close();
+      const p = runPos(o.R, o.tn, jstNow(), S.vis || visibleItems()) || o.p;
+      if (S.v3) { m3Target(p.x, p.y); S.v3.dirty = true; } else setCam(p.x, p.y, Math.max(S.cam.z, 14));
+      RUN.keep.add(o.R.id); showTrain(o.R, o.tn);
+    });
+  };
+  // ぜんぶ（しぼりこみのボタン・入力・一覧）
+  const drawAll = () => {
+    if (!document.body.contains(m)) return;
+    const f = RUN.f, routes = routesNow();
+    const kinds = [...new Set(routes.flatMap(R => R.tr.map(t => t.kind)).filter(Boolean))].sort((a, b) => (KINDS.indexOf(a) + 1 || 99) - (KINDS.indexOf(b) + 1 || 99) || a.localeCompare(b, 'ja'));
+    const ch = (g, v, label, on) => `<button data-${g}="${esc(String(v))}" class="${on ? 'on' : ''}">${label}</button>`;
+    const typing = document.activeElement && document.activeElement.matches && document.activeElement.matches('[data-q]');
+    m.set('🔍 列車・バスをさがす', `<div class="mp-row" style="margin-top:0"><input class="mp-inp" data-q style="flex:1 1 180px" placeholder="列車番号・系統・種別・行き先・駅名" value="${esc(st.q)}" enterkeyhint="search" autocomplete="off"></div>
+      <div class="mp-row small" style="align-items:center"><span style="min-width:3.5em">種類</span><span class="mp-seg" style="flex-wrap:wrap">${['rail', 'bus', 'ship', 'air'].map(k => ch('fk', k, `${RUN_IC[k]} <span>${RUN_K[k]}</span>`, f.k.includes(k))).join('')}</span></div>
+      <div class="mp-row small" style="align-items:center"><span style="min-width:3.5em">向き</span><span class="mp-seg">${ch('fd', 0, 'すべて', !f.dir)}${ch('fd', 1, '下り', f.dir === 1)}${ch('fd', -1, '上り', f.dir === -1)}</span></div>
+      <div class="mp-row small" style="align-items:center"><span style="min-width:3.5em">系統</span><select class="mp-inp" style="width:auto;max-width:70%" data-fr><option value="0">すべて</option>${routes.map(R => `<option value="${R.id}" ${f.rid === R.id ? 'selected' : ''}>${RUN_IC[R.k] || ''} ${esc(R.n)}</option>`).join('')}</select></div>
+      <div class="mp-row small" style="align-items:center"><span style="min-width:3.5em">種別</span><select class="mp-inp" style="width:auto" data-fkd><option value="">すべて</option>${kinds.map(k => `<option value="${esc(k)}" ${f.kind === k ? 'selected' : ''}>${esc(kindL(k))}</option>`).join('')}</select>
+        ${runFiltered() ? '<button class="btn" data-fx style="padding:4px 10px;font-size:12px">しぼりこみをやめる</button>' : ''}</div>
+      <p class="muted small" style="margin:4px 0"><span>しぼりこみは地図にも出ます（地図には、えらんだものだけ）。</span>${st.prog ? `<span>系統を読んでいます</span> <span>${st.prog}</span>` : st.all === false ? '<span>いまは、地図で読んだあたりの系統だけです（サーバーの更新のあとは、国じゅうからさがせます）</span>' : ''}</p>
+      <div data-res></div>`, b => {
+      const inp = b.querySelector('[data-q]');
+      inp.oninput = () => { st.q = inp.value; clearTimeout(st.qt); st.qt = setTimeout(drawList, 250); };
+      inp.onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); inp.blur(); drawList(); } };
+      if (typing) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+      const set = c => { runSetF(Object.assign({}, RUN.f, c)); drawAll(); };
+      b.querySelectorAll('[data-fk]').forEach(x => x.onclick = () => { const k = x.dataset.fk, ks = RUN.f.k.includes(k) ? RUN.f.k.filter(y => y !== k) : [...RUN.f.k, k]; set({ k: ks.length ? ks : [k] }); });
+      b.querySelectorAll('[data-fd]').forEach(x => x.onclick = () => set({ dir: Number(x.dataset.fd) }));
+      b.querySelector('[data-fr]').onchange = e => set({ rid: Number(e.target.value) });
+      b.querySelector('[data-fkd]').onchange = e => set({ kind: e.target.value });
+      const fx = b.querySelector('[data-fx]'); if (fx) fx.onclick = () => { runSetF({ k: ['rail', 'bus', 'ship', 'air'], dir: 0, kind: '', rid: 0 }); drawAll(); };
+    });
+    drawList();
+  };
+  drawAll(); loadAll();
+  st.tmr = setInterval(() => { if (!document.body.contains(m)) { clearInterval(st.tmr); return; } drawList(); }, 10000);   // 10秒ごとに「いま」を書きなおす
 }
 
 /* ---------- 画面（ボタン・下のシート） ---------- */
@@ -1143,6 +1368,17 @@ const CSS = `
 .mp-tools button{flex:none;padding:8px 11px}
 .mp-tools button.on{background:#1f5fbf;color:#fff;border-color:#1f5fbf}
 .mp-wrap.mp-3d .mp-tools,.mp-wrap.mp-3d .mp-sheet{display:none}
+.mp-wrap.mp-3d .mp-sheet.mp-s3:not([hidden]){display:block;bottom:10px;overflow:hidden;max-height:none}
+.mp-wrap.mp-3d .mp-s3in{max-height:40vh;overflow:auto}
+.mp-runbar{position:absolute;left:8px;top:54px;z-index:6;display:flex;flex-wrap:wrap;gap:4px;max-width:calc(100% - 70px)}
+.mp-runbar[hidden]{display:none}
+.mp-runbar button{border:1px solid rgba(0,0,0,.18);background:rgba(255,248,214,.97);color:#222;border-radius:16px;font-weight:700;font-size:12.5px;padding:5px 10px;box-shadow:0 1px 3px rgba(0,0,0,.18)}
+.mp-runbar button[data-rbfx],.mp-runbar button[data-rbsx]{padding:5px 8px;margin-right:6px}
+.mp-ttl{margin-top:6px;border-top:1px solid var(--line,#e6e6e6);font-size:12.5px;max-height:190px;overflow:auto;position:relative}
+.mp-ttr{display:grid;grid-template-columns:1fr 4.6em 4.6em 3.6em;gap:4px;padding:3px 2px;border-bottom:1px dashed var(--line,#eee);font-variant-numeric:tabular-nums}
+.mp-ttr .t,.mp-ttr .k{text-align:right}.mp-ttr small{opacity:.7;margin-left:1px}
+.mp-ttr.past{opacity:.45}
+.mp-ttr.now{background:#fff2b8;font-weight:800;border-radius:6px}
 .mp-cv3{touch-action:none}
 .mp-hint{position:absolute;left:50%;top:52px;transform:translateX(-50%);background:rgba(20,20,20,.78);color:#fff;font-size:12px;font-weight:700;border-radius:10px;padding:6px 10px;max-width:86%;text-align:center;pointer-events:none}
 .mp-sheet{position:absolute;left:6px;right:6px;bottom:56px;max-height:44%;overflow:auto;background:var(--panel,#fff);color:var(--ink,#222);border-radius:14px;box-shadow:0 4px 18px rgba(0,0,0,.28);padding:12px 12px 10px;font-size:14px}
@@ -1239,6 +1475,7 @@ function build(root) {
   // 地図の設定（t61）：惰性・走行位置・3D の建物の名前・3D の左右反転。この端末におぼえる
   try { S.inertia = localStorage.getItem('mp_inertia') === '1'; S.layer.run = localStorage.getItem('mp_run') === '1'; const n3 = localStorage.getItem('mp_v3n'); if (n3 != null) S.v3names = n3 !== '0'; } catch (e) {}
   S.wrap.querySelector('[data-lay="run"]').classList.toggle('on', !!S.layer.run);
+  runBar();   // 追跡中・しぼりこみ中のしるし（t62）
   S.wrap.querySelectorAll('[data-lay]').forEach(b => b.onclick = () => { const k = b.dataset.lay; setOpt(k, !S.layer[k]); });
   const cfg = S.wrap.querySelector('.mp-cfg');
   S.wrap.querySelector('[data-opt]').onclick = () => { cfg.hidden = !cfg.hidden; optSync(); };
@@ -1282,6 +1519,7 @@ function resize() {
 }
 function hint(t) { S.hint.hidden = !t; S.hint.textContent = t ? T(t) : ''; }
 function sheet(html, bind) {
+  S.sheet.classList.remove('mp-s3');   // 3D でも出すシート（列車の情報。t62）
   if (!html) { S.sheet.hidden = true; S.sheet.innerHTML = ''; return null; }
   S.sheet.hidden = false; S.sheet.innerHTML = `<button class="mp-x" data-close>×</button>` + html;
   S.sheet.querySelector('[data-close]').onclick = () => { sheet(null); if (S.onSheetClose) { const f = S.onSheetClose; S.onSheetClose = null; f(); } };
@@ -1387,6 +1625,7 @@ function bindInput() {
     if (drag.tool) { if (!moved && Math.hypot(p[0] - drag.x, p[1] - drag.y) > 4) { moved = true; clearTimeout(lp); } if (moved && S.grabMove) S.grabMove(wx(p[0]), wy(p[1])); return; }
     if (Math.hypot(p[0] - drag.x, p[1] - drag.y) > 6) moved = true;
     if (moved) {
+      if (RUN.follow) runFollow(0);   // 自分でうごかしたら、追跡をやめる（t62）
       setCam(drag.cx - (p[0] - drag.x) / S.cam.z, drag.cy - (p[1] - drag.y) / S.cam.z, S.cam.z);
       const t = evT(e); drag.hist.push([t, S.cam.x, S.cam.y]); while (drag.hist.length > 2 && t - drag.hist[0][0] > 100) drag.hist.shift();
     }
@@ -1503,7 +1742,8 @@ function onTap(x, y, px, py) {
 }
 
 /* ---- 見る ---- */
-async function lookAt(x, y) {
+async function lookAt(x, y, px, py) {
+  if (S.layer.run && px != null) { const o = runHit(px, py); if (o) return showTrain(o.R, o.T); }   // 列車・バス（t62）
   const st = nearSta(x, y, 14);
   if (st) return showSta(st.s);
   const dp = nearDep(x, y);
@@ -3115,7 +3355,7 @@ async function openDia(rid) {
         ${D.ok ? '' : `<br><span class="mp-warn"><span>走れません：</span> <span>${esc(D.why || '')}</span></span>`}${D.last && D.last.revenue != null ? (D.last.load != null && D.last.speed != null ? `<br>さいきんの1時間：${fmt(D.last.served || 0)}人・${X(D.last.revenue || 0)}・${D.last.tph}本・混み具合${D.last.load}%・平均${D.last.speed}km/h`
           : `<br><span>さいきんの1時間：${fmt(D.last.served || 0)}人・${X(D.last.revenue || 0)}・${D.last.tph || 0}本</span>`) : ''}</p>
       <div class="tabs-s" style="margin-top:8px">${[['dia', 'ダイヤグラム'], ['tt1', '時刻表（下り）'], ['tt2', '時刻表（上り）'], ['list', '列車']].map(t => `<button data-tab="${t[0]}" class="${tab === t[0] ? 'on' : ''}">${t[1]}</button>`).join('')}</div>
-      <div data-pane style="margin-top:8px"></div>
+      <div data-flt style="margin-top:6px"></div><div data-pane style="margin-top:8px"></div>
       ${D.mine ? `<div class="mp-row"><button class="btn main" data-add>${D.kind === 'ship' || D.kind === 'air' ? '＋ 便' : '＋ 列車'}</button><button class="btn" data-bulk>＋ まとめて</button><button class="btn" data-auto>運用を自動で組む</button>
         <button class="btn" data-edit>${D.kind === 'air' ? '空港の順を直す' : D.kind === 'ship' ? '港の順・航路を直す' : '駅の順を直す'}</button><button class="btn" data-kp>種別と優先番号</button><button class="btn" data-pat>停車駅のパターン</button><button class="btn" data-fix>重なりを直す${(() => { const n = D.trains.filter(t => /とかさなります/.test(t.warn || '')).length; return n ? `<span>（${n}本）</span>` : ''; })()}</button>${D.kind === 'rail' ? `<button class="btn" data-xw>${D.xwait ? 'ほかの系統と待避・続行：オン' : 'ほかの系統と待避・続行：オフ'}</button>` : ''}<button class="btn" data-del>系統を消す</button></div>
         <div class="mp-row"><button class="btn" style="flex:none" data-undo ${D.undo ? '' : 'disabled'}>↶ 取り消す</button>${D.undo ? `<span class="small muted"><span>もどす：</span><span>${esc(D.undo.what)}</span><span>（${D.undo.n}回もどせます）</span></span>` : '<span class="small muted">もどせる操作はありません</span>'}</div>` : ''}`, b => {
@@ -3124,35 +3364,39 @@ async function openDia(rid) {
         if (!D.undo || !confirm(T('この操作を取り消して、その前のダイヤにもどしますか？') + '\n' + T(D.undo.what))) return;
         const r = await api('mp_dia_undo', { p_route: rid }); if (r) { toast(T('取り消しました') + SEP() + '（' + T(r.what) + '）'); load(); }
       }; }
-      const pane = b.querySelector('[data-pane]');
-      if (tab === 'dia') diaCanvas(pane, D, t => trainEdit(D, t, load));
-      if (tab === 'tt1' || tab === 'tt2') pane.innerHTML = ttTable(D, tab === 'tt1' ? 1 : -1);
+      const pane = b.querySelector('[data-pane]'), flt = b.querySelector('[data-flt]');
+      // 形式（編成の系列・両数）・種別・向きで絞りこむ（t62：ダイヤグラム・時刻表でも）。一覧は、発車時刻・列車番号・種別・形式で並べかえる
+      const serOf = t => t.fser ? t.fser + '|' + t.fn : '';   // 形式（系列）と両数
+      const serH = k => { if (!k) return '<span>編成なし</span>'; const [a, n] = k.split('|'); return `<span>${esc(a)}</span>${D.kind === 'ship' || D.kind === 'air' ? '' : `・<span>${D.kind === 'bus' ? `${n}台` : `${n}両`}</span>`}`; };
+      const ko = k => { const x = (D.kinds || []).find(y => y.name === k); return x ? x.prio * 100 + (KINDS.indexOf(k) + 1) : 999; };   // 優先番号の順
+      const kinds = [...new Set(D.trains.map(t => t.kind))].sort((a, b) => ko(a) - ko(b) || a.localeCompare(b, 'ja'));
+      const sers = [...new Set(D.trains.map(serOf))].sort((a, b) => (a === '') - (b === '') || a.localeCompare(b, 'ja', { numeric: true }));
+      for (const k of [...lf.kinds]) if (!kinds.includes(k)) lf.kinds.delete(k);
+      for (const k of [...lf.sers]) if (!sers.includes(k)) lf.sers.delete(k);
+      const pass = t => (!lf.kinds.size || lf.kinds.has(t.kind)) && (!lf.sers.size || lf.sers.has(serOf(t))) && (!lf.dirs.size || lf.dirs.has(t.dir));
+      const byNum = (a, b) => String(a.num).localeCompare(String(b.num), 'ja', { numeric: true });
+      const cmp = { dep: (a, b) => a.dep - b.dep || byNum(a, b), num: (a, b) => byNum(a, b) || a.dep - b.dep, kind: (a, b) => ko(a.kind) - ko(b.kind) || a.dep - b.dep,
+                    ser: (a, b) => (serOf(a) === '') - (serOf(b) === '') || serOf(a).localeCompare(serOf(b), 'ja', { numeric: true }) || a.dep - b.dep }[lf.sort];
+      const L = D.trains.filter(pass).sort(cmp);
+      const chip = (g, v, label, on) => `<button data-${g}="${esc(String(v))}" class="${on ? 'on' : ''}">${label}</button>`;
+      const row = (title, g, all, items) => `<div class="mp-row small" style="align-items:center"><span style="min-width:3.5em">${title}</span><span class="mp-seg" style="flex-wrap:wrap">${chip(g, '*', 'すべて', !all.size)}${items.join('')}</span></div>`;
+      const D2 = Object.assign({}, D, { trains: D.trains.filter(tab === 'tt1' || tab === 'tt2' ? (t => (!lf.kinds.size || lf.kinds.has(t.kind)) && (!lf.sers.size || lf.sers.has(serOf(t)))) : pass) });   // 時刻表は向きのタブなので、向きでは しぼらない
+      flt.innerHTML = D.trains.length ? `${row('種別', 'fk', lf.kinds, kinds.map(k => chip('fk', k, `<span>${esc(kindL(k))}</span>`, lf.kinds.has(k))))}
+        ${sers.length > 1 ? row('形式', 'fs', lf.sers, sers.map(k => chip('fs', k, serH(k), lf.sers.has(k)))) : ''}
+        ${tab === 'dia' ? row('向き', 'fd', lf.dirs, [chip('fd', 1, '下り', lf.dirs.has(1)), chip('fd', -1, '上り', lf.dirs.has(-1))]) : ''}` : '';
+      { const tog = (set, v) => { if (v === '*') set.clear(); else if (set.has(v)) set.delete(v); else set.add(v); draw(); };
+        flt.querySelectorAll('[data-fk]').forEach(x => x.onclick = () => tog(lf.kinds, x.dataset.fk));
+        flt.querySelectorAll('[data-fs]').forEach(x => x.onclick = () => tog(lf.sers, x.dataset.fs));
+        flt.querySelectorAll('[data-fd]').forEach(x => x.onclick = () => tog(lf.dirs, x.dataset.fd === '*' ? '*' : Number(x.dataset.fd))); }
+      if (tab === 'dia') diaCanvas(pane, D2, t => trainEdit(D, t, load), lf.V || (lf.V = { t0: 5 * 3600, sec: 19 * 3600 }));
+      if (tab === 'tt1' || tab === 'tt2') pane.innerHTML = ttTable(D2, tab === 'tt1' ? 1 : -1);
       if (tab === 'list') {
-        // 形式（編成の系列・両数）・種別・向きで絞りこむ。発車時刻・列車番号・種別・形式で並べかえる
-        const serOf = t => t.fser ? t.fser + '|' + t.fn : '';   // 形式（系列）と両数
-        const serH = k => { if (!k) return '<span>編成なし</span>'; const [a, n] = k.split('|'); return `<span>${esc(a)}</span>${D.kind === 'ship' || D.kind === 'air' ? '' : `・<span>${D.kind === 'bus' ? `${n}台` : `${n}両`}</span>`}`; };
-        const ko = k => { const x = (D.kinds || []).find(y => y.name === k); return x ? x.prio * 100 + (KINDS.indexOf(k) + 1) : 999; };   // 優先番号の順
-        const kinds = [...new Set(D.trains.map(t => t.kind))].sort((a, b) => ko(a) - ko(b) || a.localeCompare(b, 'ja'));
-        const sers = [...new Set(D.trains.map(serOf))].sort((a, b) => (a === '') - (b === '') || a.localeCompare(b, 'ja', { numeric: true }));
-        for (const k of [...lf.kinds]) if (!kinds.includes(k)) lf.kinds.delete(k);
-        for (const k of [...lf.sers]) if (!sers.includes(k)) lf.sers.delete(k);
-        const pass = t => (!lf.kinds.size || lf.kinds.has(t.kind)) && (!lf.sers.size || lf.sers.has(serOf(t))) && (!lf.dirs.size || lf.dirs.has(t.dir));
-        const byNum = (a, b) => String(a.num).localeCompare(String(b.num), 'ja', { numeric: true });
-        const cmp = { dep: (a, b) => a.dep - b.dep || byNum(a, b), num: (a, b) => byNum(a, b) || a.dep - b.dep, kind: (a, b) => ko(a.kind) - ko(b.kind) || a.dep - b.dep,
-                      ser: (a, b) => (serOf(a) === '') - (serOf(b) === '') || serOf(a).localeCompare(serOf(b), 'ja', { numeric: true }) || a.dep - b.dep }[lf.sort];
-        const L = D.trains.filter(pass).sort(cmp);
-        const chip = (g, v, label, on) => `<button data-${g}="${esc(String(v))}" class="${on ? 'on' : ''}">${label}</button>`;
-        const row = (title, g, all, items) => `<div class="mp-row small" style="align-items:center"><span style="min-width:3.5em">${title}</span><span class="mp-seg" style="flex-wrap:wrap">${chip(g, '*', 'すべて', !all.size)}${items.join('')}</span></div>`;
-        pane.innerHTML = `${row('種別', 'fk', lf.kinds, kinds.map(k => chip('fk', k, `<span>${esc(kindL(k))}</span>`, lf.kinds.has(k))))}
-          ${row('形式', 'fs', lf.sers, sers.map(k => chip('fs', k, serH(k), lf.sers.has(k))))}
-          ${row('向き', 'fd', lf.dirs, [chip('fd', 1, '下り', lf.dirs.has(1)), chip('fd', -1, '上り', lf.dirs.has(-1))])}
+        pane.innerHTML = `${row('向き', 'fd', lf.dirs, [chip('fd', 1, '下り', lf.dirs.has(1)), chip('fd', -1, '上り', lf.dirs.has(-1))])}
           <div class="mp-row small" style="align-items:center"><span style="min-width:3.5em">並べかえ</span><select class="mp-inp" style="width:auto" data-sort>${[['dep', '発車時刻'], ['num', '列車番号'], ['kind', '種別'], ['ser', '形式']].map(o => `<option value="${o[0]}" ${lf.sort === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}</select>
             <span class="muted">${L.length} / ${D.trains.length}本</span></div>
           <div class="mp-list">${L.map(t => `<button class="mp-item" style="text-align:left" data-t="${t.id}"><b>${esc(t.num)}</b> <span>${esc(kindL(t.kind))}・${t.dir === 1 ? '下り' : '上り'}・${hms(t.dep)}発</span>${t.day ? ` <small class="mp-tag"><span>臨時</span> <span>${mdL(t.day)}</span></small>` : ''}・${t.onum ? `<small class="muted"><span>運用</span> <span>${esc(t.onum)}</span></small> ` : ''}${t.fname ? `<span>${esc(t.fname)}</span>${t.fser ? `<small class="muted">（${serH(serOf(t))}）</small>` : ''}` : `<span class="mp-warn">${t.onum ? '運用に編成なし' : '編成なし'}</span>`}${cplL(t, D)}${taiL(t, D)}${t.warn ? `<br><small class="mp-warn">${warnH(t.warn)}</small>` : ''}</button>`).join('')
             || `<p class="muted small">${D.trains.length ? '条件にあう列車はありません' : '列車はまだありません'}</p>`}</div>`;
         const tog = (set, v) => { if (v === '*') set.clear(); else if (set.has(v)) set.delete(v); else set.add(v); draw(); };
-        pane.querySelectorAll('[data-fk]').forEach(x => x.onclick = () => tog(lf.kinds, x.dataset.fk));
-        pane.querySelectorAll('[data-fs]').forEach(x => x.onclick = () => tog(lf.sers, x.dataset.fs));
         pane.querySelectorAll('[data-fd]').forEach(x => x.onclick = () => tog(lf.dirs, x.dataset.fd === '*' ? '*' : Number(x.dataset.fd)));
         pane.querySelector('[data-sort]').onchange = e => { lf.sort = e.target.value; draw(); };
         pane.querySelectorAll('[data-t]').forEach(x => x.onclick = () => trainEdit(D, D.trains.find(t => t.id === Number(x.dataset.t)), load));
@@ -3303,11 +3547,11 @@ function schedIdx(D, t) {
   for (const e of t.sched || []) { while (c < n && D.stops[at(c)].id !== e[0]) c++; out.push(c < n ? at(c) : -1); c++; }
   return out;
 }
-function diaCanvas(pane, D, onTrain) {
+function diaCanvas(pane, D, onTrain, V0) {
   pane.innerHTML = `<canvas class="mp-dia"></canvas><p class="muted small" style="margin:4px 0 0">よこにドラッグで動かす・2本指でよこに拡大・列車の線をタップで編集（一点鎖線は臨時列車・灰色の点線は編成なし・太い線は連結している区間）</p>`;
   const cv = pane.querySelector('canvas'), dpr = Math.min(2, window.devicePixelRatio || 1);
   const km = D.km.map(Number), tot = Math.max(0.1, km[km.length - 1]);
-  const V = { t0: 5 * 3600, sec: 19 * 3600 };
+  const V = V0 || { t0: 5 * 3600, sec: 19 * 3600 };   // V0：しぼりこみで描きなおしても、見ている時刻のはんいをのこす（t62）
   const ML = 78, MT = 16, MB = 22;
   const draw = () => {
     const W = cv.clientWidth, H = cv.clientHeight; cv.width = W * dpr; cv.height = H * dpr;
@@ -5187,7 +5431,7 @@ const FIND_K = { pref: '都道府県', muni: '市区町村', ward: '区', island
 function findHist() { try { return JSON.parse(localStorage.getItem('mp_find') || '[]').slice(0, 6); } catch (e) { return []; } }
 function findSave(q) { try { const h = [q, ...findHist().filter(x => x !== q)].slice(0, 6); localStorage.setItem('mp_find', JSON.stringify(h)); } catch (e) {} }
 function openFind() {
-  const m = modal(['🔍 さがす', `<div class="mp-row" style="margin-top:0"><input class="mp-inp" data-q style="flex:1 1 180px" placeholder="住所・地名・駅・建物の名前" enterkeyhint="search" autocomplete="off"><button class="btn main" data-go>さがす</button></div>
+  const m = modal(['🔍 さがす', `<div class="mp-seg" style="margin-bottom:8px"><button class="on">📍 <span>場所・建物</span></button><button data-runf>🚃 <span>列車・バス</span></button></div><div class="mp-row" style="margin-top:0"><input class="mp-inp" data-q style="flex:1 1 180px" placeholder="住所・地名・駅・建物の名前" enterkeyhint="search" autocomplete="off"><button class="btn main" data-go>さがす</button></div>
       <p class="muted small" style="margin:4px 0"><span>例：瑠璃市中里区中央三丁目・中里3-12-5・梅ヶ枝町・新中里・瑠璃府庁</span></p>
       <div data-hist class="mp-row" style="margin-top:2px"></div><div data-res class="mp-list"></div>`], b => {
     const inp = b.querySelector('[data-q]'), res = b.querySelector('[data-res]'), hist = b.querySelector('[data-hist]');
@@ -5211,6 +5455,7 @@ function openFind() {
       res.querySelectorAll('[data-i]').forEach(x => x.onclick = () => go(d[Number(x.dataset.i)]));
     };
     b.querySelector('[data-go]').onclick = run;
+    b.querySelector('[data-runf]').onclick = () => { m.close(); openRunFind(); };   // 列車・バス（t62）
     inp.onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); run(); } };
     showHist(); setTimeout(() => inp.focus(), 50);
   });
@@ -5377,7 +5622,7 @@ function showCert(r) {
         <table style="border-collapse:collapse;flex:1;font-size:13px">${row('氏名', `<b translate="no">${esc(r.name)}</b>`)}${row('住所', `<span translate="no">${esc(j.addr)}</span>`)}${row('登録番号', esc(j.seal_no || ''))}</table></div>${foot}`);
   modal([r.kind === 'cert' ? '住民票の写し' : '印鑑登録証明書', html], null, 'mp-wide');
 }
-window.MapInt = { S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer };   // 3D（map3d.js）が使う
+window.MapInt = { S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runOff, runIsSel, runName, runDest, showTrain, showSta, runFollow };   // 3D（map3d.js）が使う
 window.MapApp = { open, pause, state: S, spline, setCam, landReqs: () => openLandReqs(), xfers: () => openXfers(), goto: (x, y) => homeGo(x, y), thru: () => openThru(), bld: id => openBld(id), sc: () => openSC(),
   slots: L => (L && L.st ? openSlots(Number(L.st)) : openSlotList()), find: () => openFind(), jm: id => openJuumin(id) };
 })();
