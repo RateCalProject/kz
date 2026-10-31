@@ -766,7 +766,9 @@ function drawStation(g, s, z) {
   const L = Math.max(10, s.pl / 50 * z), Wd = Math.max(5, (0.22 * Math.max(1, s.tr) + 0.18) * z);
   g.save(); g.translate(x, y); g.rotate(s.a);
   g.fillStyle = '#ffffff'; g.strokeStyle = s.mine ? '#1f5fbf' : '#333'; g.lineWidth = 1.6;
-  g.fillRect(-L / 2, -Wd / 2, L, Wd); g.strokeRect(-L / 2, -Wd / 2, L, Wd);
+  g.fillRect(-L / 2, -Wd / 2, L, Wd);
+  if (s.tk && s.tr > 1) { g.fillStyle = '#c9ccd0'; s.tk.forEach((t, k) => { if (t && t.m === 'pass') g.fillRect(-L / 2, -Wd / 2 + Wd * k / s.tr, L, Wd / s.tr); }); }   // 通過線（ホームなし。t62）
+  g.strokeRect(-L / 2, -Wd / 2, L, Wd);
   if (z >= 12) { g.strokeStyle = '#999'; g.lineWidth = 1; for (let k = 1; k < s.tr; k++) { const yy = -Wd / 2 + Wd * k / s.tr; g.beginPath(); g.moveTo(-L / 2, yy); g.lineTo(L / 2, yy); g.stroke(); } }
   g.restore();
   // 番線の番号（ホームの中。近づいたとき）：1番線は駅の向きの左がわ（上）から順に
@@ -2054,9 +2056,10 @@ function spdChart(cv, sp) {
   if (sp.at != null) { g.strokeStyle = '#1f5fbf'; g.lineWidth = 2; g.beginPath(); g.moveTo(X(sp.at), 2); g.lineTo(X(sp.at), H - 2); g.stroke(); }
 }
 // 駅の発着番線のことば（1番線 下り本線 など）
-const TRK_D = { down: '下り', up: '上り', both: '両方' }, TRK_M = { main: '本線', side: '待避線' };
+const TRK_D = { down: '下り', up: '上り', both: '両方' }, TRK_M = { main: '本線', side: '待避線', pass: '通過線' };   // pass：ホームのない番線（t62）
 const TRK_L = { 'down:main': n => T(`${n}番線 下り本線`), 'up:main': n => T(`${n}番線 上り本線`), 'both:main': n => T(`${n}番線 上下の本線`),
-                'down:side': n => T(`${n}番線 下り待避線`), 'up:side': n => T(`${n}番線 上り待避線`), 'both:side': n => T(`${n}番線 上下の待避線`) };
+                'down:side': n => T(`${n}番線 下り待避線`), 'up:side': n => T(`${n}番線 上り待避線`), 'both:side': n => T(`${n}番線 上下の待避線`),
+                'down:pass': n => T(`${n}番線 下り通過線`), 'up:pass': n => T(`${n}番線 上り通過線`), 'both:pass': n => T(`${n}番線 上下の通過線`) };
 const trkL = (t, i) => (TRK_L[t.d + ':' + t.m] || (n => T(`${n}番線`)))(i + 1);
 async function showSpot(cx, cy) {
   S.sel = { kind: 'cell', x: cx, y: cy }; S.dirty = true;
@@ -2301,9 +2304,9 @@ async function trkEdit(s) {
   const draw = () => m.set('発着番線', `<p class="small" style="margin:0"><b>${esc(d.name)}</b>（<span>${d.tracks}番線まで</span>）</p>
       <div class="mp-list">${cur.map((t, i) => `<div class="mp-row small" style="align-items:center;margin-top:4px"><b style="min-width:4.5em">${i + 1}番線</b>
         <span class="mp-seg">${['down', 'up', 'both'].map(k => `<button data-td="${i}:${k}" class="${t.d === k ? 'on' : ''}">${TRK_D[k]}</button>`).join('')}</span>
-        <span class="mp-seg">${['main', 'side'].map(k => `<button data-tm="${i}:${k}" class="${t.m === k ? 'on' : ''}">${TRK_M[k]}</button>`).join('')}</span></div>`).join('')}</div>
+        <span class="mp-seg">${['main', 'side', 'pass'].map(k => `<button data-tm="${i}:${k}" class="${t.m === k ? 'on' : ''}">${TRK_M[k]}</button>`).join('')}</span></div>`).join('')}</div>
       <div class="mp-row"><button class="btn main" data-ok>決める</button><button class="btn" data-def>いつもの決まりにもどす</button></div>
-      <p class="muted small"><span>地図で駅に近づくと、ホームの中に番線の番号（1・2…）が出ます。</span><br><span>列車は、ふだんはその向きの本線に止まります（採時駅で番線を決めた列車は、その番線）。その向きで使える番線が2つ以上ある駅は待避できます。優先番号の大きい列車は待避線で待ち、あとから来る優先番号の小さい列車に先をゆずります</span></p>`, b => {
+      <p class="muted small"><span>通過線はホームのない番線です。止まる列車は使わず、通過する列車が、止まっている列車を追いこせます（その向きに番線が2つ以上あると、待避できる駅になります）。</span><br><span>地図で駅に近づくと、ホームの中に番線の番号（1・2…）が出ます。</span><br><span>列車は、ふだんはその向きの本線に止まります（採時駅で番線を決めた列車は、その番線）。その向きで使える番線が2つ以上ある駅は待避できます。優先番号の大きい列車は待避線で待ち、あとから来る優先番号の小さい列車に先をゆずります</span></p>`, b => {
     b.querySelectorAll('[data-td]').forEach(x => x.onclick = () => { const [i, k] = x.dataset.td.split(':'); cur[Number(i)].d = k; draw(); });
     b.querySelectorAll('[data-tm]').forEach(x => x.onclick = () => { const [i, k] = x.dataset.tm.split(':'); cur[Number(i)].m = k; draw(); });
     b.querySelector('[data-ok]').onclick = async () => { const r = await api('mp_sta_trk_set', { p_sta: s.id, p_trk: cur }, '決めました'); if (r) { s.tk = r.trk; m.close(); showSta(s); } };

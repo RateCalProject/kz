@@ -1234,7 +1234,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=6d9443d6","zh-TW":"zh-TW.js?v=584323d5","zh-CN":"zh-CN.js?v=167f725a","ko":"ko.js?v=44bf4f56","ko-Hani":"ko-Hani.js?v=1ae269da"};
+  window.AX_LANGS = {"en":"en.js?v=a9bc6fe4","zh-TW":"zh-TW.js?v=5a04df3b","zh-CN":"zh-CN.js?v=cb53ea5c","ko":"ko.js?v=56d05a1e","ko-Hani":"ko-Hani.js?v=c8337075"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -1483,7 +1483,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
       <input type="password" id="gPin" inputmode="numeric" maxlength="4" autocomplete="new-password" placeholder="パスワード（数字4けた）">
       <button class="btn main big" id="gStart" type="submit">ゲストではじめる</button>
     </form>
-    <p class="muted small" style="margin:0">メールアドレスと数字4けたのパスワードを決めるだけで、すぐ遊べます（10,000 X つき。本登録すると さらに 100,000 X）。次からは、上の「ログイン」にそのメールと数字4けたを入れて入れます。</p>
+    <p class="muted small" style="margin:0">メールアドレスと数字4けたのパスワードを決めるだけで、すぐ遊べます（5,000 X つき。本登録すると さらに 105,000 X）。次からは、上の「ログイン」にそのメールと数字4けたを入れて入れます。</p>
     <p class="muted small" style="margin:0">ゲストは31日で消えます（5日間ログインしないと、その前に消えます）。消える前に本登録（メールの確認）をすると、そのまま続けられます。確定申告をしたゲストは、申告した月ごとに1回、消える日を31日のばせます。ゲストのあいだは、所持金は40,000 Xまで・賭け金は1回100 Xまで・送金は5日間で2,000 Xまでです（はじめて7日は送金できません）。</p>
   </div>
   <p class="notice small hidden" id="mailSent"></p>
@@ -1889,7 +1889,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
       <li><b>ゲーム内アイテム（マイクラのブロックなど）との交換・売買はOKです。</b>ただし、そのアイテムを現金などで売り買いする（RMT）のは禁止です。課金して手に入れたアイテム・課金通貨との交換も禁止です。</li>
       <li>同じ系列の架空通貨 Cièlani-Nièpha（風の芽公式サーバー）・Cièlani-Alpićsk とは、取引所や運営者を通して交換できます。これらの通貨も、現金などとは交換できません。</li>
       <li>AiliNaX を現金などで売り買いすること、その持ちかけ、AiliNaX を使ったお金の賭けは禁止です。</li>
-      <li>はじめてログインしたときに 110,000 X を配ります（ゲストは 10,000 X で、本登録したときに残りの 100,000 X）。毎年、元日・旧正月・建国記念の日（2月11日）にも 80,000 X ずつ配ります。</li>
+      <li>はじめてログインしたときに 110,000 X を配ります（ゲストは 5,000 X で、本登録したときに残りの 105,000 X）。毎年、元日・旧正月・建国記念の日（2月11日）にも 80,000 X ずつ配ります。</li>
       <li>送金には手数料（送る額の1%・最低1 X）がかかります。AiliNaXを現金などで売り買いするための送金は禁止です。</li>
       <li>勝ち負けはサーバーで決めています。残高は予告なくリセット・調整することがあります。</li>
       <li>ほかの人がいやな気持ちになるニックネームはやめましょう。</li>
@@ -5020,7 +5020,7 @@ function stCmpDraw() {
    役所 → ヘルプ（t62）：遊び方・やり方（help/help.json。README からつくる）。さがせる（題・中身・ことば。ひらがな・カタカナ・全角半角は同じに）
    役所 → 意見箱（t62）：運営への問い合わせ（support_open）に「【意見箱】」の件名で送る
    ================================================================= */
-const HELP_V = '92c1fda0';
+const HELP_V = '54d52b43';
 const HP = { d: null, cat: 'start', q: '' };
 const hpNorm = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
 async function helpLoad() {
@@ -5512,7 +5512,7 @@ const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
 // 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
-const MAPV = '104';
+const MAPV = '105';
 let mapLoading = null;
 function mapScripts() {
   if (window.MapApp) return Promise.resolve();
