@@ -1,0 +1,36 @@
+# 風の芽経済組（Kazenome Economic Group）
+
+> 架空の通貨 AiliNaX（単位 X）で遊ぶ、無料のブラウザ経済ゲーム。競馬・カジノ・会社と株・役所と税金・国土の鉄道と街づくりまで、ひとつのサイトで遊べる。AiliNaX は現金などと交換できない架空の通貨。日本語のサイト（英語・中国語・韓国語でも表示できる）。
+
+制作は風の芽製作所（X: @Airln_7）。サイト: https://a-ruri.com/
+
+- はじめかた：メールアドレスとパスワード（Google・Discord でも）で登録。メールの確認なしの「ゲスト」でも、すぐはじめられる
+- 配布：はじめてのログインで 110,000 X。毎年、元日・旧正月・建国記念の日（2月11日）に 80,000 X
+- 競馬：毎日、昼と夜にレース。同じ馬が走りつづける。馬主になって、せりで馬を買い、育ててレースに出すこともできる
+- カジノと宝くじ：スロット・ブラックジャック・ルーレット・ハイ＆ロー、週1回の宝くじ「風の芽ジャンボ」
+- 抽選：広告を見て🎫チケットをもらい、X ガチャや、国が売っている土地が当たる国有地ガチャを引く
+- 対戦ゲーム：オセロ・チェス・将棋・麻雀・ワンカードなど（人やコンピューターと）
+- 風の芽製作所のゲーム：市区町村バトル（日本全国の市区町村の地図で遊ぶ陣取り将棋・ログインなしでも遊べる）、空飛ぶエビフライ（空中バトル）、百人一首（かるた対戦）、カニノケンカ 3D
+- 経済：会社をつくる・株の上場と売買・銀行・通貨の取引所・求人と給料・送金・請求
+- 役所：月ごとの確定申告と税金（ゲームの中だけの税）・給付金・訴え・国庫と番付
+- 国土：日本風の架空の国の地図（県・市町村・町字・住所）。土地を買って建物を建て、線路と駅をひいて列車やバスを時刻表どおりに走らせる。船と飛行機も。天気と天気図、統計。2D と 3D
+- 情報：今日のニュース・相場・統計・タイムライン（TL）・広報と書籍
+
+## ページ
+
+- [ゲーム](https://a-ruri.com/): ログインして遊ぶ本体
+- [遊び方・ヘルプ](https://a-ruri.com/guide/): すべての機能の説明（ログインなしで読める。170くらいの記事）
+- [遊び方・ヘルプ（全文テキスト）](https://a-ruri.com/llms-full.txt): 上の記事をまとめたテキスト
+- [利用規約](https://a-ruri.com/guide/#terms)
+- [プライバシーポリシー](https://a-ruri.com/privacy.html)
+- [市区町村バトル](https://a-ruri.com/battle/): ログインなしで遊べる付属ゲーム
+
+## 大事な決まり
+
+- AiliNaX は架空の通貨で、現金・電子マネー・暗号資産などとは交換できない。現金での売り買い（RMT）は禁止
+- 勝ち負けはサーバーで決めている。プレイヤーの所持金はほかの人には見えない
+- 広告を見てもらえるチケットは、本人だけがサイトの中で使える（送れない）
+
+## English
+
+Kazenome Economic Group (風の芽経済組) is a free, Japanese-language browser economy game played with a fictional currency, AiliNaX (X), which cannot be exchanged for real money. It combines daily horse racing (with horse ownership), casino games and a weekly lottery, companies and a stock market, banks, taxes, and a large map of a fictional Japan-like country where players buy land, put up buildings, and run trains and buses on timetables (2D and 3D). The interface can also be shown in English, Chinese and Korean. Made by 風の芽製作所 (@Airln_7). Guide (Japanese, no login needed): https://a-ruri.com/guide/
