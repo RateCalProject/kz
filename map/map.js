@@ -30,7 +30,8 @@ const S = {
   cho: new Map(), choPend: new Set(), choQ: [], choBusy: 0,   // 町字（チャンクごと：k・kp・kq）
   cells: new Map(), cellBusy: 0, ver: 0, pollT: 0,
   ov: null, ovInfo: null,
-  layer: { zone: false, own: true, label: true, run: false },   // run：列車・バスの走行位置（t61）
+  layer: { zone: false, own: true, label: true, run: false, wxmap: false },   // run：列車・バスの走行位置（t61）・wxmap：天気図（t62）
+  wxOff: 0, wxMode: 'rain', wxPlay: 0,   // 天気図：何時間後・雨と雪／気温・うごかす
   inertia: false, v3names: true, glide: null,   // 惰性・3D の建物の名前（t61）
   wx: true,   // 天気と気温（t62。map/wx.js）
   b25: true,   // 建物を 2.5D（高さのある見えかた）で描く。false なら 2D（上から見たまま）
@@ -49,7 +50,7 @@ const wy = py => (py - S.H / 2) / S.cam.z + S.cam.y;
 function view() { if (S.v3rect) return S.v3rect; return { x0: wx(0), y0: wy(0), x1: wx(S.W), y1: wy(S.H) }; }   // 3D のときは 3D のはんい（map3d.js）
 function setCam(x, y, z) {
   if (S.v3) { m3Target(x, y); S.dirty = true; return; }   // 3D：まん中だけうごかす
-  S.cam.z = clamp(z, 0.18, 64);
+  S.cam.z = clamp(z, S.layer.wxmap ? 0.03 : 0.18, 64);   // 天気図のときは、まわりの海まで見えるように（t62）
   const w = S.boot && S.boot.world;
   if (w && w.cx1 >= w.cx0) { S.cam.x = clamp(x, w.cx0 * CS, (w.cx1 + 1) * CS); S.cam.y = clamp(y, w.cy0 * CS, (w.cy1 + 1) * CS); }
   else { S.cam.x = x; S.cam.y = y; }
@@ -633,8 +634,11 @@ function render() {
     const x = sx(n.fx), y = sy(n.fy); if (x < -40 || y < -20 || x > S.W + 40 || y > S.H + 20) continue;
     g.fillStyle = n.nk === 'jct' ? '#7a2fa8' : '#1f7a46'; g.beginPath(); g.arc(x, y, 4, 0, 6.3); g.fill();
   }
+  // 天気図（t62）：雨・雪（または気温）と等圧線。文字の下
+  drawWx(g, z, v);
   // 文字（いちばん上）。だいじなものから置き、重なるものはあとから出さない
   drawLabels(g, it, z, v, bs);
+  drawWxTop(g, z);   // 等圧線の数字・「高」「低」
   // 道具の上がき
   if (S.drawTool) S.drawTool(g, z);
   if (S.pin) drawPin(g);   // さがした場所（t59）
@@ -1354,12 +1358,24 @@ function openRunFind() {
    左下：地図のまん中の天気（タップでくわしく）。場所・駅・列車のシートにも「天気」 ---------- */
 const WXS = { t: 0, key: '' };
 const wxOk = () => !!window.MapWx;
-function wxElev(x, y) { const t = tileAt(Math.floor(x), Math.floor(y)); return t && t.e > 0 ? t.e : 0; }
+// 標高（天気用）：読んだマスはそのまま。ほかは地形の式（worldgen）で、32マスごとにおぼえる
+const WXE = new Map();
+function wxElev(x, y) {
+  const t = tileAt(Math.floor(x), Math.floor(y)); if (t) return t.e > 0 ? t.e : 0;
+  if (!inWorld(Math.floor(x / CS), Math.floor(y / CS))) return 0;   // 国の外は海
+  if (!WG && window.MapGen) WG = MapGen.world();
+  if (!WG) return 0;
+  const qx = Math.round(x / 32), qy = Math.round(y / 32), k = qx + ',' + qy;
+  let e = WXE.get(k);
+  if (e === undefined) { try { e = Math.max(0, WG.cell(qx * 32, qy * 32).e || 0); } catch (er) { e = 0; } if (WXE.size > 30000) WXE.clear(); WXE.set(k, e); }
+  return e;
+}
 function wxCenter() { return S.v3 && Number.isFinite(S.v3.tx) && Number.isFinite(S.v3.ty) ? [S.v3.tx, S.v3.ty] : [S.cam.x, S.cam.y]; }
 const wxT = v => (Math.round(v * 10) / 10).toFixed(1).replace('-', '−') + '℃';
 const wxD = v => String(v).replace('-', '−') + '℃';
 function wxStep() {
   const t = now(); if (t - WXS.t < 500) return; WXS.t = t;
+  if (S.layer.wxmap) { const k = wxKey(); if (WXL.c && WXL.c.key !== k) S.dirty = true; wxBarSync(); }
   const b = S.wrap && S.wrap.querySelector('.mp-wx'); if (!b) return;
   if (!S.wx || !wxOk()) { b.hidden = true; return; }
   const [x, y] = wxCenter(), ld = tileAt(Math.floor(x), Math.floor(y)) ? 1 : 0;
@@ -1390,6 +1406,169 @@ async function openWx(x, y) {
     <p class="muted small"><span>国土の天気は、季節・時刻・場所で決まります（だれが見ても同じです）。</span><span>北ほど寒く、北の冬は雪がよく降ります。南は暖かく、高いところほど寒くなります（100mで約0.65℃）。</span><span>首都 美東区の平年：春21℃・夏28℃・秋19℃・冬14℃</span></p>`], null);
   const d = await api('mp_spot', { p_x: Math.floor(x * 5), p_y: Math.floor(y * 5) });
   const a = m.querySelector('[data-wxa]'); if (a && d && d.addr) a.textContent = d.addr.text;
+}
+
+/* ---------- 天気図（t62）：等圧線（2hPa ごと）・高気圧「高」と低気圧「低」・雨と雪（または気温）。いまから24時間後まで ---------- */
+const WXL = { c: null, at: 0 };
+const WX_OFFS = [0, 3, 6, 12, 24];
+const wxKey = () => S.wxMode + ':' + S.wxOff + ':' + Math.floor(Date.now() / 300000);   // 5分ごとに新しく
+const wxMs = () => S.wxOff ? (Math.floor(Date.now() / 3600000) + S.wxOff) * 3600000 : Date.now();   // 予想は ちょうどの時刻
+// 雨・雪の色（気象レーダーのような色。1時間の量 mm）・雲はうすい灰色
+function wxRainCol(o) {
+  if (o.wet) {
+    if (o.kind === 'snow') return [246, 248, 255, 150 + Math.round(90 * o.inten)];
+    if (o.kind === 'sleet') return [196, 214, 255, 175];
+    const mm = 0.5 + 40 * o.inten * o.inten;
+    return mm < 1 ? [200, 228, 255, 150] : mm < 5 ? [130, 190, 255, 170] : mm < 10 ? [33, 140, 255, 180] : mm < 20 ? [0, 65, 255, 190]
+      : mm < 30 ? [250, 245, 0, 200] : mm < 50 ? [255, 153, 0, 210] : [255, 40, 0, 220];
+  }
+  return o.cl === 1 ? [236, 239, 243, 90] : o.cl ? [236, 239, 243, 38] : [0, 0, 0, 0];
+}
+// 気温の色（−15℃ むらさき → 0℃ 青 → 15℃ 黄緑 → 30℃ 赤）
+const WX_TC = [[-15, 80, 40, 160], [-5, 60, 90, 220], [0, 90, 160, 240], [5, 90, 200, 220], [10, 110, 210, 150], [15, 190, 225, 100], [20, 250, 220, 80], [25, 250, 160, 60], [30, 235, 80, 50], [35, 190, 30, 60]];
+function wxTempCol(T) {
+  if (T <= WX_TC[0][0]) return [WX_TC[0][1], WX_TC[0][2], WX_TC[0][3], 150];
+  for (let i = 1; i < WX_TC.length; i++) {
+    const b = WX_TC[i]; if (T > b[0]) continue;
+    const a = WX_TC[i - 1], f = (T - a[0]) / (b[0] - a[0]);
+    return [Math.round(a[1] + (b[1] - a[1]) * f), Math.round(a[2] + (b[2] - a[2]) * f), Math.round(a[3] + (b[3] - a[3]) * f), 150];
+  }
+  const l = WX_TC[WX_TC.length - 1]; return [l[1], l[2], l[3], 150];
+}
+// 等圧線（マーチングスクエア）：値 L の線を [x1, y1, x2, y2, …]（マス）で
+function wxIso(P, nx, ny, x0, y0, st, L) {
+  const out = [];
+  for (let j = 0; j < ny - 1; j++) for (let i = 0; i < nx - 1; i++) {
+    const k = j * nx + i, a = P[k], b = P[k + 1], c = P[k + nx + 1], d = P[k + nx];
+    const id = (a > L ? 8 : 0) | (b > L ? 4 : 0) | (c > L ? 2 : 0) | (d > L ? 1 : 0); if (id === 0 || id === 15) continue;
+    const X = x0 + i * st, Y = y0 + j * st;
+    const T_ = () => [X + st * (L - a) / (b - a), Y], R_ = () => [X + st, Y + st * (L - b) / (c - b)];
+    const B_ = () => [X + st * (L - d) / (c - d), Y + st], L_ = () => [X, Y + st * (L - a) / (d - a)];
+    const seg = (p, q) => out.push(p[0], p[1], q[0], q[1]), up = (a + b + c + d) / 4 > L;
+    switch (id) {
+      case 1: case 14: seg(L_(), B_()); break;
+      case 2: case 13: seg(B_(), R_()); break;
+      case 3: case 12: seg(L_(), R_()); break;
+      case 4: case 11: seg(T_(), R_()); break;
+      case 6: case 9: seg(T_(), B_()); break;
+      case 7: case 8: seg(L_(), T_()); break;
+      case 5: if (up) { seg(L_(), T_()); seg(B_(), R_()); } else { seg(T_(), R_()); seg(L_(), B_()); } break;
+      case 10: if (up) { seg(T_(), R_()); seg(L_(), B_()); } else { seg(L_(), T_()); seg(B_(), R_()); } break;
+    }
+  }
+  return out;
+}
+// 見えているところ（まわりも少し）の天気を、画面で16pxごとに計算する
+function wxArea(v, z) {
+  const w = S.boot && S.boot.world, m = 12000;   // 国のまわり 600km まで（まわりの海の天気も）
+  let X0 = v.x0, Y0 = v.y0, X1 = v.x1, Y1 = v.y1;
+  if (w && w.cx1 >= w.cx0) { X0 = Math.max(X0, w.cx0 * CS - m); Y0 = Math.max(Y0, w.cy0 * CS - m); X1 = Math.min(X1, (w.cx1 + 1) * CS + m); Y1 = Math.min(Y1, (w.cy1 + 1) * CS + m); }
+  return { X0, Y0, X1, Y1 };
+}
+const wxStepOf = z => Math.pow(2, Math.round(Math.log2(Math.max(0.25, 16 / z))));
+function wxBuild(v, z) {
+  const st = wxStepOf(z), a = wxArea(v, z); if (a.X1 <= a.X0 || a.Y1 <= a.Y0) return null;
+  const mx = (a.X1 - a.X0) * 0.3, my = (a.Y1 - a.Y0) * 0.3, b = wxArea({ x0: a.X0 - mx, y0: a.Y0 - my, x1: a.X1 + mx, y1: a.Y1 + my }, z);
+  const x0 = Math.floor(b.X0 / st) * st, y0 = Math.floor(b.Y0 / st) * st, nx = Math.ceil((b.X1 - x0) / st) + 2, ny = Math.ceil((b.Y1 - y0) / st) + 2;
+  if (nx < 3 || ny < 3 || nx * ny > 16000) return null;
+  const ms = wxMs(), t = MapWx.tinfo(ms), N = nx * ny, temp = S.wxMode === 'temp';
+  const P = new Float32Array(N), cv = document.createElement('canvas'); cv.width = nx; cv.height = ny;
+  const cg = cv.getContext('2d'), im = cg.createImageData(nx, ny), d = im.data;
+  let lo = Infinity, hi = -Infinity;
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const x = x0 + i * st, y = y0 + j * st, k = j * nx + i, o = MapWx.core(x, y, wxElev(x, y), ms, t), c = temp ? wxTempCol(o.T) : wxRainCol(o);
+    P[k] = o.P; if (o.P < lo) lo = o.P; if (o.P > hi) hi = o.P;
+    d[k * 4] = c[0]; d[k * 4 + 1] = c[1]; d[k * 4 + 2] = c[2]; d[k * 4 + 3] = c[3];
+  }
+  cg.putImageData(im, 0, 0);
+  const lines = []; for (let L = Math.ceil(lo / 2) * 2; L <= hi; L += 2) { const sg = wxIso(P, nx, ny, x0, y0, st, L); if (sg.length) lines.push({ L, s: sg }); }
+  // 高気圧・低気圧：まわり（9×9）でいちばん高い・低いところ
+  const ext = [], R = 4;
+  for (let j = R; j < ny - R; j++) for (let i = R; i < nx - R; i++) {
+    const k = j * nx + i, p = P[k]; let mxf = true, mnf = true, sum = 0, n = 0;
+    for (let bb = -R; bb <= R && (mxf || mnf); bb++) for (let aa = -R; aa <= R; aa++) { if (!aa && !bb) continue; const q = P[k + bb * nx + aa]; if (q >= p) mxf = false; if (q <= p) mnf = false; sum += q; n++; }
+    if ((mxf || mnf) && Math.abs(p - sum / n) > 0.02 && !ext.some(e => Math.abs(e.i - i) < 8 && Math.abs(e.j - j) < 8)) ext.push({ i, j, x: x0 + i * st, y: y0 + j * st, P: p, hi: mxf });
+  }
+  return { key: wxKey(), st, x0, y0, nx, ny, img: cv, lines, ext, A: a, ms };
+}
+function drawWx(g, z, v) {
+  if (!S.layer.wxmap || !wxOk() || S.v3) return;
+  const key = wxKey(), a = wxArea(v, z), t = now();
+  let c = WXL.c;
+  const need = !c || c.key !== key || c.st !== wxStepOf(z) || a.X0 < c.x0 || a.Y0 < c.y0 || a.X1 > c.x0 + (c.nx - 1) * c.st || a.Y1 > c.y0 + (c.ny - 1) * c.st;
+  if (need) {
+    if (!c || c.key !== key || t - WXL.at > 140) { WXL.at = t; const n = wxBuild(v, z); if (n) WXL.c = c = n; }
+    else S.dirty = true;   // うごかしているあいだは、少しあとで作りなおす
+  }
+  if (!c) return;
+  g.save();
+  g.fillStyle = 'rgba(20,30,50,.14)'; g.fillRect(0, 0, S.W, S.H);   // 地図を少し暗くして、雲と雨を見やすく
+  g.imageSmoothingEnabled = true;
+  g.drawImage(c.img, sx(c.x0 - c.st / 2), sy(c.y0 - c.st / 2), c.nx * c.st * z, c.ny * c.st * z);
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  for (const ln of c.lines) {
+    g.beginPath(); const sg = ln.s;
+    for (let i = 0; i < sg.length; i += 4) { g.moveTo(sx(sg[i]), sy(sg[i + 1])); g.lineTo(sx(sg[i + 2]), sy(sg[i + 3])); }
+    g.strokeStyle = 'rgba(34,34,48,.8)'; g.lineWidth = ln.L % 20 === 0 ? 2.6 : ln.L % 10 === 0 ? 1.8 : 1.1; g.stroke();
+  }
+  g.restore();
+}
+function drawWxTop(g, z) {
+  const c = WXL.c; if (!S.layer.wxmap || !c || S.v3) return;
+  g.save(); g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineJoin = 'round';
+  // 等圧線の数字：線ごとに1つ（画面のまん中にいちばん近いところ）
+  g.font = '700 11px system-ui, sans-serif';
+  for (const ln of c.lines) {
+    let best = null, bd = Infinity; const sg = ln.s;
+    for (let i = 0; i < sg.length; i += 4) {
+      const x = sx((sg[i] + sg[i + 2]) / 2), y = sy((sg[i + 1] + sg[i + 3]) / 2);
+      if (x < 26 || y < 64 || x > S.W - 64 || y > S.H - 160) continue;
+      const dd = (x - S.W / 2) ** 2 + ((y - S.H / 2) * 1.6) ** 2; if (dd < bd) { bd = dd; best = [x, y]; }
+    }
+    if (!best) continue;
+    const tx = String(ln.L); g.lineWidth = 3.5; g.strokeStyle = 'rgba(255,255,255,.92)'; g.strokeText(tx, best[0], best[1]); g.fillStyle = '#26263a'; g.fillText(tx, best[0], best[1]);
+  }
+  // 高・低（日本の天気図のように、高は青・低は赤）
+  const L = window.I18N && I18N.lang, HL = L === 'en' ? ['H', 'L'] : L === 'ko' ? ['고', '저'] : ['高', '低'];
+  for (const e of c.ext) {
+    const x = sx(e.x), y = sy(e.y); if (x < 12 || y < 56 || x > S.W - 12 || y > S.H - 150) continue;
+    g.font = '900 24px system-ui, sans-serif'; g.lineWidth = 5; g.strokeStyle = 'rgba(255,255,255,.95)';
+    const tx = e.hi ? HL[0] : HL[1]; g.strokeText(tx, x, y); g.fillStyle = e.hi ? '#1d4fc4' : '#d1302a'; g.fillText(tx, x, y);
+    g.font = '800 12px system-ui, sans-serif'; g.lineWidth = 3.5; const pv = String(Math.round(e.P)); g.strokeText(pv, x, y + 19); g.fillText(pv, x, y + 19);
+  }
+  g.restore();
+}
+// 天気図の下の帯：時刻・雨と雪／気温・何時間後・うごかす・色の見かた
+function wxBarSync() {
+  const b = S.wrap && S.wrap.querySelector('.mp-wxbar'); if (!b) return;
+  const on = !!S.layer.wxmap && !S.v3;
+  b.hidden = !on; S.wrap.classList.toggle('mp-wxon', on);
+  if (!on) return;
+  const ms = wxMs(), j = new Date(ms + 9 * 3600000), p2 = n => String(n).padStart(2, '0');
+  const tm = `${j.getUTCMonth() + 1}/${j.getUTCDate()} ${p2(j.getUTCHours())}:${p2(j.getUTCMinutes())}`;
+  const k = tm + '|' + S.wxMode + '|' + S.wxOff + '|' + (S.wxPlay ? 1 : 0);
+  if (b.dataset.k === k) return; b.dataset.k = k;
+  b.querySelector('[data-wxtime]').innerHTML = `<span>${tm}</span> <small>${S.wxOff ? '予想' : 'いま'}</small>`;
+  b.querySelectorAll('[data-wxm]').forEach(x => x.classList.toggle('on', x.dataset.wxm === S.wxMode));
+  b.querySelectorAll('[data-wxo]').forEach(x => x.classList.toggle('on', Number(x.dataset.wxo) === S.wxOff));
+  b.querySelector('[data-wxplay]').textContent = S.wxPlay ? '⏸' : '▶';
+  b.querySelector('[data-wxleg]').innerHTML = S.wxMode === 'temp'
+    ? `<span class="mp-wxgr" style="background:linear-gradient(90deg,${WX_TC.map(c => `rgb(${c[1]},${c[2]},${c[3]})`).join(',')})"></span><span class="mp-wxsc"><span>−15</span><span>0</span><span>15</span><span>35℃</span></span>`
+    : `<span><i style="background:rgb(236,239,243)"></i>くもり</span><span><i style="background:rgb(130,190,255)"></i>弱い雨</span><span><i style="background:rgb(0,65,255)"></i>雨</span><span><i style="background:rgb(255,153,0)"></i>強い雨</span><span><i style="background:rgb(246,248,255);border-color:#99a"></i>雪</span>`;
+}
+function wxSetOff(h) { S.wxOff = Math.max(0, Math.min(24, h | 0)); S.dirty = true; wxBarSync(); }
+function wxPlayToggle() {
+  if (S.wxPlay) { clearInterval(S.wxPlay); S.wxPlay = 0; wxBarSync(); return; }
+  if (S.wxOff >= 24) wxSetOff(0);
+  S.wxPlay = setInterval(() => { if (!S.open || !S.layer.wxmap || S.wxOff >= 24) { clearInterval(S.wxPlay); S.wxPlay = 0; wxBarSync(); return; } wxSetOff(S.wxOff + 1); }, 700);
+  wxBarSync();
+}
+// メニューの「天気図」から：天気図を出して、国ぜんたいが見えるように
+function wxMapOn() {
+  if (S.v3) { const b = S.wrap.querySelector('[data-v3]'); if (b) b.click(); }
+  if (!S.layer.wxmap) setOpt('wxmap', true);
+  const w = S.boot && S.boot.world;
+  if (w && w.cx1 >= w.cx0) { const W_ = (w.cx1 - w.cx0 + 1) * CS, H_ = (w.cy1 - w.cy0 + 1) * CS; setCam(((w.cx0 + w.cx1 + 1) / 2) * CS, ((w.cy0 + w.cy1 + 1) / 2) * CS, Math.min(S.W / W_, (S.H - 120) / H_) / 1.5); }   // まわりの海も少し
 }
 
 /* ---------- 画面（ボタン・下のシート） ---------- */
@@ -1430,6 +1609,21 @@ const CSS = `
 .mp-wx[hidden]{display:none}
 .mp-wx small{font-size:11.5px;color:#345;margin-left:2px}
 .mp-wrap.mp-3d .mp-wx{bottom:12px}
+.mp-wrap.mp-wxon .mp-wx{bottom:166px}
+.mp-wxbar{position:absolute;left:8px;right:56px;bottom:62px;background:rgba(255,255,255,.95);color:#222;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.22);padding:7px 9px;display:flex;flex-direction:column;gap:6px;font-size:12.5px}
+.mp-wxbar[hidden]{display:none}
+.mp-wxr{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.mp-wxr b[data-wxtime]{font-variant-numeric:tabular-nums;margin-right:auto}
+.mp-wxr b[data-wxtime] small{font-weight:700;color:#1f5fbf;margin-left:3px}
+.mp-wxbar .mp-seg button{padding:4px 9px;font-size:12px;background:#f2f4f7;color:#222}
+.mp-wxbar .mp-seg button.on{background:#1f5fbf;color:#fff}
+.mp-wxo button,.mp-wxpl{border:1px solid rgba(0,0,0,.16);background:#f4f6f9;color:#222;border-radius:14px;padding:4px 9px;font-weight:700;font-size:12px}
+.mp-wxo button.on{background:#1f5fbf;color:#fff;border-color:#1f5fbf}
+.mp-wxpl{min-width:34px}
+.mp-wxleg{display:flex;gap:8px;flex-wrap:wrap;align-items:center;color:#444;font-size:11.5px}
+.mp-wxleg i{display:inline-block;width:12px;height:10px;border-radius:3px;margin-right:3px;vertical-align:-1px;border:1px solid rgba(0,0,0,.12)}
+.mp-wxgr{display:block;height:9px;border-radius:5px;flex:1 1 100%}
+.mp-wxsc{display:flex;justify-content:space-between;flex:1 1 100%;font-variant-numeric:tabular-nums;margin-top:-4px}
 .mp-wxnow{display:flex;align-items:baseline;gap:10px;margin:8px 0 2px}
 .mp-wxnow .ic{font-size:30px;line-height:1}
 .mp-wxnow b{font-size:28px;font-variant-numeric:tabular-nums}
@@ -1493,6 +1687,7 @@ function setOpt(k, on) {
   if (k === 'inertia' && !on) S.glide = null;
   if (k === 'run') runReset();
   if (k === 'wx') { WXS.key = ''; WXS.t = 0; }
+  if (k === 'wxmap') { WXL.c = null; if (!on && S.wxPlay) { clearInterval(S.wxPlay); S.wxPlay = 0; } if (!on && S.cam.z < 0.18) setCam(S.cam.x, S.cam.y, 0.18); if (on && S.v3) toast(T('天気図は2Dの地図で見られます（3Dをやめると出ます）')); wxBarSync(); }
   optSync(); S.dirty = true; if (S.v3) S.v3.dirty = true;
 }
 function optSync() {
@@ -1507,7 +1702,7 @@ function build(root) {
     <canvas class="mp-cv"></canvas><canvas class="mp-cvr"></canvas>
     <div class="mp-top">
       <select class="mp-as" title="だれの名前で"></select>
-      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-lay="run" title="列車・バスの走行位置">🚃 走行</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button><button data-v3 title="ななめから立体に見る">🗻 3D</button><button data-v3x hidden title="横に回す向きを反対にする（2本指でひねる・右ドラッグ）">⇄ 左右反転</button>
+      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-lay="run" title="列車・バスの走行位置">🚃 走行</button><button data-lay="wxmap" title="天気図（等圧線・高気圧と低気圧・雨と雪・気温）">🌤 天気図</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button><button data-v3 title="ななめから立体に見る">🗻 3D</button><button data-v3x hidden title="横に回す向きを反対にする（2本指でひねる・右ドラッグ）">⇄ 左右反転</button>
       <span class="mp-addr" translate="no" hidden></span>
     </div>
     <div class="mp-zoom"><button data-find title="さがす">🔍</button><button data-full title="大きく">⤢</button><button data-zin>＋</button><button data-zout>－</button><button data-home title="瑠璃市役所">⌂</button><button data-opt title="地図の設定">⚙</button></div>
@@ -1521,6 +1716,11 @@ function build(root) {
     </div>
     <div class="mp-hint" hidden></div>
     <button class="mp-wx" hidden title="天気"></button>
+    <div class="mp-wxbar" hidden>
+      <div class="mp-wxr"><b data-wxtime></b><span class="mp-seg"><button data-wxm="rain">雨・雪</button><button data-wxm="temp">気温</button></span><button class="mp-wxpl" data-wxplay title="うごかす（1時間ずつ）">▶</button></div>
+      <div class="mp-wxr mp-wxo">${WX_OFFS.map(h => `<button data-wxo="${h}">${h ? `${h}時間後` : 'いま'}</button>`).join('')}</div>
+      <div class="mp-wxleg" data-wxleg></div>
+    </div>
     <div class="mp-sheet" hidden></div>
     <div class="mp-tools">
       <button data-tool="look" class="on">👆 見る</button><button data-tool="land">▦ 土地</button><button data-tool="rail">🚃 線路</button>
@@ -1557,6 +1757,10 @@ function build(root) {
   S.wrap.querySelector('[data-full]').onclick = () => { S.wrap.classList.toggle('mp-full'); resize(); };
   S.wrap.querySelector('[data-find]').onclick = () => openFind();   // さがす（t59）
   S.wrap.querySelector('.mp-wx').onclick = () => { const [x, y] = wxCenter(); openWx(x, y); };   // 天気（t62）
+  { const wb = S.wrap.querySelector('.mp-wxbar');   // 天気図の帯（t62）
+    wb.querySelectorAll('[data-wxm]').forEach(x => x.onclick = () => { S.wxMode = x.dataset.wxm; S.dirty = true; wxBarSync(); });
+    wb.querySelectorAll('[data-wxo]').forEach(x => x.onclick = () => { if (S.wxPlay) wxPlayToggle(); wxSetOff(Number(x.dataset.wxo)); });
+    wb.querySelector('[data-wxplay]').onclick = () => wxPlayToggle(); }
   S.wrap.addEventListener('click', ev => { const a = ev.target.closest && ev.target.closest('[data-wx]'); if (!a) return; ev.preventDefault(); const [x, y] = a.dataset.wx.split(',').map(Number); openWx(x, y); });
   S.wrap.querySelector('[data-zin]').onclick = () => zoomAt(S.W / 2, S.H / 2, 1.6);
   S.wrap.querySelector('[data-zout]').onclick = () => zoomAt(S.W / 2, S.H / 2, 1 / 1.6);
@@ -5690,5 +5894,5 @@ function showCert(r) {
 }
 window.MapInt = { S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runOff, runIsSel, runName, runDest, showTrain, showSta, runFollow };   // 3D（map3d.js）が使う
 window.MapApp = { open, pause, state: S, spline, setCam, landReqs: () => openLandReqs(), xfers: () => openXfers(), goto: (x, y) => homeGo(x, y), thru: () => openThru(), bld: id => openBld(id), sc: () => openSC(),
-  slots: L => (L && L.st ? openSlots(Number(L.st)) : openSlotList()), find: () => openFind(), jm: id => openJuumin(id) };
+  slots: L => (L && L.st ? openSlots(Number(L.st)) : openSlotList()), find: () => openFind(), jm: id => openJuumin(id), wxMap: () => wxMapOn() };
 })();

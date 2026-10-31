@@ -993,6 +993,28 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 .ft-tile.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
 .ft-tile b{font-size:17px;font-weight:700;line-height:1.3}
 .ft-tile small{font-size:11px;color:var(--muted)}
+/* 各地の天気（メイン・t62） */
+.wx-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px;margin-top:8px}
+.wx-t{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:0 8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:var(--radius);padding:7px 9px;text-align:left;font:inherit;cursor:pointer}
+.wx-t.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.wx-t .nm{display:flex;flex-direction:column;min-width:0}
+.wx-t .nm b{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wx-t .nm small,.wx-t .sn{font-size:11px;color:var(--muted)}
+.wx-t .ic{font-size:22px;line-height:1}
+.wx-t .tp{display:flex;flex-direction:column;align-items:flex-end;font-variant-numeric:tabular-nums;line-height:1.25}
+.wx-t .tp b{font-size:15px}
+.wx-t .tp small{font-size:11px;color:var(--muted);white-space:nowrap}
+.wx-t i{font-style:normal}
+.wx-t .sn{grid-column:1/-1}
+.wx-t .hi,.wx-d .hi,.wx-d small.hi{color:var(--red)}
+.wx-t .lo,.wx-d .lo,.wx-d small.lo{color:var(--night)}
+.wx-h,.wx-d{display:grid;gap:4px}
+.wx-h{grid-template-columns:repeat(8,1fr)}
+.wx-d{grid-template-columns:repeat(4,1fr)}
+.wx-h div,.wx-d div{display:flex;flex-direction:column;align-items:center;gap:1px;background:var(--soft);border-radius:8px;padding:5px 2px;font-size:12px;text-align:center;font-variant-numeric:tabular-nums}
+.wx-h small,.wx-d small{color:var(--muted);font-size:11px}
+.wx-h span{font-size:17px}
+.wx-d .ic{font-size:20px}
 /* テーマの見本（設定） */
 .th-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:8px}
 .th-tile{border:2px solid var(--line);border-radius:12px;padding:0;overflow:hidden;text-align:left;background:var(--panel)}
@@ -1144,7 +1166,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=5c142574","zh-TW":"zh-TW.js?v=9b8566a0","zh-CN":"zh-CN.js?v=03f024e7","ko":"ko.js?v=26fad02a","ko-Hani":"ko-Hani.js?v=fdfed4a5"};
+  window.AX_LANGS = {"en":"en.js?v=6f7694b0","zh-TW":"zh-TW.js?v=c341a68c","zh-CN":"zh-CN.js?v=eb1a384e","ko":"ko.js?v=074e6605","ko-Hani":"ko-Hani.js?v=4372263d"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -1222,6 +1244,12 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <div class="row"><h3 style="margin:0" class="grow">よく使うメニュー</h3><button class="btn s" id="hmEdit">編集</button></div>
     <div class="hm-grid" id="hmGrid"></div>
     <div class="hm-ed hidden" id="hmEd"></div>
+  </div>
+  <div class="card" data-sub="menu" id="wxCard">
+    <div class="row"><h3 style="margin:0" class="grow">🌤 各地の天気</h3><button class="btn s" id="wxMapBtn">🗺 天気図</button></div>
+    <div class="wx-grid" id="wxGrid"><p class="muted small" style="margin:0">読みこみ中…</p></div>
+    <div id="wxMore" class="hidden"></div>
+    <p class="muted small" style="margin:8px 0 0">国土の天気です（季節・時刻・場所で決まり、だれが見ても同じ）。地域をおすと、これからの天気が出ます。</p>
   </div>
   <div class="card" data-sub="friend">
     <h3 style="margin-top:0">フレンド申請</h3>
@@ -5083,15 +5111,22 @@ const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
 // 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
-const MAPV = '102';
+const MAPV = '103';
 let mapLoading = null;
 function mapScripts() {
   if (window.MapApp) return Promise.resolve();
   if (mapLoading) return mapLoading;
   const add = src => new Promise((ok, ng) => { const e = document.createElement('script'); e.src = src; e.onload = ok; e.onerror = () => { mapLoading = null; ng(new Error('地図を読みこめませんでした')); }; document.head.appendChild(e); });
-  return (mapLoading = Promise.all([add('map/palette.js?v=' + MAPV), add('map/worldgen.js?v=' + MAPV), add('map/wx.js?v=' + MAPV)]).then(() => add('map/map.js?v=' + MAPV)).then(() => add('map/map3d.js?v=' + MAPV)));
+  return (mapLoading = Promise.all([add('map/palette.js?v=' + MAPV), add('map/worldgen.js?v=' + MAPV), wxScript()]).then(() => add('map/map.js?v=' + MAPV)).then(() => add('map/map3d.js?v=' + MAPV)));
 }
 async function mapOpen() { await mapScripts(); await MapApp.open($('#mpRoot')); }
+// 国土の天気（map/wx.js）：メインの「各地の天気」でも使うので、地図とは別に読めるように（t62）
+let wxLoading = null;
+function wxScript() {
+  if (window.MapWx) return Promise.resolve();
+  if (wxLoading) return wxLoading;
+  return (wxLoading = new Promise((ok, ng) => { const e = document.createElement('script'); e.src = 'map/wx.js?v=' + MAPV; e.onload = ok; e.onerror = () => { wxLoading = null; ng(new Error('天気を読みこめませんでした')); }; document.head.appendChild(e); }));
+}
 async function corpLoad(sub) {
   try {
     if (sub === 'search') await coSearch();
@@ -6127,7 +6162,7 @@ function setMsgN(n) {
   const tl = $('#hmGrid [data-hm="vHome:msg"] .tb-n'); if (tl) { tl.textContent = MSGN; tl.classList.toggle('hidden', !MSGN); }
 }
 function homeLoad(sub) {
-  if (sub === 'menu') hmRender();
+  if (sub === 'menu') { hmRender(); wxHome(); }
   if (sub === 'friend') friendLoad();
   if (sub === 'msg') msgLoad();
   if (sub === 'horses') hoLoad();
@@ -6251,6 +6286,53 @@ function hmEdRender() {
     } catch (e) { toast(e.message); }
   };
 }
+/* ---- 各地の天気（t62）：国土の天気（map/wx.js）を、首都（中里区・美東区）と、県ごとにいちばん大きな市で。北から南へ ---- */
+// [名前, そえる字, x, y（マス）, 標高 m]
+const WX_PLACES = [['中里区', '経済首都', 0, 0, 2], ['美東区', '行政首都', -64, 54, 14],
+  ['金田市', '琥珀県', 180, -1421, 38], ['白樺市', '玻璃県', -1098, -1235, 138], ['白井市', '真珠県', 1302, -1228, 6],
+  ['紅野市', '瑪瑙県', -1229, -509, 66], ['桃原市', '珊瑚県', -669, 653, 2], ['翠峰市', '翡翠県', -1090, 1126, 113],
+  ['澄浜市', '水晶県', -957, 2324, 18], ['柑浜市', '柘榴県', 160, 2470, 26]];
+const WXH = { sel: -1, t: 0 };
+const wxDeg = v => String(v).replace('-', '−') + '℃';
+const wxSub = p => `<small${/県$/.test(p[1]) ? ' translate="no"' : ''}>${p[1]}</small>`;
+async function wxHome() {
+  const g = $('#wxGrid'); if (!g) return;
+  try { await wxScript(); } catch (e) { g.innerHTML = `<p class="muted small" style="margin:0">${esc(e.message)}</p>`; return; }
+  const ms = Date.now(); WXH.t = ms;
+  g.innerHTML = WX_PLACES.map((p, i) => { const w = MapWx.now(p[2], p[3], p[4], ms);
+    return `<button class="wx-t ${i === WXH.sel ? 'on' : ''}" data-wxi="${i}"><span class="nm"><b translate="no">${p[0]}</b>${wxSub(p)}</span>
+      <span class="ic" title="${esc(w.nm)}">${w.ic}</span><span class="tp"><b>${wxDeg(w.T.toFixed(1))}</b><small><i class="hi">${wxDeg(w.hi)}</i> / <i class="lo">${wxDeg(w.lo)}</i></small></span>
+      ${w.snow > 0 ? `<small class="sn">⛄ <span>積雪 ${w.snow}cm</span></small>` : ''}</button>`; }).join('');
+  $$('#wxGrid [data-wxi]').forEach(b => b.onclick = () => { const i = Number(b.dataset.wxi); WXH.sel = WXH.sel === i ? -1 : i; wxHome(); });
+  wxMore();
+}
+// 地域をおしたとき：3時間ごと・これから4日
+function wxMore() {
+  const box = $('#wxMore'); if (!box) return;
+  const p = WX_PLACES[WXH.sel]; if (!p || !window.MapWx) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+  const hs = MapWx.hours(p[2], p[3], p[4], 8, 3), ds = MapWx.days(p[2], p[3], p[4], 4), WD = '日月火水木金土';
+  const dl = (d, i) => { if (i === 0) return 'きょう'; if (i === 1) return 'あした'; const j = new Date(d.date + 9 * 3600000); return `${j.getUTCMonth() + 1}月${j.getUTCDate()}日（${WD[j.getUTCDay()]}）`; };
+  box.innerHTML = `<h4 style="margin:10px 0 6px"><span translate="no">${p[0]}</span>${/県$/.test(p[1]) ? `（<span translate="no">${p[1]}</span>）` : `（<span>${p[1]}</span>）`}</h4>
+    <p class="small muted" style="margin:0 0 4px">3時間ごと</p>
+    <div class="wx-h">${hs.map(h => `<div><small>${h.hr}時</small><span>${h.ic}</span><b>${wxDeg(Math.round(h.T))}</b></div>`).join('')}</div>
+    <p class="small muted" style="margin:8px 0 4px">これからの天気</p>
+    <div class="wx-d">${ds.map((d, i) => `<div><small>${dl(d, i)}</small><span class="ic">${d.ic}</span><span>${d.nm}</span><b class="hi">${wxDeg(d.hi)}</b><small class="lo">${wxDeg(d.lo)}</small></div>`).join('')}</div>
+    <div class="row" style="margin-top:8px;gap:6px"><button class="btn s" data-wxgo>🗾 地図で見る</button><button class="btn s" data-wxmap>🗺 天気図</button></div>`;
+  box.classList.remove('hidden');
+  box.querySelector('[data-wxgo]').onclick = () => wxMapGo(p[2], p[3], false);
+  box.querySelector('[data-wxmap]').onclick = () => wxMapGo(null, null, true);
+}
+// 国土の地図をひらく（天気図なら、国ぜんたいが見えるように）
+async function wxMapGo(x, y, wxmap) {
+  go('vCorp', 'map');
+  const t0 = Date.now();
+  while (Date.now() - t0 < 20000 && !(window.MapApp && MapApp.state && MapApp.state.open && MapApp.state.wrap)) await new Promise(r => setTimeout(r, 120));
+  if (!window.MapApp || !MapApp.state.open) return;
+  if (wxmap) MapApp.wxMap(); else MapApp.setCam(x, y, 5);
+}
+$('#wxMapBtn').onclick = () => wxMapGo(null, null, true);
+setInterval(() => { if (view === 'vHome' && sessionStorageGet('sub:vHome') === 'menu' && Date.now() - WXH.t > 5 * 60000 && !document.hidden) wxHome(); }, 60000);   // 5分ごとに新しく
+
 // 連絡：一覧
 function msgLoad() { dmListLoad(); spListLoad(); }
 async function dmListLoad() {

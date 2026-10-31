@@ -33,9 +33,14 @@ function noise(xk, yk, th, a, b, s) {
 // 気温のずれ（何日もつづく暖かい・寒い）と、雲（半日ぐらい）。どちらも西から東へ動く
 const nA = (xk, yk, th) => 0.8 * noise(xk - 28 * th, yk, th, 450, 70, 11) + 0.5 * noise(xk - 20 * th, yk, th, 1100, 220, 12);
 const nC = (xk, yk, th) => 0.8 * noise(xk - 32 * th, yk, th, 170, 20, 21) + 0.4 * noise(xk - 32 * th, yk, th, 55, 6, 22);
+// 気圧（高気圧・低気圧：400km ぐらいのかたまり。西から東へ 30km/h）。天気図の等圧線にも
+const nP = (xk, yk, th) => 0.8 * noise(xk - 30 * th, yk, th, 380, 48, 31) + 0.45 * noise(xk - 24 * th, yk, th, 900, 120, 32);
 // 雑音のちらばり（はじめに1回はかる。いつも同じ点なので、だれでも同じ）
-const SA = (() => { let q = 0; for (let i = 0; i < 3000; i++) { const v = nA(i * 37.3, i * 11.7, i * 53.1); q += v * v; } return Math.sqrt(q / 3000); })();
-const QC = (() => { const a = []; for (let i = 0; i < 3000; i++) a.push(nC(i * 97.1, i * 41.3, i * 13.7)); return Float64Array.from(a.sort((x, y) => x - y)); })();
+const sd = f => { let q = 0; for (let i = 0; i < 3000; i++) { const v = f(i * 37.3, i * 11.7, i * 53.1); q += v * v; } return Math.sqrt(q / 3000); };
+const SA = sd(nA), SC = sd(nC), SP = sd(nP);
+// 雲：低気圧のところに多い（天気図の「低」のまわりで雨・雪）
+const cloudZ = (c, zp) => 0.75 * c / SC - 0.65 * zp;
+const QC = (() => { const a = []; for (let i = 0; i < 3000; i++) { const x = i * 97.1, y = i * 41.3, h = i * 13.7; a.push(cloudZ(nC(x, y, h), nP(x, y, h) / SP)); } return Float64Array.from(a.sort((x, y) => x - y)); })();
 function cdf(v) { let lo = 0, hi = QC.length; while (lo < hi) { const m = (lo + hi) >> 1; if (QC[m] < v) lo = m + 1; else hi = m; } return lo / QC.length; }
 
 /* ---- 季節・時刻（日本時間） ---- */
@@ -49,7 +54,7 @@ function tinfo(ms) {
 function diurnal(hr) {
   if (hr >= 6 && hr < 14.5) return -Math.cos(Math.PI * (hr - 6) / 8.5);
   const u = (((hr - 14.5) % 24) + 24) % 24 / 15.5;
-  return Math.cos(Math.PI * u);
+  return Math.cos(Math.PI * Math.pow(u, 0.6));   // 夕方は早く下がり（19時すぎに平均）、夜は ゆっくり
 }
 // 上と下を、なめらかにおさえる（首都の 夏の最高 31℃・冬の最低 −2℃）
 function soft(v, lo, hi, k) {
@@ -70,10 +75,12 @@ function wetP(t, dN) {
 function isNight(t) { const L = 12 - 1.7 * t.c; return t.hr < 12 - L / 2 || t.hr >= 12 + L / 2; }
 
 /* ---- その時刻・その場所 ---- */
-function core(x, y, e, ms) {
-  const t = tinfo(ms), xk = x * KM, yk = y * KM, dN = (CAPY - y) * KM;
-  const base = 20.75 - 8.05 * t.c + 0.944 * t.s + 0.785 * t.c2;   // 首都の、その日の平年（3か月の平均が 春21・夏28・秋19・冬14 になる）
-  const p = wetP(t, dN), cu = cdf(nC(xk, yk, t.h));
+// 気圧（hPa）：ふつう 1000〜1026 ぐらい。冬は西が高く東が低い（西高東低）、夏は南が高い（太平洋の高気圧）
+const presOf = (xk, yk, t, zp) => 1013 - 7 * zp + 6 * Math.max(0, t.c) * (-xk / 400) + 4 * Math.max(0, -t.c) * (yk / 400);
+function core(x, y, e, ms, tt) {
+  const t = tt || tinfo(ms), xk = x * KM, yk = y * KM, dN = (CAPY - y) * KM, zp = nP(xk, yk, t.h) / SP;
+  const base = 21.35 - 7.83 * t.c + 0.944 * t.s + 0.785 * t.c2;   // 首都の、その日の平年（3か月の平均が 春21・夏28・秋19・冬14 になる）
+  const p = wetP(t, dN), cu = cdf(cloudZ(nC(xk, yk, t.h), zp));
   const wet = cu > 1 - p, inten = wet ? (cu - (1 - p)) / p : 0;
   const cl = wet ? 1 : cu > 1 - p - 0.28 ? 1 : cu > 1 - p - 0.5 ? 0.5 : 0;   // 雲：1 くもり・0.5 すこし・0 晴れ
   const amp = (3.75 + 0.75 * t.c) * (wet ? 0.4 : cl === 1 ? 0.6 : cl ? 0.9 : 1.2);   // 1日の差の半分（晴れは大きく、雨は小さく）
@@ -81,7 +88,7 @@ function core(x, y, e, ms) {
   const tc = soft(base + amp * diurnal(t.hr) + an - (wet && t.c < 0 ? 1.2 : 0), -2, 31, 3);
   const g = dN > 0 ? (0.028 + 0.012 * t.c) * dN : (0.008 + 0.004 * t.c) * dN;   // 北へ1kmで 冬 0.04℃・夏 0.016℃ 寒い
   const T = tc - g - 0.0065 * Math.max(0, e || 0);
-  return { t, T, wet, inten, cl, kind: !wet ? '' : T <= 0.6 ? 'snow' : T < 2.4 ? 'sleet' : 'rain' };
+  return { t, T, wet, inten, cl, P: presOf(xk, yk, t, zp), kind: !wet ? '' : T <= 0.6 ? 'snow' : T < 2.4 ? 'sleet' : 'rain' };
 }
 // 天気のことば・しるし
 function label(o, night) {
@@ -150,5 +157,5 @@ function hours(x, y, e, n, step, ms) {
   }
   return a;
 }
-window.MapWx = { now, day, days, hours, core, snowAt, CAPY };
+window.MapWx = { now, day, days, hours, core, snowAt, tinfo, label, isNight, CAPY };
 })();
