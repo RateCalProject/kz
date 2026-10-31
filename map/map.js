@@ -1403,7 +1403,7 @@ async function openWx(x, y) {
     <div class="mp-wxh">${hs.map(h => `<div><small>${h.hr}時</small><span>${h.ic}</span><b>${wxD(Math.round(h.T))}</b></div>`).join('')}</div>
     <h4 style="margin:10px 0 4px">これからの天気</h4>
     <div class="mp-wxd">${ds.map((d, i) => `<div><small>${dl(d, i)}</small><span class="ic">${d.ic}</span><span>${d.nm}</span><b>${wxD(d.hi)}</b><small>${wxD(d.lo)}</small></div>`).join('')}</div>
-    <p class="muted small"><span>国土の天気は、季節・時刻・場所で決まります（だれが見ても同じです）。</span><span>北ほど寒く、北の冬は雪がよく降ります。南は暖かく、高いところほど寒くなります（100mで約0.65℃）。</span><span>首都 美東区の平年：春21℃・夏28℃・秋19℃・冬14℃</span></p>`], null);
+    <p class="muted small"><span>国土の天気は、季節・時刻・場所で決まります（だれが見ても同じです）。</span><span>北ほど寒く、北の冬は雪がよく降ります。南は暖かく、高いところほど寒くなります（100mで約0.65℃）。</span></p>`], null);
   const d = await api('mp_spot', { p_x: Math.floor(x * 5), p_y: Math.floor(y * 5) });
   const a = m.querySelector('[data-wxa]'); if (a && d && d.addr) a.textContent = d.addr.text;
 }

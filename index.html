@@ -993,6 +993,33 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 .ft-tile.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
 .ft-tile b{font-size:17px;font-weight:700;line-height:1.3}
 .ft-tile small{font-size:11px;color:var(--muted)}
+/* 統計・ランキング（情報・t62） */
+.st-wrap{overflow-x:auto;margin:8px -4px 0;-webkit-overflow-scrolling:touch}
+.st-tb{border-collapse:separate;border-spacing:0;font-size:13px;min-width:100%}
+.st-tb th{font-size:11px;color:var(--muted);font-weight:700;padding:6px 6px;text-align:right;white-space:nowrap;cursor:pointer;user-select:none;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0}
+.st-tb th.tx{text-align:left}
+.st-tb th.on{color:var(--accent)}
+.st-tb td{padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;vertical-align:middle}
+.st-tb td.tx{text-align:left}
+.st-tb .c0{position:sticky;left:0;z-index:1;background:var(--panel);text-align:left;box-shadow:1px 0 0 var(--line)}
+.st-tb th.c0{z-index:2}
+.st-tb td.c0{min-width:9.5em;max-width:13em;white-space:normal}
+.st-tb td.c0 label{display:flex;align-items:center;gap:6px;cursor:pointer}
+.st-tb td.c0 input{flex:none;width:16px;height:16px;margin:0}
+.st-tb td.c0 .rk{flex:none;min-width:1.8em;color:var(--muted);font-size:11px;text-align:right}
+.st-tb td.c0 b{font-weight:800}
+.st-tb td.c0 small{display:block;color:var(--muted);font-size:11px;font-weight:400}
+.st-tb tr.sel td{background:var(--soft)}
+.st-tb .st-map{border:0;background:none;font-size:15px;padding:0 2px;cursor:pointer}
+.st-tb .na{color:var(--muted)}
+.st-cmp{margin-top:8px;border:1px solid var(--line);border-radius:var(--radius);padding:8px 10px;background:var(--bg)}
+.st-cmp table{border-collapse:collapse;width:100%;font-size:13px}
+.st-cmp th{font-size:12px;text-align:left;padding:4px 6px;vertical-align:bottom}
+.st-cmp td{padding:5px 6px;border-top:1px solid var(--line);vertical-align:top;font-variant-numeric:tabular-nums}
+.st-cmp td.k{color:var(--muted);font-size:12px;white-space:nowrap}
+.st-cmp .bar{display:block;height:6px;border-radius:3px;background:var(--accent);margin-top:3px;min-width:2px}
+.st-cmp small{display:block;color:var(--muted);font-size:11px}
+.st-cmp td.k{min-width:5.5em}
 /* 各地の天気（メイン・t62） */
 .wx-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px;margin-top:8px}
 .wx-t{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:0 8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:var(--radius);padding:7px 9px;text-align:left;font:inherit;cursor:pointer}
@@ -1167,7 +1194,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=eaf01d6d","zh-TW":"zh-TW.js?v=b7b25a64","zh-CN":"zh-CN.js?v=793fa3f6","ko":"ko.js?v=c05e9a69","ko-Hani":"ko-Hani.js?v=f3a56223"};
+  window.AX_LANGS = {"en":"en.js?v=63547e6e","zh-TW":"zh-TW.js?v=dd67edf6","zh-CN":"zh-CN.js?v=90685e83","ko":"ko.js?v=18994545","ko-Hani":"ko-Hani.js?v=71cafcad"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -1230,6 +1257,15 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <div class="seg" id="tlScope" style="margin-bottom:8px"><button data-k="friends" class="on">フレンド</button><button data-k="all">みんな</button><button data-k="mention">自分あて</button></div>
     <div id="tlList"></div>
     <button class="btn wide hidden" id="tlMore" style="margin-top:8px">もっと見る</button>
+  </div>
+  <div class="card" data-sub="stats">
+    <div class="row"><h3 style="margin:0" class="grow">📊 統計・ランキング</h3><small class="muted" id="stAt"></small></div>
+    <div class="seg sm" id="stKind" style="display:flex;flex-wrap:wrap;margin-top:8px"><button data-k="pref">都道府県</button><button data-k="muni">市区町村</button><button data-k="sta">駅・バス停</button><button data-k="port">空港・港</button><button data-k="route">系統</button></div>
+    <div class="row" style="margin-top:8px;gap:6px"><input class="inp grow" id="stQ" placeholder="名前でしぼる" style="margin:0;min-width:120px"><select class="inp" id="stF" style="margin:0;width:auto;max-width:46%"></select></div>
+    <div class="row hidden" id="stCmpBar" style="margin-top:8px;gap:6px"><button class="btn main s" id="stCmpGo"></button><button class="btn s" id="stCmpClr">えらびなおす</button><small class="muted grow">いくつかえらんで、くらべられます（6つまで）</small></div>
+    <div id="stCmp" class="hidden"></div>
+    <div class="st-wrap" id="stBox"><p class="muted small" style="margin:8px 0">読みこみ中…</p></div>
+    <p class="muted small" style="margin:8px 0 0" id="stNote"></p>
   </div>
   <div class="card" data-sub="people">
     <h3 style="margin-top:0">人をさがす</h3>
@@ -2198,7 +2234,7 @@ const GAMES = ['vGameList', 'vTask', 'vRace', 'vBoat', 'vBike', 'vSlot', 'vBj', 
 const HIDDEN_SUBS = ['vLobby', 'vRoom', 'vLot', 'vFish', 'vOwner'];
 // メインメニュー（左から）とサブメニュー
 const MENU = [
-  ['vInfo', '情報', 'i', [['today', '今日'], ['cur', '通貨'], ['pub', '広報・書籍'], ['mkt', '相場'], ['tl', 'TL'], ['people', '人をさがす'], ['jack', '競馬億万長者']]],
+  ['vInfo', '情報', 'i', [['today', '今日'], ['cur', '通貨'], ['pub', '広報・書籍'], ['mkt', '相場'], ['stats', '統計'], ['tl', 'TL'], ['people', '人をさがす'], ['jack', '競馬億万長者']]],
   ['vWork', '仕事', '✎', [['jobs', '仕事をえらぶ'], ['stat', '給料'], ['corp', '企業ページ'], ['mywork', '勤め先']]],
   ['vGame', '遊戯', '♠', [['vGameList', '≡ 一覧'], ['vTask', '★ タスク'], ['vRace', '🏇 競馬'], ['vBoat', '🚤 競艇'], ['vBike', '🚲 競輪'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
   ['vHome', 'メイン', '◉', [['menu', 'メニュー'], ['horses', '所持馬'], ['friend', 'フレンド'], ['msg', '連絡']]],
@@ -2232,7 +2268,7 @@ function go(v, sub) {
   $$('#subNav button').forEach(b => b.onclick = () => { if (b.dataset.s === 'vGameList') setGcat(null); go(main, b.dataset.s); });
   { const sn = $('#subNav'), on = sn.querySelector('button.on'); if (on) sn.scrollLeft = on.offsetLeft - (sn.clientWidth - on.offsetWidth) / 2; }
   window.scrollTo(0, 0);
-  if (sec === 'vInfo') { if (sub === 'today') todayLoad(); if (sub === 'cur' || sub === 'jack') infoLoad(); if (sub === 'tl') tlLoad(true); if (sub === 'mkt') mktLoad(); if (sub === 'pub') pubLoad(); if (sub === 'people') peopleLoad(); }
+  if (sec === 'vInfo') { if (sub === 'today') todayLoad(); if (sub === 'cur' || sub === 'jack') infoLoad(); if (sub === 'tl') tlLoad(true); if (sub === 'mkt') mktLoad(); if (sub === 'stats') statsLoad(); if (sub === 'pub') pubLoad(); if (sub === 'people') peopleLoad(); }
   if (sec === 'vHome') homeLoad(sub);
   if (sec === 'vWork') workLoad();
   if (sec === 'vRace') kbLoad();
@@ -4698,6 +4734,136 @@ async function taxPay() {
 /* =================================================================
    情報
    ================================================================= */
+/* =================================================================
+   情報 → 統計（t62）：都道府県・市区町村・駅（バス停）・空港と港・系統の、だれでも見られる数字。並べかえ・ランキング・くらべる
+   サーバーの info_stats_get（毎時9分にまとめる）。サーバーの更新の前は、都道府県と市区町村だけ map/stats0.json（10月31日の写し）
+   ================================================================= */
+const ST = { kind: 'muni', data: {}, sort: {}, q: '', f: '', sel: [], cmp: false };
+try { const k = localStorage.getItem('st_kind'); if (['pref', 'muni', 'sta', 'port', 'route'].includes(k)) ST.kind = k; } catch (e) {}
+const ST_K = { rail: '鉄道', bus: 'バス', ship: '船', air: '飛行機' };
+// [キー, 見出し, 形]（s 文字・k 種類・n 数・a 面積・d 人口密度・x 地価・p %・f 小数1けた・m 滑走路）
+const ST_COLS = {
+  pref: [['n', '都道府県', 's'], ['pop', '人口', 'n'], ['land', '面積 km²', 'a'], ['dens', '人口密度 /km²', 'd'], ['munis', '市町村', 'n'], ['capn', '県庁所在地', 's'], ['sta', '駅', 'n'], ['blds', '建物', 'n']],
+  muni: [['n', '市区町村', 's'], ['pr', '都道府県', 's'], ['pop', '人口', 'n'], ['land', '面積 km²', 'a'], ['dens', '人口密度 /km²', 'd'], ['cv', '中心の地価', 'x'], ['sta', '駅', 'n'], ['blds', '建物', 'n']],
+  sta: [['n', '駅・バス停', 's'], ['k', '種類', 'k'], ['mu', '市区町村', 's'], ['pax', '乗降客数/日', 'n'], ['tr', '発着本数/日', 'n'], ['rt', '系統', 'n'], ['tk', '番線', 'n'], ['o', '持ち主', 's']],
+  port: [['n', '空港・港', 's'], ['k', '種類', 'k'], ['mu', '市区町村', 's'], ['pax', '乗降客数/日', 'n'], ['tr', '発着便数/日', 'n'], ['rt', '路線', 'n'], ['pl', '滑走路 m', 'm'], ['tk', '発着口・乗り場', 'n'], ['o', '持ち主', 's']],
+  route: [['n', '系統', 's'], ['k', '種類', 'k'], ['o', '持ち主', 's'], ['pax', '利用者/日', 'n'], ['load', '混雑 %', 'p'], ['tr', '本数/日', 'n'], ['ns', '駅', 'n'], ['km', '長さ km', 'f'], ['sp', '速さ km/h', 'f']]
+};
+const ST_DEF = { pref: 'pop', muni: 'pop', sta: 'pax', port: 'pax', route: 'pax' };
+const ST_SRC = { pref: 'pref', muni: 'muni', sta: 'sta', port: 'sta', route: 'route' };
+let ST0 = null;
+async function stGet(src) {
+  const c = ST.data[src]; if (c && Date.now() - c.t < 10 * 60000) return c;
+  let d;
+  try { const r = await call('info_stats_get', { p_kind: src }); d = { rows: r.rows || [], at: r.at, t: Date.now() }; }
+  catch (e) {
+    if (!/Could not find the function|does not exist|schema cache/i.test(e.message || '')) throw e;
+    if (src === 'pref' || src === 'muni') { if (!ST0) ST0 = await (await fetch('map/stats0.json?v=1', { cache: 'no-cache' })).json(); d = { rows: ST0[src] || [], old: ST0.at, t: Date.now() }; }   // サーバーの更新の前：写し
+    else d = { rows: null, t: Date.now() };
+  }
+  for (const r of d.rows || []) if (r.land != null) { r.km2 = r.land * 0.0025; r.dens = r.km2 > 0 && r.pop != null ? r.pop / r.km2 : null; }
+  ST.data[src] = d; return d;
+}
+const stNum = v => v == null || v === '' || (typeof v === 'number' && !isFinite(v));
+function stCell(r, c) {
+  const v = c[0] === 'land' ? r.km2 : r[c[0]];
+  if (c[2] === 's' || c[2] === 'k') return v == null || v === '' ? '<span class="na">—</span>' : c[2] === 'k' ? esc(ST_K[v] || v) : `<span translate="no">${esc(v)}</span>`;
+  if (stNum(v) || (c[2] === 'm' && r.k !== 'air')) return '<span class="na">—</span>';
+  if (c[2] === 'a') return (Math.round(v * 10) / 10).toLocaleString('ja-JP', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  if (c[2] === 'd') return fmt(Math.round(v));
+  if (c[2] === 'x') return fmt(v) + ' X';
+  if (c[2] === 'p') return Math.round(v) + '%';
+  if (c[2] === 'f') return (Math.round(v * 10) / 10).toFixed(1);
+  return fmt(v);
+}
+const stVal = (r, k) => k === 'land' ? r.km2 : r[k];
+function stRows(d) {
+  const kind = ST.kind, q = ST.q.trim();
+  let rows = (d.rows || []).filter(r => kind === 'sta' ? r.k === 'rail' || r.k === 'bus' : kind === 'port' ? r.k === 'ship' || r.k === 'air' : true);
+  if (ST.f) rows = rows.filter(r => kind === 'route' ? r.k === ST.f : r.pr === ST.f || r.n === ST.f);
+  if (q) rows = rows.filter(r => [r.n, r.mu, r.wd, r.up, r.pr, r.o, r.capn].some(x => x && String(x).includes(q)));
+  const so = ST.sort[kind] || { k: ST_DEF[kind], d: -1 }, col = ST_COLS[kind].find(c => c[0] === so.k) || ST_COLS[kind][0], txt = col[2] === 's' || col[2] === 'k';
+  return rows.slice().sort((a, b) => {
+    const x = stVal(a, so.k), y = stVal(b, so.k), nx = stNum(x), ny = stNum(y);
+    if (nx || ny) return nx && ny ? 0 : nx ? 1 : -1;   // ないものは、いつも下
+    return (txt ? String(x).localeCompare(String(y), 'ja') : x - y) * so.d || String(a.n).localeCompare(String(b.n), 'ja');
+  });
+}
+async function statsLoad() {
+  $$('#stKind button').forEach(b => { b.classList.toggle('on', b.dataset.k === ST.kind); b.onclick = () => { if (ST.kind === b.dataset.k) return; ST.kind = b.dataset.k; ST.f = ''; ST.sel = []; ST.cmp = false; try { localStorage.setItem('st_kind', ST.kind); } catch (e) {} statsLoad(); }; });
+  const box = $('#stBox'), src = ST_SRC[ST.kind];
+  if (!ST.data[src]) box.innerHTML = '<p class="muted small" style="margin:8px 0">読みこみ中…</p>';
+  let d; try { d = await stGet(src); } catch (e) { box.innerHTML = `<p class="muted small" style="margin:8px 0">${esc(e.message)}</p>`; return; }
+  if (ST_SRC[ST.kind] !== src) return;   // とちゅうで切りかえた
+  // しぼりこみ（都道府県・系統の種類）
+  const fs = $('#stF');
+  if (ST.kind === 'route') fs.innerHTML = '<option value="">すべての種類</option>' + ['rail', 'bus', 'ship', 'air'].map(k => `<option value="${k}" ${ST.f === k ? 'selected' : ''}>${ST_K[k]}</option>`).join('');
+  else {
+    const prefs = [...new Set((d.rows || []).map(r => ST.kind === 'pref' ? null : r.pr).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ja'));
+    fs.innerHTML = '<option value="">すべての都道府県</option>' + prefs.map(p => `<option value="${esc(p)}" ${ST.f === p ? 'selected' : ''} translate="no">${esc(p)}</option>`).join('');
+  }
+  fs.classList.toggle('hidden', ST.kind === 'pref');
+  fs.onchange = () => { ST.f = fs.value; stDraw(); };
+  const qi = $('#stQ'); qi.value = ST.q; qi.oninput = () => { ST.q = qi.value; clearTimeout(ST.qt); ST.qt = setTimeout(stDraw, 200); };
+  $('#stAt').innerHTML = d.at ? (() => { const j = new Date(new Date(d.at).getTime() + 9 * 3600000); return `<span>集計</span> ${j.getUTCMonth() + 1}/${j.getUTCDate()} ${String(j.getUTCHours()).padStart(2, '0')}:${String(j.getUTCMinutes()).padStart(2, '0')}`; })() : '';
+  $('#stNote').innerHTML = d.rows == null ? ''
+    : `${d.old ? '<span>10月31日の写しです。駅の数・建物・地価は、サーバーの更新のあとに出ます。</span>' : '<span>1時間ごとにまとめています。</span>'}`
+      + `<span>見出しをおすと並べかえます（もう一度おすと逆）。</span>`
+      + (ST.kind === 'sta' || ST.kind === 'port' ? '<span>乗降客数は、系統の1日の利用者を、駅のまわりの人のわりあいで分けた推計です。</span>' : '')
+      + (ST.kind === 'route' ? '<span>混雑は、定員にたいする利用者のわりあい（1日の平均）です。</span>' : '')
+      + (ST.kind === 'muni' ? '<span>中心の地価は、市区町村の中心の1区画（100㎡）の地価です。区は、市の中の区です。</span>' : '');
+  stDraw();
+}
+function stDraw() {
+  const box = $('#stBox'), d = ST.data[ST_SRC[ST.kind]]; if (!d) return;
+  if (d.rows == null) { box.innerHTML = '<p class="muted small" style="margin:8px 0">駅・系統の数字は、サーバーの更新のあとに見られます。</p>'; $('#stCmpBar').classList.add('hidden'); $('#stCmp').classList.add('hidden'); return; }
+  const cols = ST_COLS[ST.kind], so = ST.sort[ST.kind] || { k: ST_DEF[ST.kind], d: -1 }, rows = stRows(d);
+  const sub = r => ST.kind === 'muni' ? (r.k === 'ward' ? `<small translate="no">${esc(r.up || '')}</small>` : r.cap === 'pref' ? '<small>◎ 県庁所在地</small>' : '')
+    : ST.kind === 'sta' || ST.kind === 'port' ? (r.mu ? `<small translate="no">${esc(r.pr || '')}</small>` : '') : '';
+  const capTag = r => r.cap === 'econ' ? ' <small>経済首都</small>' : r.cap === 'adm' ? ' <small>行政首都</small>' : '';
+  box.innerHTML = rows.length ? `<table class="st-tb"><thead><tr>${cols.map((c, i) => `<th data-sk="${c[0]}" class="${i === 0 ? 'c0 tx' : c[2] === 's' || c[2] === 'k' ? 'tx' : ''} ${so.k === c[0] ? 'on' : ''}">${c[1]}${so.k === c[0] ? (so.d > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('')}<th></th></tr></thead>
+    <tbody>${rows.map((r, i) => { const on = ST.sel.includes(String(r.id));
+      return `<tr data-id="${esc(r.id)}" class="${on ? 'sel' : ''}">${cols.map((c, j) => j === 0
+        ? `<td class="c0"><label><input type="checkbox" ${on ? 'checked' : ''}><span class="rk">${i + 1}</span><span><b translate="no">${esc(r.n)}</b>${capTag(r)}${sub(r)}</span></label></td>`
+        : `<td class="${c[2] === 's' || c[2] === 'k' ? 'tx' : ''}">${stCell(r, c)}</td>`).join('')}<td>${r.x != null ? `<button class="st-map" data-map="${esc(r.id)}" title="地図で見る">🗾</button>` : ''}</td></tr>`; }).join('')}</tbody></table>`
+    : '<p class="muted small" style="margin:8px 0">あてはまるものがありません</p>';
+  box.querySelectorAll('th[data-sk]').forEach(th => th.onclick = () => {
+    const k = th.dataset.sk, c = cols.find(x => x[0] === k), cur = ST.sort[ST.kind] || { k: ST_DEF[ST.kind], d: -1 };
+    ST.sort[ST.kind] = cur.k === k ? { k, d: -cur.d } : { k, d: c[2] === 's' || c[2] === 'k' ? 1 : -1 };
+    stDraw();
+  });
+  box.querySelectorAll('tr[data-id] input[type=checkbox]').forEach(cb => cb.onchange = () => {
+    const id = cb.closest('tr').dataset.id;
+    if (cb.checked) { if (ST.sel.length >= 6) { cb.checked = false; return toast('くらべられるのは6つまでです'); } ST.sel.push(id); } else ST.sel = ST.sel.filter(x => x !== id);
+    cb.closest('tr').classList.toggle('sel', cb.checked); stCmpBar();
+  });
+  box.querySelectorAll('[data-map]').forEach(b => b.onclick = () => { const r = (d.rows || []).find(x => String(x.id) === b.dataset.map); if (r) wxMapGo(r.x, r.y, false); });
+  stCmpBar();
+}
+function stCmpBar() {
+  const n = ST.sel.length, bar = $('#stCmpBar');
+  bar.classList.toggle('hidden', !n);
+  $('#stCmpGo').textContent = `くらべる（${n}）`; $('#stCmpGo').disabled = n < 2;
+  $('#stCmpGo').onclick = () => { ST.cmp = true; stCmpDraw(); $('#stCmp').scrollIntoView({ block: 'nearest', behavior: 'smooth' }); };
+  $('#stCmpClr').onclick = () => { ST.sel = []; ST.cmp = false; stDraw(); };
+  if (ST.cmp) stCmpDraw(); else $('#stCmp').classList.add('hidden');
+}
+// くらべる：えらんだものを横にならべる（数はバーで。順位は、いまの一覧の中で）
+function stCmpDraw() {
+  const box = $('#stCmp'), d = ST.data[ST_SRC[ST.kind]];
+  if (!ST.cmp || !d || !d.rows || ST.sel.length < 2) { box.classList.add('hidden'); return; }
+  const cols = ST_COLS[ST.kind], items = ST.sel.map(id => d.rows.find(r => String(r.id) === id)).filter(Boolean);
+  const all = stRows({ rows: d.rows });
+  const rank = (r, k) => { const xs = all.filter(x => !stNum(stVal(x, k))).sort((a, b) => stVal(b, k) - stVal(a, k)); const i = xs.indexOf(r); return i >= 0 ? i + 1 : null; };
+  box.innerHTML = `<div class="row"><b class="grow">くらべる</b><button class="btn s" data-x>とじる</button></div>
+    <div class="st-wrap"><table><tr><th></th>${items.map(r => `<th translate="no">${esc(r.n)}</th>`).join('')}</tr>
+    ${cols.slice(1).map(c => { const num = !(c[2] === 's' || c[2] === 'k'), vs = items.map(r => stVal(r, c[0])), mx = num ? Math.max(0, ...vs.filter(v => !stNum(v))) : 0;
+      return `<tr><td class="k">${c[1]}</td>${items.map((r, i) => `<td>${stCell(r, c)}${num && !stNum(vs[i]) ? `${rank(r, c[0]) ? `<small>${rank(r, c[0])}位</small>` : ''}<span class="bar" style="width:${mx > 0 ? Math.max(2, Math.round(vs[i] / mx * 100)) : 0}%"></span>` : ''}</td>`).join('')}</tr>`; }).join('')}
+    </table></div>`;
+  box.classList.remove('hidden');
+  box.querySelector('[data-x]').onclick = () => { ST.cmp = false; box.classList.add('hidden'); };
+}
+
 async function infoLoad() {
   try {
     const d = await call('info_state');
@@ -5113,7 +5279,7 @@ const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
 // 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
-const MAPV = '103';
+const MAPV = '104';
 let mapLoading = null;
 function mapScripts() {
   if (window.MapApp) return Promise.resolve();
@@ -6170,7 +6336,7 @@ function homeLoad(sub) {
   if (sub === 'horses') hoLoad();
 }
 // よく使うメニュー：えらべるもの（メニューのサブメニューと、対戦ゲーム）
-const HM_IC = { 'vInfo:today': '📰', 'vInfo:cur': '💱', 'vInfo:pub': '📚', 'vInfo:mkt': '📈', 'vInfo:tl': '💬', 'vInfo:people': '🔍', 'vInfo:jack': '🏆',
+const HM_IC = { 'vInfo:today': '📰', 'vInfo:cur': '💱', 'vInfo:pub': '📚', 'vInfo:mkt': '📈', 'vInfo:stats': '📊', 'vInfo:tl': '💬', 'vInfo:people': '🔍', 'vInfo:jack': '🏆',
   'vWork:jobs': '🛠️', 'vWork:stat': '💴', 'vWork:corp': '🏢', 'vWork:mywork': '👔', 'vCorp:search': '🔎', 'vCorp:review': '⭐', 'vCorp:pin': '📌',
   'vCorp:desk': '🗨️', 'vCorp:job': '📋', 'vCorp:bank': '🏦', 'vCorp:order': '🛍️', 'vCorp:stock': '📊', 'vCorp:invest': '💹', 'vCorp:map': '🗾', 'vTax:tax': '🧾',
   'vTax:xfer': '💸', 'vTax:bill': '📨', 'vTax:court': '⚖️', 'vTax:kokko': '🏛️', 'vMore:prof': '👤', 'vMore:hist': '📜', 'vMore:rule': '📖',

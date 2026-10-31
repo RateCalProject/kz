@@ -1,6 +1,6 @@
 /* ===== 国土の天気（t62・2026-10-31） =====
    季節・時刻（日本時間）・場所だけで決まる。乱数の種は固定なので、だれが見ても同じ天気になる（サーバーはいらない）
-   - 首都 美東区（y = 54 マス）の平年：春 21℃・夏 28℃・秋 19℃・冬 14℃。夏の最高 31℃・冬の最低 −2℃（本人の目安）
+   - 首都 美東区（y = 54 マス）の季節ごとの平均と、夏のいちばん高い・冬のいちばん低い気温は、本人の目安に合わせてある
    - 北（y が小さい）ほど寒い。冬ほど差が大きい（北の 300km より先は、冬は雪国）。南は少し暖かい
    - 高いところほど寒い（100m で 0.65℃）
    - 雲のかたまりは、西から東へ動いていく（1時間に 30km ぐらい）。0℃ぐらいより寒いと雪、そのすこし上はみぞれ
@@ -56,7 +56,7 @@ function diurnal(hr) {
   const u = (((hr - 14.5) % 24) + 24) % 24 / 15.5;
   return Math.cos(Math.PI * Math.pow(u, 0.6));   // 夕方は早く下がり（19時すぎに平均）、夜は ゆっくり
 }
-// 上と下を、なめらかにおさえる（首都の 夏の最高 31℃・冬の最低 −2℃）
+// 上と下を、なめらかにおさえる（首都の夏の最高・冬の最低。目安）
 function soft(v, lo, hi, k) {
   if (v > hi - k) return hi - k + k * Math.tanh((v - hi + k) / k);
   if (v < lo + k) return lo + k + k * Math.tanh((v - lo - k) / k);
@@ -79,7 +79,7 @@ function isNight(t) { const L = 12 - 1.7 * t.c; return t.hr < 12 - L / 2 || t.hr
 const presOf = (xk, yk, t, zp) => 1013 - 7 * zp + 6 * Math.max(0, t.c) * (-xk / 400) + 4 * Math.max(0, -t.c) * (yk / 400);
 function core(x, y, e, ms, tt) {
   const t = tt || tinfo(ms), xk = x * KM, yk = y * KM, dN = (CAPY - y) * KM, zp = nP(xk, yk, t.h) / SP;
-  const base = 21.35 - 7.83 * t.c + 0.944 * t.s + 0.785 * t.c2;   // 首都の、その日の平年（3か月の平均が 春21・夏28・秋19・冬14 になる）
+  const base = 21.35 - 7.83 * t.c + 0.944 * t.s + 0.785 * t.c2;   // 首都の、その日の平年（3か月の平均が目安どおりになる）
   const p = wetP(t, dN), cu = cdf(cloudZ(nC(xk, yk, t.h), zp));
   const wet = cu > 1 - p, inten = wet ? (cu - (1 - p)) / p : 0;
   const cl = wet ? 1 : cu > 1 - p - 0.28 ? 1 : cu > 1 - p - 0.5 ? 0.5 : 0;   // 雲：1 くもり・0.5 すこし・0 晴れ
