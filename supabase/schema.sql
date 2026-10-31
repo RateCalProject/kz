@@ -16583,7 +16583,7 @@ end $$;
 create table if not exists public.mp_chunks (
   cx int not null, cy int not null,
   t  text not null,              -- 地形（4096文字）D 深い海・S 海・R 川・L 湖・B 砂浜・P 平地・F 林・H 丘・M 山・K 高い山
-  e  text not null,              -- 標高（4096文字。64段階。低いところほどこまかい → _mp_edec）
+  e  text not null,              -- 標高（4096文字。72段階（64〜71 は '.~!*()+=' で 2825m〜3875m）。低いところほどこまかい → _mp_edec）
   z  text not null,              -- 用途地域（4096文字）- なし・a 低層住居・b 住居・c 近隣商業・d 商業・e 準工業・f 工業・g 港湾・h 農業・i 森林・j 公園（k 住居・港湾は mp_zone だけ。t54n：島）
   a  text not null,              -- 区域（4096文字。ap の何番目か）
   ap text[] not null,            -- 区域（市町村・区）の id
@@ -17400,7 +17400,7 @@ begin
   t := substr(c.t, k, 1);
   z := coalesce((select mz.z::text from mp_zone mz where mz.x = px and mz.y = py), substr(c.z, k, 1));
   a := c.ap[position(substr(c.a, k, 1) in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_')];
-  e := _mp_edec(position(substr(c.e, k, 1) in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_') - 1);
+  e := _mp_edec(position(substr(c.e, k, 1) in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~!*()+=') - 1);   -- 64〜71 段は高い山（2825m〜）
 end $$;
 -- 1マスの人口（人）
 create or replace function public._mp_dens(px real, py real) returns real

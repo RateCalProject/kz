@@ -8,9 +8,10 @@
 'use strict';
 const PAL = window.MapPal;
 const CS = 64, B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-const B64I = (() => { const m = new Int8Array(128); for (let i = 0; i < 64; i++) m[B64.charCodeAt(i)] = i; return m; })();
+const B64X = B64 + '.~!*()+=';   // 標高だけ 64〜71 段（2825m〜3875m：国土を広げたところの高い山）
+const B64I = (() => { const m = new Int8Array(128); for (let i = 0; i < 72; i++) m[B64X.charCodeAt(i)] = i; return m; })();
 const edec = l => l <= 7 ? -187.5 + l * 25 : l <= 32 ? (l - 8) * 4 + 2 : l <= 48 ? 112.5 + (l - 33) * 25 : 575 + (l - 49) * 150;
-const EDEC = Float32Array.from({ length: 64 }, (_, i) => edec(i));
+const EDEC = Float32Array.from({ length: 72 }, (_, i) => edec(i));
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const now = () => performance.now();
 const T = s => (typeof tr === 'function' ? tr(s) : s);
@@ -42,8 +43,9 @@ const sx = x => (x - S.cam.x) * S.cam.z + S.W / 2;
 const sy = y => (y - S.cam.y) * S.cam.z + S.H / 2;
 const wx = px => (px - S.W / 2) / S.cam.z + S.cam.x;
 const wy = py => (py - S.H / 2) / S.cam.z + S.cam.y;
-function view() { return { x0: wx(0), y0: wy(0), x1: wx(S.W), y1: wy(S.H) }; }
+function view() { if (S.v3rect) return S.v3rect; return { x0: wx(0), y0: wy(0), x1: wx(S.W), y1: wy(S.H) }; }   // 3D のときは 3D のはんい（map3d.js）
 function setCam(x, y, z) {
+  if (S.v3) { m3Target(x, y); S.dirty = true; return; }   // 3D：まん中だけうごかす
   S.cam.z = clamp(z, 0.18, 64);
   const w = S.boot && S.boot.world;
   if (w && w.cx1 >= w.cx0) { S.cam.x = clamp(x, w.cx0 * CS, (w.cx1 + 1) * CS); S.cam.y = clamp(y, w.cy0 * CS, (w.cy1 + 1) * CS); }
@@ -916,6 +918,7 @@ function drawScale(g, z) {
 }
 function frame() {
   if (!S.open) return;
+  if (S.v3) { if (S.dirty || S.v3.dirty) { S.dirty = false; S.v3.dirty = false; try { m3Frame(); } catch (e) { console.error(e); } } requestAnimationFrame(frame); return; }   // 3D（map3d.js）
   if (S.dirty) {
     S.dirty = false; LBL = [];
     try { render(); } catch (e) { console.error(e); }
@@ -940,6 +943,8 @@ const CSS = `
 .mp-tools{position:absolute;left:0;right:0;bottom:0;display:flex;gap:4px;padding:6px 6px calc(6px + env(safe-area-inset-bottom));overflow-x:auto;background:linear-gradient(transparent,rgba(0,0,0,.18))}
 .mp-tools button{flex:none;padding:8px 11px}
 .mp-tools button.on{background:#1f5fbf;color:#fff;border-color:#1f5fbf}
+.mp-wrap.mp-3d .mp-tools,.mp-wrap.mp-3d .mp-sheet{display:none}
+.mp-cv3{touch-action:none}
 .mp-hint{position:absolute;left:50%;top:52px;transform:translateX(-50%);background:rgba(20,20,20,.78);color:#fff;font-size:12px;font-weight:700;border-radius:10px;padding:6px 10px;max-width:86%;text-align:center;pointer-events:none}
 .mp-sheet{position:absolute;left:6px;right:6px;bottom:56px;max-height:44%;overflow:auto;background:var(--panel,#fff);color:var(--ink,#222);border-radius:14px;box-shadow:0 4px 18px rgba(0,0,0,.28);padding:12px 12px 10px;font-size:14px}
 .mp-sheet h4{margin:0 0 6px;font-size:16px}
@@ -991,7 +996,7 @@ function build(root) {
     <canvas class="mp-cv"></canvas>
     <div class="mp-top">
       <select class="mp-as" title="だれの名前で"></select>
-      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button>
+      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button><button data-v3 title="ななめから立体に見る">🗻 3D</button>
       <span class="mp-addr" translate="no" hidden></span>
     </div>
     <div class="mp-zoom"><button data-find title="さがす">🔍</button><button data-full title="大きく">⤢</button><button data-zin>＋</button><button data-zout>－</button><button data-home title="瑠璃市役所">⌂</button></div>
@@ -1014,6 +1019,7 @@ function build(root) {
   try { const v = localStorage.getItem('mp_b25'); if (v != null) S.b25 = v !== '0'; } catch (e) {}
   const b25 = S.wrap.querySelector('[data-b25]'), b25L = () => { b25.textContent = S.b25 ? '🏢 2.5D' : '🏢 2D'; };
   b25L(); b25.onclick = () => { S.b25 = !S.b25; b25L(); try { localStorage.setItem('mp_b25', S.b25 ? '1' : '0'); } catch (e) {} S.dirty = true; };
+  { const v3 = S.wrap.querySelector('[data-v3]'); v3.onclick = async () => { if (S.v3) m3Close(); else await m3Open(); v3.classList.toggle('on', !!S.v3); b25.hidden = !!S.v3; }; }   // 3D（t61）
   S.wrap.querySelector('[data-full]').onclick = () => { S.wrap.classList.toggle('mp-full'); resize(); };
   S.wrap.querySelector('[data-find]').onclick = () => openFind();   // さがす（t59）
   S.wrap.querySelector('[data-zin]').onclick = () => zoomAt(S.W / 2, S.H / 2, 1.6);
@@ -1037,6 +1043,7 @@ function resize() {
   const r = S.wrap.getBoundingClientRect(); S.dpr = Math.min(2, window.devicePixelRatio || 1);
   S.W = Math.max(1, r.width); S.H = Math.max(1, r.height);
   S.cv.width = Math.round(S.W * S.dpr); S.cv.height = Math.round(S.H * S.dpr); S.dirty = true;
+  if (S.v3) m3Resize();
 }
 function hint(t) { S.hint.hidden = !t; S.hint.textContent = t ? T(t) : ''; }
 function sheet(html, bind) {
@@ -1106,6 +1113,7 @@ const hasNeed = q => !!(q && q.need && q.need.length);
 
 /* ---------- 指・マウス ---------- */
 function zoomAt(px, py, f) {
+  if (S.v3) { m3Zoom(f); S.dirty = true; return; }   // 3D（map3d.js）
   const x = wx(px), y = wy(py), z = clamp(S.cam.z * f, 0.18, 64);
   setCam(x - (px - S.W / 2) / z, y - (py - S.H / 2) / z, z);
 }
@@ -5126,6 +5134,7 @@ function showCert(r) {
         <table style="border-collapse:collapse;flex:1;font-size:13px">${row('氏名', `<b translate="no">${esc(r.name)}</b>`)}${row('住所', `<span translate="no">${esc(j.addr)}</span>`)}${row('登録番号', esc(j.seal_no || ''))}</table></div>${foot}`);
   modal([r.kind === 'cert' ? '住民票の写し' : '印鑑登録証明書', html], null, 'mp-wide');
 }
+window.MapInt = { S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now };   // 3D（map3d.js）が使う
 window.MapApp = { open, pause, state: S, spline, setCam, landReqs: () => openLandReqs(), xfers: () => openXfers(), goto: (x, y) => homeGo(x, y), thru: () => openThru(), bld: id => openBld(id), sc: () => openSC(),
   slots: L => (L && L.st ? openSlots(Number(L.st)) : openSlotList()), find: () => openFind(), jm: id => openJuumin(id) };
 })();

@@ -1013,7 +1013,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=05c55e3f","zh-TW":"zh-TW.js?v=ab9f5cea","zh-CN":"zh-CN.js?v=b6abb115","ko":"ko.js?v=758a2a17","ko-Hani":"ko-Hani.js?v=c1a02005"};
+  window.AX_LANGS = {"en":"en.js?v=b91dbcf4","zh-TW":"zh-TW.js?v=7ac1d12e","zh-CN":"zh-CN.js?v=234efc41","ko":"ko.js?v=69c73383","ko-Hani":"ko-Hani.js?v=5e4f696e"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -4909,13 +4909,13 @@ const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
 // 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
-const MAPV = '93';
+const MAPV = '94';
 let mapLoading = null;
 function mapScripts() {
   if (window.MapApp) return Promise.resolve();
   if (mapLoading) return mapLoading;
   const add = src => new Promise((ok, ng) => { const e = document.createElement('script'); e.src = src; e.onload = ok; e.onerror = () => { mapLoading = null; ng(new Error('地図を読みこめませんでした')); }; document.head.appendChild(e); });
-  return (mapLoading = Promise.all([add('map/palette.js?v=' + MAPV), add('map/worldgen.js?v=' + MAPV)]).then(() => add('map/map.js?v=' + MAPV)));
+  return (mapLoading = Promise.all([add('map/palette.js?v=' + MAPV), add('map/worldgen.js?v=' + MAPV)]).then(() => add('map/map.js?v=' + MAPV)).then(() => add('map/map3d.js?v=' + MAPV)));
 }
 async function mapOpen() { await mapScripts(); await MapApp.open($('#mpRoot')); }
 async function corpLoad(sub) {
