@@ -14,6 +14,7 @@ const edec = l => l <= 7 ? -187.5 + l * 25 : l <= 32 ? (l - 8) * 4 + 2 : l <= 48
 const EDEC = Float32Array.from({ length: 72 }, (_, i) => edec(i));
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const now = () => performance.now();
+const evT = e => (e && e.timeStamp > 0 && e.timeStamp < 1e11 ? e.timeStamp : now());   // 指が動いた時刻（画面が重くても、指の速さを正しく）
 const T = s => (typeof tr === 'function' ? tr(s) : s);
 const SEP = () => (window.I18N && !/^zh/.test(I18N.lang) ? ' ' : '');   // 訳した文をつなぐとき（日本語・中国語は空白なし）
 const X = n => fmt(n) + ' X';
@@ -29,7 +30,8 @@ const S = {
   cho: new Map(), choPend: new Set(), choQ: [], choBusy: 0,   // 町字（チャンクごと：k・kp・kq）
   cells: new Map(), cellBusy: 0, ver: 0, pollT: 0,
   ov: null, ovInfo: null,
-  layer: { zone: false, own: true, label: true },
+  layer: { zone: false, own: true, label: true, run: false },   // run：列車・バスの走行位置（t61）
+  inertia: false, v3names: true, glide: null,   // 惰性・3D の建物の名前（t61）
   b25: true,   // 建物を 2.5D（高さのある見えかた）で描く。false なら 2D（上から見たまま）
   tool: 'look', toolState: null,
   sel: null,          // えらんだもの（{kind, id, ...}）
@@ -918,13 +920,205 @@ function drawScale(g, z) {
 }
 function frame() {
   if (!S.open) return;
-  if (S.v3) { if (S.dirty || S.v3.dirty) { S.dirty = false; S.v3.dirty = false; try { m3Frame(); } catch (e) { console.error(e); } } requestAnimationFrame(frame); return; }   // 3D（map3d.js）
+  glideStep();   // 惰性（t61）
+  if (S.v3) {   // 3D（map3d.js）
+    if (S.layer.run && now() - RUN.drawn > 120) S.v3.dirty = true;   // 走行位置：ときどき描きなおす
+    if (S.dirty || S.v3.dirty) { S.dirty = false; S.v3.dirty = false; try { m3Frame(); } catch (e) { console.error(e); } RUN.drawn = now(); }
+    requestAnimationFrame(frame); return;
+  }
   if (S.dirty) {
     S.dirty = false; LBL = [];
     try { render(); } catch (e) { console.error(e); }
     needChunks(); needCells(); needCho(); trimChunks();
-  }
+    drawRunLayer();
+  } else if (S.layer.run && now() - RUN.drawn > 90) drawRunLayer();
   requestAnimationFrame(frame);
+}
+// 惰性（t61）：指をはなしたあと、少しすべる。S.glide = {vx, vy（マス/ms）, t}
+function glideStep() {
+  const g = S.glide; if (!g) return;
+  const t = now(), dt = Math.min(48, t - g.t); g.t = t;
+  if (S.v3) { S.glide = null; return; }
+  setCam(S.cam.x + g.vx * dt, S.cam.y + g.vy * dt, S.cam.z);
+  const k = Math.exp(-dt / 325); g.vx *= k; g.vy *= k;
+  if (Math.hypot(g.vx, g.vy) * S.cam.z < 0.015) S.glide = null;
+}
+
+/* ---------- 走行位置（t61）：列車・バス・船・飛行機が、ダイヤ（時刻）のとおりに動く。近いと車両の形、遠いと点 ---------- */
+const RUN = { routes: new Map(), busy: 0, need: 0, drawn: 0 };
+function runReset() { if (!S.layer.run) { RUN.routes.clear(); clearRunLayer(); } RUN.need = 0; }
+function clearRunLayer() { if (S.ctxr) { S.ctxr.setTransform(1, 0, 0, 1, 0, 0); S.ctxr.clearRect(0, 0, S.cvr.width, S.cvr.height); } }
+// いまの時刻（日本時間）：その日の 0 時からの秒・今日と きのうの日付
+function jstNow() {
+  const t = Date.now() / 1000 + 9 * 3600, d = Math.floor(t / 86400), ds = n => new Date(n * 86400000).toISOString().slice(0, 10);
+  return { sec: t - d * 86400, date: ds(d), prev: ds(d - 1) };
+}
+// 見えている駅・バス停・港・空港を通る系統のダイヤを読む（10分ごとに読みなおす）
+function runNeed(it) {
+  if (now() - RUN.need < 1500) return; RUN.need = now();
+  const ids = new Set();
+  for (const st of it.stas.values()) for (const r of (st.rt || [])) ids.add(r.id);
+  for (const l of it.lanes.values()) ids.add(l.id);
+  for (const id of ids) {
+    const R = RUN.routes.get(id);
+    if (R && (R.loading || now() - R.at < 600000)) continue;
+    if (RUN.busy >= 3) break;
+    if (R) R.loading = true; else RUN.routes.set(id, { id, loading: true, at: 0, tr: [], st: [], legs: [] });
+    RUN.busy++;
+    call('mp_dia', { p_route: id }).then(D => { if (D) RUN.routes.set(id, prepRun(D)); })
+      .catch(() => { const r = RUN.routes.get(id); if (r) { r.loading = false; r.at = now(); } })
+      .finally(() => { RUN.busy--; RUN.need = 0; S.dirty = true; if (S.v3) S.v3.dirty = true; });
+  }
+  if (RUN.routes.size > 160) {   // 多くなったら、いま見えていない系統からすてる
+    for (const [id, R] of RUN.routes) { if (RUN.routes.size <= 120) break; if (!ids.has(id) && !R.loading) RUN.routes.delete(id); }
+  }
+}
+function prepRun(D) {
+  const R = { id: D.id, k: D.kind, c: D.color || '#d23', n: D.name, at: now(), loading: false, legs: D.legs || [], lp: [], hop: new Map(), tr: [],
+              st: (D.stops || []).map(x => ({ id: x.id, x: x.x / 100, y: x.y / 100 })) };
+  for (const t of D.trains || []) {
+    const sc = t.sched; if (t.bad || !Array.isArray(sc) || sc.length < 2) continue;
+    const t0 = sc[0][2], t1 = sc[sc.length - 1][1]; if (t0 == null || t1 == null) continue;
+    R.tr.push({ id: t.id, dir: t.dir, num: t.num, kind: t.kind, day: t.day, fn: Math.max(1, t.fn || 1), s: sc, t0, t1, idx: null });
+  }
+  return R;
+}
+// 列車のとまる駅が、系統の駅の何番目か（行きは前から、帰りはうしろから。同じ駅が2回出る環状線も）
+function runIdx(R, T) {
+  const ids = R.st.map(x => x.id), out = []; let p = T.dir === -1 ? ids.length - 1 : 0;
+  for (const e of T.s) {
+    let q = -1;
+    if (T.dir === -1) { for (let k = p; k >= 0; k--) if (ids[k] === e[0]) { q = k; break; } }
+    else { for (let k = p; k < ids.length; k++) if (ids[k] === e[0]) { q = k; break; } }
+    if (q < 0) q = ids.indexOf(e[0]);
+    out.push(q); if (q >= 0) p = q;
+  }
+  return out;
+}
+// 駅 i → i+1 の線（行きの向き）。線路・道路が読めていないときは、駅と駅をまっすぐ（あとで読みなおす）
+function runLeg(R, i, it) {
+  const c = R.lp[i]; if (c && (c.exact || now() - c.at < 3000)) return c;
+  const L = R.legs[i], A = R.st[i], B = R.st[i + 1]; if (!L || !A || !B) return null;
+  let pts = null, exact = true;
+  if (L.w && L.w.length >= 4) { pts = []; for (let k = 0; k + 1 < L.w.length; k += 2) pts.push([L.w[k] / 100, L.w[k + 1] / 100]); }
+  else if (L.g && L.g.length) {
+    pts = [];
+    for (const [sid, s0, s1] of L.g) {
+      const sg = it.segs.get(sid); if (!sg) { pts = null; break; }
+      let q = subPts(sg, Math.min(s0, s1), Math.max(s0, s1)); if (s0 > s1) q = q.reverse();
+      for (const v of q) { const l = pts[pts.length - 1]; if (!l || Math.hypot(v[0] - l[0], v[1] - l[1]) > 1e-4) pts.push(v); }
+    }
+    if (pts && pts.length < 2) pts = null;
+  }
+  if (!pts) { pts = [[A.x, A.y], [B.x, B.y]]; exact = false; }
+  const cum = [0]; for (let k = 1; k < pts.length; k++) cum.push(cum[k - 1] + Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]));
+  return (R.lp[i] = { pts, cum, len: cum[cum.length - 1], exact, at: now() });
+}
+// 駅 a → b（系統の何番目か）の線。帰りは逆向き
+function runHop(R, a, b, it) {
+  const key = a + '>' + b, c = R.hop.get(key);
+  if (c && c.exact) return c;
+  const lo = Math.min(a, b), hi = Math.max(a, b), parts = [];
+  let exact = true;
+  for (let i = lo; i < hi; i++) { const L = runLeg(R, i, it); if (!L) return null; if (!L.exact) exact = false; parts.push(L.pts); }
+  if (a > b) { parts.reverse(); for (let i = 0; i < parts.length; i++) parts[i] = parts[i].slice().reverse(); }
+  const pts = []; for (const q of parts) for (const v of q) { const l = pts[pts.length - 1]; if (!l || Math.hypot(v[0] - l[0], v[1] - l[1]) > 1e-4) pts.push(v); }
+  if (pts.length < 2) return null;
+  const cum = [0]; for (let k = 1; k < pts.length; k++) cum.push(cum[k - 1] + Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]));
+  const h = { pts, cum, len: cum[cum.length - 1], exact };
+  R.hop.set(key, h); return h;
+}
+// 線の上の d（はじめからのマス）の点と向き
+function runPt(H, d) {
+  d = clamp(d, 0, H.len); const c = H.cum; let lo = 0, hi = c.length - 1;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (c[m] <= d) lo = m; else hi = m; }
+  const a = H.pts[lo], b = H.pts[hi] || a, L = (c[hi] - c[lo]) || 1, t = (d - c[lo]) / L;
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, Math.atan2(b[1] - a[1], b[0] - a[0])];
+}
+// 線の d0〜d1 の折れ線
+function runSub(H, d0, d1) {
+  d0 = clamp(d0, 0, H.len); d1 = clamp(d1, 0, H.len); const out = [runPt(H, d0)];
+  for (let k = 1; k < H.pts.length - 1; k++) if (H.cum[k] > d0 && H.cum[k] < d1) out.push(H.pts[k]);
+  out.push(runPt(H, d1)); return out;
+}
+// いま走っている車両：[{R, T, H, d（頭の位置）, len（長さ・マス）}]。v：見るはんい（マス）
+function runList(it, v) {
+  runNeed(it);
+  const tm = jstNow(), out = [], pad = 3;
+  for (const R of RUN.routes.values()) {
+    if (!R.tr || !R.tr.length || !R.st.length) continue;
+    const carL = R.k === 'rail' ? 0.4 : R.k === 'bus' ? 0.24 : R.k === 'ship' ? 2.4 : 0.9;
+    for (const T of R.tr) {
+      // 日をまたぐ列車（24時すぎ）は、きのうの列車として見る
+      let tt = null;
+      if ((!T.day || T.day === tm.date) && tm.sec >= T.t0 && tm.sec <= T.t1) tt = tm.sec;
+      else if ((!T.day || T.day === tm.prev) && tm.sec + 86400 >= T.t0 && tm.sec + 86400 <= T.t1) tt = tm.sec + 86400;
+      if (tt == null) continue;
+      if (!T.idx) T.idx = runIdx(R, T);
+      const sc = T.s; let H = null, d = 0;
+      for (let i = 0; i < sc.length; i++) {
+        const ar = sc[i][1], dp = sc[i][2];
+        if (ar != null && dp != null && tt >= ar && tt <= dp) {   // 駅にとまっている：来た線の終わり（頭が駅）
+          if (i > 0) { H = runHop(R, T.idx[i - 1], T.idx[i], it); if (H) d = H.len; }
+          else if (i + 1 < sc.length) { H = runHop(R, T.idx[0], T.idx[1], it); if (H) d = Math.min(H.len, 0.4 * T.fn); }
+          break;
+        }
+        if (i + 1 < sc.length && dp != null && sc[i + 1][1] != null && tt >= dp && tt <= sc[i + 1][1]) {
+          H = runHop(R, T.idx[i], T.idx[i + 1], it); if (!H) break;
+          const f = (tt - dp) / Math.max(1, sc[i + 1][1] - dp), g = R.k === 'air' || R.k === 'ship' ? f : f * f * (3 - 2 * f);   // 電車・バスは、はじめとおわりがゆっくり
+          d = g * H.len; break;
+        }
+        if (i + 1 === sc.length && ar != null && tt >= ar) { if (i > 0) { H = runHop(R, T.idx[i - 1], T.idx[i], it); if (H) d = H.len; } }
+      }
+      if (!H) continue;
+      const p = runPt(H, d);
+      if (p[0] < v.x0 - pad || p[0] > v.x1 + pad || p[1] < v.y0 - pad || p[1] > v.y1 + pad) continue;
+      out.push({ R, T, H, d, x: p[0], y: p[1], a: p[2], len: carL * (R.k === 'rail' ? T.fn : 1), car: carL });
+    }
+  }
+  return out;
+}
+// 2D・2.5D：上がきのキャンバスに描く
+function drawRunLayer() {
+  RUN.drawn = now();
+  if (!S.ctxr) return;
+  clearRunLayer();
+  if (!S.layer.run || S.v3 || !S.vis) return;
+  const g = S.ctxr, z = S.cam.z, list = runList(S.vis, view());
+  g.setTransform(S.dpr, 0, 0, S.dpr, 0, 0); g.lineCap = 'butt'; g.lineJoin = 'round';
+  const lb = [];
+  for (const o of list) {
+    const px = o.len * z, sxp = sx(o.x), syp = sy(o.y);
+    if ((o.R.k === 'rail' || o.R.k === 'bus') && px >= 7) {
+      // 車両の形：線路・道路にそって、頭から うしろへ。両ごとにすきま
+      const pts = runSub(o.H, o.d - o.len, o.d), wd = o.R.k === 'rail' ? Math.max(5, 0.22 * z) : Math.max(4, 0.17 * z);
+      g.beginPath(); pts.forEach((q, i) => i ? g.lineTo(sx(q[0]), sy(q[1])) : g.moveTo(sx(q[0]), sy(q[1])));
+      g.setLineDash([]); g.strokeStyle = 'rgba(15,15,15,.85)'; g.lineWidth = wd + 3; g.stroke();
+      g.strokeStyle = o.R.c; g.lineWidth = wd;
+      const cpx = o.car * z; if (o.R.k === 'rail' && cpx >= 6) g.setLineDash([cpx - 1.2, 1.2]);
+      g.stroke(); g.setLineDash([]);
+      g.fillStyle = '#fff'; g.beginPath(); g.arc(sxp, syp, Math.max(1.6, wd * 0.28), 0, 6.3); g.fill();   // 頭（前のまど）
+      if (z >= 14) lb.push(o);
+    } else {
+      // 点（遠いとき）・船・飛行機は向きのある しるし
+      const r = o.R.k === 'rail' ? 4 : o.R.k === 'bus' ? 3.2 : 5;
+      g.save(); g.translate(sxp, syp);
+      if (o.R.k === 'ship' || o.R.k === 'air') {
+        g.rotate(o.a); g.beginPath(); g.moveTo(r + 2, 0); g.lineTo(-r, r * 0.8); g.lineTo(-r * 0.4, 0); g.lineTo(-r, -r * 0.8); g.closePath();
+      } else { g.beginPath(); g.arc(0, 0, r, 0, 6.3); }
+      g.fillStyle = o.R.c; g.fill(); g.lineWidth = 1.6; g.strokeStyle = '#fff'; g.stroke(); g.restore();
+      if (z >= 9 && (o.R.k === 'ship' || o.R.k === 'air')) lb.push(o);
+    }
+  }
+  // 列車の名前（近いとき・重ならないように）
+  g.font = '700 11px system-ui, sans-serif'; g.textBaseline = 'middle'; g.textAlign = 'left';
+  const used = [];
+  for (const o of lb.slice(0, 40)) {
+    const t = (o.T.kind ? T(o.T.kind) + ' ' : '') + o.T.num, w = g.measureText(t).width + 8, x = sx(o.x) + 8, y = sy(o.y) - 10;
+    if (used.some(r => x < r[2] && x + w > r[0] && y - 8 < r[3] && y + 8 > r[1])) continue;
+    used.push([x, y - 8, x + w, y + 8]);
+    g.fillStyle = 'rgba(255,255,255,.88)'; g.fillRect(x, y - 8, w, 16); g.fillStyle = '#222'; g.fillText(t, x + 4, y);
+  }
 }
 
 /* ---------- 画面（ボタン・下のシート） ---------- */
@@ -932,6 +1126,11 @@ const CSS = `
 .mp-wrap{position:relative;height:calc(100dvh - 210px);min-height:440px;border-radius:12px;overflow:hidden;background:#4680ba;touch-action:none;user-select:none;-webkit-user-select:none}
 .mp-wrap.mp-full{position:fixed;inset:0;height:auto;border-radius:0;z-index:25}
 .mp-cv{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab}
+.mp-cvr{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none}
+.mp-cfg[hidden]{display:none}
+.mp-cfg{position:absolute;right:56px;top:8px;z-index:6;background:rgba(255,255,255,.97);border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.22);padding:10px 12px;display:flex;flex-direction:column;gap:8px;font-size:13px;color:#222;max-width:min(320px,calc(100% - 72px))}
+.mp-cfg label{display:flex;gap:8px;align-items:flex-start;line-height:1.35}
+.mp-cfg input{margin-top:2px;flex:none;width:18px;height:18px}
 .mp-top{position:absolute;left:8px;right:56px;top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;pointer-events:none}
 .mp-top>*{pointer-events:auto}
 .mp-top select{max-width:38%}
@@ -990,16 +1189,38 @@ const CSS = `
 .mp-urow .btn{padding:3px 9px;font-size:12px}
 `;
 function el(html) { const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstChild; }
+// 地図の設定を変える（t61）。k：zone・own・label・run（層）／inertia・v3names・v3x
+function setOpt(k, on) {
+  const LS = { run: 'mp_run', inertia: 'mp_inertia', v3names: 'mp_v3n', v3x: 'mp_v3x' };
+  if (k in S.layer) S.layer[k] = !!on; else S[k] = !!on;
+  if (LS[k]) try { localStorage.setItem(LS[k], on ? '1' : '0'); } catch (e) {}
+  if (k === 'inertia' && !on) S.glide = null;
+  if (k === 'run') runReset();
+  optSync(); S.dirty = true; if (S.v3) S.v3.dirty = true;
+}
+function optSync() {
+  if (!S.wrap) return;
+  S.wrap.querySelectorAll('[data-lay]').forEach(b => b.classList.toggle('on', !!S.layer[b.dataset.lay]));
+  const v3x = S.wrap.querySelector('[data-v3x]'); if (v3x) v3x.classList.toggle('on', !!S.v3x);
+  S.wrap.querySelectorAll('.mp-cfg [data-o]').forEach(c => { const k = c.dataset.o; c.checked = !!(k in S.layer ? S.layer[k] : S[k]); });
+}
 function build(root) {
   if (!document.getElementById('mpCss')) { const st = document.createElement('style'); st.id = 'mpCss'; st.textContent = CSS; document.head.appendChild(st); }
   root.innerHTML = `<div class="mp-wrap" id="mpWrap">
-    <canvas class="mp-cv"></canvas>
+    <canvas class="mp-cv"></canvas><canvas class="mp-cvr"></canvas>
     <div class="mp-top">
       <select class="mp-as" title="だれの名前で"></select>
-      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button><button data-v3 title="ななめから立体に見る">🗻 3D</button><button data-v3x hidden title="横に回す向きを反対にする（2本指でひねる・右ドラッグ）">⇄ 左右反転</button>
+      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-lay="run" title="列車・バスの走行位置">🚃 走行</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button><button data-v3 title="ななめから立体に見る">🗻 3D</button><button data-v3x hidden title="横に回す向きを反対にする（2本指でひねる・右ドラッグ）">⇄ 左右反転</button>
       <span class="mp-addr" translate="no" hidden></span>
     </div>
-    <div class="mp-zoom"><button data-find title="さがす">🔍</button><button data-full title="大きく">⤢</button><button data-zin>＋</button><button data-zout>－</button><button data-home title="瑠璃市役所">⌂</button></div>
+    <div class="mp-zoom"><button data-find title="さがす">🔍</button><button data-full title="大きく">⤢</button><button data-zin>＋</button><button data-zout>－</button><button data-home title="瑠璃市役所">⌂</button><button data-opt title="地図の設定">⚙</button></div>
+    <div class="mp-cfg" hidden>
+      <b>地図の設定</b>
+      <label><input type="checkbox" data-o="inertia"> 指をはなしたあと、少しすべる（惰性）</label>
+      <label><input type="checkbox" data-o="run"> 列車・バスの走行位置を出す</label>
+      <label><input type="checkbox" data-o="v3names"> 3D で建物の名前を出す</label>
+      <label><input type="checkbox" data-o="v3x"> 3D で横に回す向きを反対にする</label>
+    </div>
     <div class="mp-hint" hidden></div>
     <div class="mp-sheet" hidden></div>
     <div class="mp-tools">
@@ -1008,13 +1229,21 @@ function build(root) {
       <button data-tool="rwy" hidden>✈ 滑走路</button><button data-tool="del">✖ こわす</button><button data-menu>≡ 車両・系統・ダイヤ</button>
     </div></div>`;
   S.wrap = root.querySelector('#mpWrap'); S.cv = S.wrap.querySelector('canvas'); S.ctx = S.cv.getContext('2d');
+  S.cvr = S.wrap.querySelector('.mp-cvr'); S.ctxr = S.cvr.getContext('2d');   // 上がき（走行位置・3D の名前。t61）
   S.sheet = S.wrap.querySelector('.mp-sheet'); S.hint = S.wrap.querySelector('.mp-hint'); S.addr = S.wrap.querySelector('.mp-addr');
   const asSel = S.wrap.querySelector('.mp-as');
   asSel.innerHTML = S.boot.as.map(a => `<option value="${esc(a.as)}">${a.as === 'me' ? '👤' : a.as === 'gov' ? '🏛' : '🏢'} ${esc(asLabel(a))}</option>`).join('');
   try { const sv = localStorage.getItem('mp_as'); if (sv && S.boot.as.some(a => a.as === sv)) S.as = sv; } catch (e) {}
   asSel.value = S.as;
   asSel.onchange = () => { S.as = asSel.value; try { localStorage.setItem('mp_as', S.as); } catch (e) {} for (const c of S.cells.values()) c.stale = true; S.dirty = true; toolVis(); if (S.onAs) S.onAs(); };
-  S.wrap.querySelectorAll('[data-lay]').forEach(b => b.onclick = () => { const k = b.dataset.lay; S.layer[k] = !S.layer[k]; b.classList.toggle('on', S.layer[k]); S.dirty = true; });
+  // 地図の設定（t61）：惰性・走行位置・3D の建物の名前・3D の左右反転。この端末におぼえる
+  try { S.inertia = localStorage.getItem('mp_inertia') === '1'; S.layer.run = localStorage.getItem('mp_run') === '1'; const n3 = localStorage.getItem('mp_v3n'); if (n3 != null) S.v3names = n3 !== '0'; } catch (e) {}
+  S.wrap.querySelector('[data-lay="run"]').classList.toggle('on', !!S.layer.run);
+  S.wrap.querySelectorAll('[data-lay]').forEach(b => b.onclick = () => { const k = b.dataset.lay; setOpt(k, !S.layer[k]); });
+  const cfg = S.wrap.querySelector('.mp-cfg');
+  S.wrap.querySelector('[data-opt]').onclick = () => { cfg.hidden = !cfg.hidden; optSync(); };
+  cfg.querySelectorAll('[data-o]').forEach(c => c.onchange = () => setOpt(c.dataset.o, c.checked));
+  S.wrap.addEventListener('pointerdown', e => { if (!cfg.hidden && e.target.tagName === 'CANVAS') cfg.hidden = true; }, true);   // 地図にさわったら とじる
   // 建物の見えかた：2.5D（高さ・壁）と 2D（上から見たまま）。この端末におぼえる
   try { const v = localStorage.getItem('mp_b25'); if (v != null) S.b25 = v !== '0'; } catch (e) {}
   const b25 = S.wrap.querySelector('[data-b25]'), b25L = () => { b25.textContent = S.b25 ? '🏢 2.5D' : '🏢 2D'; };
@@ -1023,7 +1252,7 @@ function build(root) {
   { const v3 = S.wrap.querySelector('[data-v3]'), v3x = S.wrap.querySelector('[data-v3x]');
     try { S.v3x = localStorage.getItem('mp_v3x') === '1'; } catch (e) { S.v3x = false; }
     v3x.classList.toggle('on', !!S.v3x);
-    v3x.onclick = () => { S.v3x = !S.v3x; v3x.classList.toggle('on', S.v3x); try { localStorage.setItem('mp_v3x', S.v3x ? '1' : '0'); } catch (e) {} };
+    v3x.onclick = () => setOpt('v3x', !S.v3x);
     v3.onclick = async () => { if (S.v3) m3Close(); else await m3Open(); v3.classList.toggle('on', !!S.v3); b25.hidden = !!S.v3; v3x.hidden = !S.v3; }; }
   S.wrap.querySelector('[data-full]').onclick = () => { S.wrap.classList.toggle('mp-full'); resize(); };
   S.wrap.querySelector('[data-find]').onclick = () => openFind();   // さがす（t59）
@@ -1048,6 +1277,7 @@ function resize() {
   const r = S.wrap.getBoundingClientRect(); S.dpr = Math.min(2, window.devicePixelRatio || 1);
   S.W = Math.max(1, r.width); S.H = Math.max(1, r.height);
   S.cv.width = Math.round(S.W * S.dpr); S.cv.height = Math.round(S.H * S.dpr); S.dirty = true;
+  if (S.cvr) { S.cvr.width = S.cv.width; S.cvr.height = S.cv.height; }
   if (S.v3) m3Resize();
 }
 function hint(t) { S.hint.hidden = !t; S.hint.textContent = t ? T(t) : ''; }
@@ -1127,7 +1357,7 @@ function bindInput() {
   let drag = null, pinch = null, downAt = 0, moved = false, lp = null;
   const pos = e => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
   cv.addEventListener('pointerdown', e => {
-    cv.setPointerCapture(e.pointerId); const p = pos(e); P.set(e.pointerId, p);
+    cv.setPointerCapture(e.pointerId); const p = pos(e); P.set(e.pointerId, p); S.glide = null;
     if (P.size === 1) {
       downAt = now(); moved = false;
       // 道具が点をつかむ（線の点を動かす）
@@ -1136,7 +1366,7 @@ function bindInput() {
         clearTimeout(lp); lp = setTimeout(() => { if (!moved && P.size === 1 && drag && drag.tool && S.onLong) { drag = null; if (S.grabEnd) S.grabEnd(); S.onLong(wx(p[0]), wy(p[1]), p[0], p[1]); } }, 550);
         return;
       }
-      drag = { x: p[0], y: p[1], cx: S.cam.x, cy: S.cam.y };
+      drag = { x: p[0], y: p[1], cx: S.cam.x, cy: S.cam.y, hist: [] };
       clearTimeout(lp); lp = setTimeout(() => { if (!moved && P.size === 1 && S.onLong) S.onLong(wx(p[0]), wy(p[1]), p[0], p[1]); }, 550);
     } else if (P.size === 2) {
       clearTimeout(lp); drag = null;
@@ -1156,13 +1386,21 @@ function bindInput() {
     if (!drag) return;
     if (drag.tool) { if (!moved && Math.hypot(p[0] - drag.x, p[1] - drag.y) > 4) { moved = true; clearTimeout(lp); } if (moved && S.grabMove) S.grabMove(wx(p[0]), wy(p[1])); return; }
     if (Math.hypot(p[0] - drag.x, p[1] - drag.y) > 6) moved = true;
-    if (moved) setCam(drag.cx - (p[0] - drag.x) / S.cam.z, drag.cy - (p[1] - drag.y) / S.cam.z, S.cam.z);
+    if (moved) {
+      setCam(drag.cx - (p[0] - drag.x) / S.cam.z, drag.cy - (p[1] - drag.y) / S.cam.z, S.cam.z);
+      const t = evT(e); drag.hist.push([t, S.cam.x, S.cam.y]); while (drag.hist.length > 2 && t - drag.hist[0][0] > 100) drag.hist.shift();
+    }
   });
   const up = e => {
     const p = pos(e); P.delete(e.pointerId); clearTimeout(lp);
     if (P.size < 2) pinch = null;
     if (drag && drag.tool) { drag = null; if (S.grabEnd) S.grabEnd(); return; }
     if (drag && !moved && now() - downAt < 500 && e.type === 'pointerup') onTap(wx(p[0]), wy(p[1]), p[0], p[1]);
+    // 惰性（t61）：さいごの 100ms の速さで、すこしすべる
+    if (S.inertia && drag && !drag.tool && moved && P.size === 0 && e.type === 'pointerup' && drag.hist && drag.hist.length >= 2) {
+      const h = drag.hist, a = h[0], b = h[h.length - 1], dt = b[0] - a[0];
+      if (dt > 8 && evT(e) - b[0] < 60) { const vx = (b[1] - a[1]) / dt, vy = (b[2] - a[2]) / dt; if (Math.hypot(vx, vy) * S.cam.z > 0.05) S.glide = { vx, vy, t: now() }; }
+    }
     if (P.size === 0) drag = null;
   };
   cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
@@ -5139,7 +5377,7 @@ function showCert(r) {
         <table style="border-collapse:collapse;flex:1;font-size:13px">${row('氏名', `<b translate="no">${esc(r.name)}</b>`)}${row('住所', `<span translate="no">${esc(j.addr)}</span>`)}${row('登録番号', esc(j.seal_no || ''))}</table></div>${foot}`);
   modal([r.kind === 'cert' ? '住民票の写し' : '印鑑登録証明書', html], null, 'mp-wide');
 }
-window.MapInt = { S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now };   // 3D（map3d.js）が使う
+window.MapInt = { S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer };   // 3D（map3d.js）が使う
 window.MapApp = { open, pause, state: S, spline, setCam, landReqs: () => openLandReqs(), xfers: () => openXfers(), goto: (x, y) => homeGo(x, y), thru: () => openThru(), bld: id => openBld(id), sc: () => openSC(),
   slots: L => (L && L.st ? openSlots(Number(L.st)) : openSlotList()), find: () => openFind(), jm: id => openJuumin(id) };
 })();

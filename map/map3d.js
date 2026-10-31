@@ -5,8 +5,8 @@
 (function () {
 'use strict';
 // map.js の中のもの（window.MapInt）を使う
-let S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, PAL;
-function m3Init() { ({ S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now } = window.MapInt); PAL = window.MapPal; }
+let S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, PAL;
+function m3Init() { ({ S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer } = window.MapInt); PAL = window.MapPal; }
 const M3 = { on: false, loading: false };
 const M3_LIB = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
 const M3_FH = 3.4;          // 1階の高さ（m）
@@ -105,6 +105,8 @@ function m3Close() {
   // 2D のカメラを 3D の真ん中に
   S.cam.x = M3.tx; S.cam.y = M3.ty; S.cam.z = Math.max(1.2, Math.min(40, S.H / Math.max(4, M3.d * 1.05)));
   for (const g of [M3.grpT, M3.grpB, M3.grpR]) m3Clear(g);
+  if (M3.run) { M3.run.geometry.dispose(); M3.run.material.dispose(); M3.run = null; M3.runCap = 0; }
+  M3.glide = null; M3.labs = []; if (clearRunLayer) clearRunLayer();
   M3.r.dispose(); M3.cv.remove();
   M3.on = false; S.v3 = null; S.v3rect = null; S.wrap.classList.remove('mp-3d');
   saveCam(); S.dirty = true;
@@ -147,8 +149,10 @@ function m3Frame() {
   S.v3rect = rc.near; S.cam.z = M3.d < 160 ? 8 : 3; needCells();
   m3Terrain(rc.big);
   m3Blds(rc.near);
+  try { m3Runs(rc.near); } catch (e) { console.error(e); }   // 列車・バス（t61）
   m3Cam();
   M3.r.render(M3.sc, M3.cam);
+  m3Labels();   // 建物の名前（t61）
   if (Math.abs(m3Ground(M3.tx, M3.ty) - M3.gy) > 0.002) M3.dirty = true;
 }
 // 3D のときのチャンクの片づけ（遠いものから。2D の trimChunks は 2D の見えかたで決めるので使わない）
@@ -211,6 +215,7 @@ function m3Blds(v) {
   M3.bKey = key;
   m3Clear(M3.grpB); m3Clear(M3.grpR);
   const T3 = M3.T;
+  M3.labs = [];   // 建物の名前（t61）：[{x, y, h, n}]
   // 区画（10m）→ 行ごとの長方形 → 同じ横はばの行をまとめる
   const W = { glass: [], grid: [], house: [], none: [] }, RF = [];
   const push = (arr, x, y, z, nx, ny, nz, c, u, w) => arr.push(x, y, z, nx, ny, nz, c[0], c[1], c[2], u, w);
@@ -218,6 +223,7 @@ function m3Blds(v) {
   for (const b of bs) {
     const st = m3Style(b.kind, b), f = Math.max(0, b.floors);
     const g0 = m3Ground(b.cx, b.cy) - 0.01, hgt = f > 0 ? (f * M3_FH + 0.8) * M3_U : 0.25 * M3_U;
+    if (b.name) M3.labs.push({ x: b.cx, y: b.cy, h: g0 + hgt + 2 * M3_U, n: b.name, f });
     const wc = hex(st.wc, st.jit), rcol = hex(f > 0 ? st.rc : (bcol(b.kind)[0] || '#bbb'), st.jit), wa = W[st.win] || W.none;
     // 長方形にまとめる
     const rows = new Map();
@@ -314,6 +320,58 @@ function m3Blds(v) {
   }
 }
 
+/* ---------- 走行位置（t61）：列車は両ごと、バス・船・飛行機は1つの箱。線路・道路・航路の上を、ダイヤのとおりに ---------- */
+function m3Runs(v) {
+  const T3 = M3.T;
+  if (!S.layer.run) { if (M3.run) M3.run.visible = false; return; }
+  const list = runList(visibleItems(), v);
+  let n = 0; for (const o of list) n += o.R.k === 'rail' ? o.T.fn : 1;
+  if (!M3.run || M3.runCap < n) {
+    if (M3.run) { M3.sc.remove(M3.run); M3.run.geometry.dispose(); M3.run.material.dispose(); }
+    M3.runCap = Math.max(64, Math.ceil(n * 1.5));
+    M3.run = new T3.InstancedMesh(new T3.BoxGeometry(1, 1, 1), new T3.MeshLambertMaterial({ color: '#ffffff' }), M3.runCap);
+    M3.run.instanceMatrix.setUsage(T3.DynamicDrawUsage); M3.run.frustumCulled = false; M3.sc.add(M3.run);
+  }
+  const m = new T3.Matrix4(), q = new T3.Quaternion(), pos = new T3.Vector3(), sc = new T3.Vector3(), up = new T3.Vector3(0, 1, 0), col = new T3.Color();
+  let i = 0;
+  for (const o of list) {
+    const k = o.R.k, cars = k === 'rail' ? o.T.fn : 1, cl = o.car;
+    const hh = (k === 'rail' ? 3.8 : k === 'bus' ? 3.1 : k === 'ship' ? 9 : 5) * M3_U, ww = (k === 'rail' ? 2.9 : k === 'bus' ? 2.5 : k === 'ship' ? 16 : 30) * M3_U;
+    col.set(o.R.c || '#d23');
+    for (let c = 0; c < cars; c++) {
+      const p = runPt(o.H, o.d - (c + 0.5) * cl);
+      let y = k === 'ship' ? 0.05 * M3_U : m3Ground(p[0], p[1]) + 0.3 * M3_U;
+      if (k === 'air') { const f = o.H.len > 0 ? o.d / o.H.len : 0; y = Math.max(y, Math.min(1, 6 * f, 6 * (1 - f)) * 900 * M3_U); }   // 飛行機：まん中は 900m の高さ
+      pos.set(p[0], y + hh / 2, p[1]); q.setFromAxisAngle(up, -p[2]); sc.set(cl * (k === 'rail' ? 0.94 : 1), hh, ww);
+      m.compose(pos, q, sc); M3.run.setMatrixAt(i, m); M3.run.setColorAt(i, col); i++;
+    }
+  }
+  M3.run.count = i; M3.run.visible = i > 0;
+  M3.run.instanceMatrix.needsUpdate = true; if (M3.run.instanceColor) M3.run.instanceColor.needsUpdate = true;
+}
+/* ---------- 建物の名前（t61）：上がきのキャンバスに、近いものから・重ならないように ---------- */
+function m3Labels() {
+  const g = S.ctxr; if (!g) return;
+  g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, S.cvr.width, S.cvr.height);
+  if (!S.v3names || !M3.labs || !M3.labs.length || M3.d > 260) return;
+  g.setTransform(S.dpr, 0, 0, S.dpr, 0, 0);
+  const v = new M3.T.Vector3(), cam = M3.cam, cx = cam.position.x, cz = cam.position.z, used = [];
+  const L = M3.labs.map(l => [l, (l.x - cx) ** 2 + (l.y - cz) ** 2 - l.f * 4]).sort((a, b) => a[1] - b[1]);
+  g.font = '700 12px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'bottom'; g.lineJoin = 'round';
+  let n = 0;
+  for (const [l] of L) {
+    if (n >= 70) break;
+    v.set(l.x, l.h, l.y).project(cam);
+    if (v.z > 1 || v.z < -1 || v.x < -1 || v.x > 1 || v.y < -1 || v.y > 1) continue;
+    const X = (v.x + 1) / 2 * S.W, Y = (1 - v.y) / 2 * S.H - 3, w = g.measureText(l.n).width + 6;
+    if (Y < 50) continue;
+    if (used.some(r => X - w / 2 < r[2] && X + w / 2 > r[0] && Y - 15 < r[3] && Y > r[1])) continue;
+    used.push([X - w / 2, Y - 15, X + w / 2, Y]);
+    g.lineWidth = 3.5; g.strokeStyle = 'rgba(255,255,255,.95)'; g.strokeText(l.n, X, Y); g.fillStyle = '#1d2733'; g.fillText(l.n, X, Y);
+    n++;
+  }
+}
+
 /* ---------- さわりかた：1本指＝うごかす・2本指＝ひろげる／回す／かたむける・ホイール＝ズーム・右ドラッグ＝回す ---------- */
 function m3Bind(cv) {
   const P = new Map(); let last = null;
@@ -321,9 +379,30 @@ function m3Bind(cv) {
     const k = M3.d * 2 * Math.tan(22.5 * Math.PI / 180) / Math.max(1, S.H), c = Math.cos(M3.yaw), s = Math.sin(M3.yaw);
     M3.tx -= (dx * c + dy * s / Math.max(0.35, Math.sin(M3.pitch))) * k; M3.ty -= (-dx * s + dy * c / Math.max(0.35, Math.sin(M3.pitch))) * k;
   };
-  cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); P.set(e.pointerId, { x: e.clientX, y: e.clientY, b: e.button, sh: e.shiftKey }); last = null; cv.style.cursor = 'grabbing'; });
+  // 惰性（t61）：さいごの 100ms の動き（うごかす：画面の px・回す：yaw）をおぼえて、はなしたら少しすべる
+  let hist = [];
+  const mark = e => { const t = evT(e); hist.push([t, M3.tx, M3.ty, M3.yaw]); while (hist.length > 2 && t - hist[0][0] > 100) hist.shift(); };
+  const glide = () => {
+    const g = M3.glide; if (!g || !M3.on) { M3.glide = null; return; }
+    const t = now(), dt = Math.min(48, t - g.t); g.t = t;
+    M3.tx += g.vx * dt; M3.ty += g.vy * dt; M3.yaw += g.vr * dt;
+    const k = Math.exp(-dt / 325); g.vx *= k; g.vy *= k; g.vr *= k; S.dirty = true;
+    if (Math.hypot(g.vx, g.vy) / Math.max(1e-6, M3.d) < 0.00002 && Math.abs(g.vr) < 0.00005) { M3.glide = null; return; }
+    requestAnimationFrame(glide);
+  };
+  const letGo = e => {
+    if (!S.inertia || hist.length < 2) { hist = []; return; }
+    const a = hist[0], b = hist[hist.length - 1], dt = b[0] - a[0];
+    if (dt > 8 && evT(e) - b[0] < 60) {
+      const vx = (b[1] - a[1]) / dt, vy = (b[2] - a[2]) / dt, vr = Math.max(-0.004, Math.min(0.004, (b[3] - a[3]) / dt));   // 回る惰性は 1 回転の 1/5 ぐらいまで
+      if (Math.hypot(vx, vy) / Math.max(1e-6, M3.d) > 0.0001 || Math.abs(vr) > 0.0003) { M3.glide = { vx, vy, vr, t: now() }; requestAnimationFrame(glide); }
+    }
+    hist = [];
+  };
+  cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); P.set(e.pointerId, { x: e.clientX, y: e.clientY, b: e.button, sh: e.shiftKey }); last = null; cv.style.cursor = 'grabbing'; M3.glide = null; hist = []; });
   cv.addEventListener('pointermove', e => {
     const p = P.get(e.pointerId); if (!p) return;
+    M3.glide = null;
     const dx = e.clientX - p.x, dy = e.clientY - p.y;
     if (P.size === 1) {
       if (p.b === 2 || p.sh) { M3.yaw -= dx * 0.006 * (S.v3x ? -1 : 1); M3.pitch = Math.max(0.22, Math.min(1.5, M3.pitch + dy * 0.005)); }
@@ -339,9 +418,10 @@ function m3Bind(cv) {
       const my0 = (a.y + b.y) / 2, my1 = (na.y + nb.y) / 2;
       M3.pitch = Math.max(0.22, Math.min(1.5, M3.pitch + (my1 - my0) * 0.004));
     }
-    p.x = e.clientX; p.y = e.clientY; S.dirty = true;
+    p.x = e.clientX; p.y = e.clientY; S.dirty = true; mark(e);
   });
-  const up = e => { P.delete(e.pointerId); if (!P.size) cv.style.cursor = 'grab'; };
+  const up = e => { const n0 = P.size; P.delete(e.pointerId); if (!P.size) cv.style.cursor = 'grab';
+    if (e.type === 'pointerup' && n0 === 1 && P.size === 0) letGo(e); else if (e.type === 'pointerup' && P.size === 1 && n0 === 2) letGo(e); };   // 2本指をはなしたら、回る惰性
   cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
   cv.addEventListener('contextmenu', e => e.preventDefault());
   cv.addEventListener('wheel', e => { e.preventDefault(); M3.d = Math.max(4, Math.min(900, M3.d * Math.pow(1.0015, e.deltaY))); S.dirty = true; }, { passive: false });
