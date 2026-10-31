@@ -158,6 +158,11 @@ h3{font-size:15px;margin:16px 0 8px}
 .kb-row .nm b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:14px}
 .kb-row .nm small{color:var(--muted);font-size:12px}
 .kb-row.past{opacity:.72}
+.ks-al{min-width:44px;padding:6px 8px;font-size:16px;line-height:1}
+.ks-al.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.ks-al:disabled{opacity:.35}
+.ks-sum{cursor:pointer;margin-top:10px}
+.ks-sum .small{margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chip{font-size:11px;font-weight:800;border-radius:999px;padding:2px 8px;white-space:nowrap;border:1px solid var(--line);max-width:46%;overflow:hidden;text-overflow:ellipsis}
 .chip.sale{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 .chip.run{background:var(--red);color:#fff;border-color:var(--red)}
@@ -1229,7 +1234,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=4a39ea50","zh-TW":"zh-TW.js?v=d54ab23a","zh-CN":"zh-CN.js?v=5f7cd9cd","ko":"ko.js?v=7f9ec94e","ko-Hani":"ko-Hani.js?v=dcf7628c"};
+  window.AX_LANGS = {"en":"en.js?v=6d9443d6","zh-TW":"zh-TW.js?v=584323d5","zh-CN":"zh-CN.js?v=167f725a","ko":"ko.js?v=44bf4f56","ko-Hani":"ko-Hani.js?v=1ae269da"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -2642,13 +2647,14 @@ async function kbLoad() {
   if (kbView) return kbOpen(kbView, true);
   try { KD = await kbCall('keiba_day'); kbLastDay = Date.now(); setBal(KD.balance); kbRenderList(); }
   catch (e) { toast(e.message); }
+  kbSchPoll().then(() => { if (!kbView && KD) kbRenderList(); });
 }
 function kbRenderList() {
   if (!KD) return;
   const rs = KD.races;
   const focus = rs.find(r => ['closed', 'running', 'judging'].includes(kbStatus(r))) || rs.find(r => kbStatus(r) === 'sale');
   const dd = new Date(KD.day + 'T12:00:00+09:00');
-  let h = `${betaHidden('vOwner') ? '' : '<button class="btn s" data-owner style="float:right;margin-top:14px">🐴 所持馬</button>'}<h2 style="margin-bottom:2px">${dd.getMonth() + 1}月${dd.getDate()}日（${'日月火水木金土'[dd.getDay()]}）の開催</h2>
+  let h = `${KS.off ? '' : '<button class="btn s" data-sch style="float:right;margin:14px 0 0 6px">📅 これから</button>'}${betaHidden('vOwner') ? '' : '<button class="btn s" data-owner style="float:right;margin-top:14px">🐴 所持馬</button>'}<h2 style="margin-bottom:2px">${dd.getMonth() + 1}月${dd.getDate()}日（${'日月火水木金土'[dd.getDay()]}）の開催</h2>
     <p class="muted small" style="margin:0 0 6px">昼競馬は12:30から10分おきに7R（13:30まで）。ふだんのレースは16:30・17:30・18:30・19:30から7Rずつ。メインレースは20:30。深夜競馬は20:42・21:42から7Rずつ（22:30の最終レースまで）</p>`;
   if (focus) {
     const s = kbStatus(focus), left = (focus.post_ms - kbNow()) / 1000;
@@ -2662,6 +2668,7 @@ function kbRenderList() {
   } else {
     h += `<div class="card"><b>きょうのレースは終わりました</b><p class="muted small" style="margin:4px 0 0">あしたは12:30から（昼競馬）。結果は下から見られます。</p></div>`;
   }
+  if (KS.alerts.length) h += `<div class="card ks-sum" data-sch><b>🔔 通知をつけたレース</b>${KS.alerts.map(a => `<div class="small"><span class="muted">${kbDayL(a.day)} ${hhmm(a.post_ms)}</span> ${esc(a.label)}</div>`).join('')}</div>`;
   let last = null;
   for (const r of rs) {
     const ex = r.no >= 60;   // 臨時のレース
@@ -2682,6 +2689,98 @@ function kbRenderList() {
   $('#kbList').innerHTML = h;
   $$('#kbList [data-id]').forEach(el => el.onclick = () => kbOpen(Number(el.dataset.id)));
   { const ob = $('#kbList [data-owner]'); if (ob) ob.onclick = () => go('vOwner'); }
+  $$('#kbList [data-sch]').forEach(el => el.onclick = () => kbSchOpen());
+}
+
+/* ---------- これからのレース（5日先まで）と、発走の通知（35分前・20分前。3つまで）（t62・DB の更新45） ---------- */
+const KS = { off: false, today: null, alerts: [], max: 3, at: 0, cache: {}, day: null };
+const KS_MISSING = /Could not find the function|does not exist|schema cache/;
+// 日の名前（きょう・あした・11/3（火））
+function kbDayL(day) {
+  const t = KS.today || (KD && KD.day); if (!t) return day;
+  const n = Math.round((new Date(day + 'T12:00:00+09:00') - new Date(t + 'T12:00:00+09:00')) / 86400000);
+  if (n === 0) return 'きょう'; if (n === 1) return 'あした';
+  const d = new Date(day + 'T12:00:00+09:00');
+  return `${d.getMonth() + 1}/${d.getDate()}（${'日月火水木金土'[d.getDay()]}）`;
+}
+// 通知の一覧を新しく（開いたとき・1分ごと）
+async function kbSchPoll(force) {
+  if (KS.off || (!force && Date.now() - KS.at < 60000)) return;
+  KS.at = Date.now();
+  try { const d = await call('kb_sched', { p_day: null }); KS.today = d.today; KS.alerts = d.alerts || []; KS.max = d.max || 3; KS.cache[d.day] = d; }
+  catch (e) { if (KS_MISSING.test(e.message)) KS.off = true; }
+}
+async function kbSchOpen(day) {
+  if (KS.off) return toast('サーバーの更新のあとに使えます');
+  $$('.modal').forEach(m => m.remove());
+  const m = document.createElement('div'); m.className = 'modal';
+  m.innerHTML = `<div class="sheet"><div class="row"><b style="font-size:19px" class="grow">📅 これからのレース</b><button class="btn s" data-x>とじる</button></div>
+    <p class="muted small" style="margin:4px 0 8px">5日先までの番組です（出走馬は当日に決まります）。🔔 をおすと、発走の35分前と20分前に通知が届きます。同時に3つまで。</p>
+    <div class="seg sm" id="ksD" style="display:flex;flex-wrap:wrap"></div>
+    <div class="small" id="ksN" style="margin:8px 0 0"></div>
+    <div id="ksL"><p class="muted small">読みこみ中…</p></div></div>`;
+  m.onclick = ev => { if (ev.target === m || ev.target.hasAttribute('data-x')) m.remove(); };
+  document.body.appendChild(m);
+  if (!KS.today) await kbSchPoll(true);
+  if (KS.off) { m.remove(); return toast('サーバーの更新のあとに使えます'); }
+  kbSchDay(day || KS.day || KS.today);
+}
+async function kbSchDay(day) {
+  const m = $('.modal #ksL') && $('.modal #ksL').closest('.modal'); if (!m) return;
+  KS.day = day;
+  const t = new Date(KS.today + 'T12:00:00+09:00'), days = [0, 1, 2, 3, 4, 5].map(i => { const d = new Date(t.getTime() + i * 86400000); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
+  m.querySelector('#ksD').innerHTML = days.map(d => `<button data-d="${d}" class="${d === day ? 'on' : ''}">${kbDayL(d)}</button>`).join('');
+  m.querySelectorAll('#ksD [data-d]').forEach(b => b.onclick = () => kbSchDay(b.dataset.d));
+  let d = KS.cache[day];
+  if (!d || Date.now() - (d.got || 0) > 60000) {
+    m.querySelector('#ksL').innerHTML = '<p class="muted small">読みこみ中…</p>';
+    try { d = await call('kb_sched', { p_day: day }); d.got = Date.now(); KS.cache[day] = d; KS.alerts = d.alerts || []; }
+    catch (e) { m.querySelector('#ksL').innerHTML = `<p class="muted small">${esc(e.message)}</p>`; return; }
+    if (KS.day !== day) return;
+  }
+  kbSchDraw();
+}
+function kbSchDraw() {
+  const m = $('.modal #ksL') && $('.modal #ksL').closest('.modal'); if (!m) return;
+  const d = KS.cache[KS.day]; if (!d) return;
+  const now = Date.now(), mine = new Set(KS.alerts.map(a => a.day + ':' + a.no));
+  m.querySelector('#ksN').innerHTML = `🔔 通知 <b>${KS.alerts.length}</b> / ${KS.max}` + (KS.alerts.length ? '　' + KS.alerts.map(a => `<span class="muted">${kbDayL(a.day)} ${hhmm(a.post_ms)} ${esc(a.label)}</span>`).join('・') : '');
+  const sess = r => r.no <= 28 ? Math.floor((r.no - 1) / 7) : r.no === 29 ? 4 : r.no >= 60 ? 100 + r.no : r.no >= 44 ? 7 : 5 + Math.floor((r.no - 30) / 7);
+  let h = '', last = null;
+  for (const r of d.races) {
+    const k = sess(r);
+    if (k !== last) {
+      last = k;
+      h += `<div class="kb-sess">${hhmm(r.post_ms)}〜 ${esc(r.venue)}競馬場${r.no >= 60 ? '<span>🏆 臨時競馬</span>' : r.no === 29 ? '<span>メインレース</span>' : r.no >= 44 ? '<span class="noon">☀ 昼競馬</span>' : r.no >= 30 ? '<span class="night">🌙 深夜競馬</span>' : ''}</div>`;
+    }
+    const on = mine.has(KS.day + ':' + r.no), late = r.post_ms - now <= 20 * 60000, past = r.post_ms <= now;
+    h += `<div class="kb-row ${past ? 'past' : ''}" ${r.id && KS.day === KS.today ? `data-ksid="${r.id}"` : 'style="cursor:default"'}>
+      <span class="t">${hhmm(r.post_ms)}</span><span class="r">${r.rnum}R</span>
+      <span class="nm"><b>${esc(r.name)}${gradeTag(r.grade)}</b><small>${r.surface === '芝' ? '芝' : 'ダート'}${r.dist}m${r.status !== 'plan' ? '・' + (KB_STATUS[r.status] || '') : ''}</small></span>
+      ${past ? '' : `<button class="btn s ks-al ${on ? 'on' : ''}" data-al="${r.no}" ${late && !on ? 'disabled' : ''} title="${on ? '通知をはずす' : '発走の35分前と20分前に通知'}">${on ? '🔔' : '🔕'}</button>`}</div>`;
+  }
+  m.querySelector('#ksL').innerHTML = h || '<p class="muted small">この日のレースはまだ決まっていません</p>';
+  m.querySelectorAll('#ksL [data-ksid]').forEach(el => el.onclick = ev => { if (ev.target.closest('[data-al]')) return; m.remove(); kbOpen(Number(el.dataset.ksid)); });
+  m.querySelectorAll('#ksL [data-al]').forEach(b => b.onclick = async ev => {
+    ev.stopPropagation();
+    const no = Number(b.dataset.al), on = !b.classList.contains('on');
+    b.disabled = true;
+    try {
+      const r = await call('kb_alert_set', { p_day: KS.day, p_no: no, p_on: on });
+      KS.alerts = r.alerts || []; Object.values(KS.cache).forEach(c => c.races.forEach(x => { x.alert = KS.alerts.some(a => a.day === c.day && a.no === x.no); }));
+      toast(on ? '通知をつけました（発走の35分前と20分前）' : '通知をはずしました');
+      if (on && 'Notification' in window && Notification.permission === 'default') toast('この端末にも出すには、右上の🔔（通知）の「この端末にも通知を出す」をオンに');
+    } catch (e) { toast(e.message); }
+    kbSchDraw(); if (!kbView && KD) kbRenderList();
+  });
+}
+// 通知（【競馬】）をおしたとき：その日のレースを開く（まだならこれからの一覧）
+async function kbGoRace(day, no) {
+  go('vRace');
+  for (let i = 0; i < 40 && !(KD && KD.day); i++) await new Promise(r => setTimeout(r, 150));
+  const r = KD && KD.day === day && KD.races.find(x => x.no === Number(no));
+  if (r) return kbOpen(r.id);
+  kbSchOpen(day);
 }
 
 /* ---------- 1レース ---------- */
@@ -3305,7 +3404,7 @@ function kbFrame() {
     if (tick) { kbRenderHead(); kbRenderResult(); }
     kbDraw();
   } else if (KD) {
-    if (now - kbLastDay > 20000) { kbLastDay = now; kbCall('keiba_day').then(d => { KD = d; setBal(d.balance); kbRenderList(); }).catch(() => {}); }
+    if (now - kbLastDay > 20000) { kbLastDay = now; kbCall('keiba_day').then(d => { KD = d; setBal(d.balance); kbRenderList(); }).catch(() => {}); kbSchPoll(); }
     if (tick) kbRenderList();
   }
   requestAnimationFrame(kbFrame);
@@ -4921,7 +5020,7 @@ function stCmpDraw() {
    役所 → ヘルプ（t62）：遊び方・やり方（help/help.json。README からつくる）。さがせる（題・中身・ことば。ひらがな・カタカナ・全角半角は同じに）
    役所 → 意見箱（t62）：運営への問い合わせ（support_open）に「【意見箱】」の件名で送る
    ================================================================= */
-const HELP_V = 'ffd74210';
+const HELP_V = '92c1fda0';
 const HP = { d: null, cat: 'start', q: '' };
 const hpNorm = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
 async function helpLoad() {
@@ -8307,7 +8406,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && en
 // 【カテゴリ】をとった本文と、カテゴリ
 const noticeTag = b => { const m = /^【([^】]+)】/.exec(b || ''); return m ? m[1].replace(/\s*#\d+$/, '') : /届きました|入りました|返しました/.test(b) ? 'お金' : 'お知らせ'; };
 const noticeText = b => (b || '').replace(/^【[^】]+】/, '');
-const NT_GO = { フレンド: ['vHome', 'friend'], メッセージ: ['vHome', 'msg'], 問い合わせ: ['vHome', 'msg'], メンション: ['vInfo', 'tl'], 請求: ['vTax', 'bill'], 訴え: ['vTax', 'court'], 税務調査: ['vTax', 'tax'], 決定: ['vTax', 'tax'],
+const NT_GO = { 競馬: ['vRace'], お祝い: ['vMore', 'hist'], フレンド: ['vHome', 'friend'], メッセージ: ['vHome', 'msg'], 問い合わせ: ['vHome', 'msg'], メンション: ['vInfo', 'tl'], 請求: ['vTax', 'bill'], 訴え: ['vTax', 'court'], 税務調査: ['vTax', 'tax'], 決定: ['vTax', 'tax'],
   没収: ['vTax', 'tax'], 企業申請: ['vWork', 'corp'], 社長交代: ['vWork', 'corp'], 命令: ['vWork', 'corp'], 応募: ['vWork', 'corp'], 口座の申込: ['vWork', 'corp'],
   借入の申込: ['vWork', 'corp'], 返済: ['vWork', 'corp'], 採用: ['vWork', 'mywork'], 株: ['vCorp', 'stock'], 株の譲渡: ['vCorp', 'stock'], 配当: ['vCorp', 'stock'],
   口座: ['vCorp', 'bank'], 借入: ['vCorp', 'bank'], 交換: ['vCorp', 'invest'], 本: ['vInfo', 'pub'], '広報・書籍': ['vInfo', 'pub'], 対戦: ['vGame', 'vGameList'],
@@ -8324,6 +8423,7 @@ function noticeGo(n) {
   if (L.go === 'stock' && L.cid) return stkOpen(L.cid);
   if (L.go === 'mywork') return go('vWork', 'mywork');
   if (L.go === 'lot') return go('vLot');
+  if (L.go === 'race' && L.day) return kbGoRace(L.day, L.no);
   if (L.go === 'map') {   // 国土：地図をひらいて、土地の申請など
     go('vCorp', 'map');
     const fn = { landreq: 'landReqs', xfer: 'xfers', thru: 'thru', slot: 'slots' }[L.k];   // 土地の申請・編成の譲渡・乗り入れ・発着口（t57）
