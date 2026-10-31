@@ -32,6 +32,7 @@ const S = {
   ov: null, ovInfo: null,
   layer: { zone: false, own: true, label: true, run: false },   // run：列車・バスの走行位置（t61）
   inertia: false, v3names: true, glide: null,   // 惰性・3D の建物の名前（t61）
+  wx: true,   // 天気と気温（t62。map/wx.js）
   b25: true,   // 建物を 2.5D（高さのある見えかた）で描く。false なら 2D（上から見たまま）
   tool: 'look', toolState: null,
   sel: null,          // えらんだもの（{kind, id, ...}）
@@ -922,6 +923,7 @@ function frame() {
   if (!S.open) return;
   glideStep();   // 惰性（t61）
   runFollowStep();   // 追跡（t62）
+  wxStep();   // 天気（t62）
   if (S.v3) {   // 3D（map3d.js）
     if (S.layer.run && now() - RUN.drawn > 120) S.v3.dirty = true;   // 走行位置：ときどき描きなおす
     if (S.dirty || S.v3.dirty) { S.dirty = false; S.v3.dirty = false; try { m3Frame(); } catch (e) { console.error(e); } RUN.drawn = now(); }
@@ -1197,7 +1199,7 @@ function showTrain(R, tn) {
   const rows = sc.map((e, i) => `<div class="mp-ttr" data-i="${i}"><span class="n">${esc(R.sn.get(e[0]) || '')}</span><span class="t">${e[1] != null ? `<span>${hms(e[1])}着</span>` : ''}</span><span class="t">${e[2] != null ? `<span>${hms(e[2])}発</span>` : ''}</span><span class="k">${rail && e[3] ? `<span>${e[3]}番線</span>` : ''}</span></div>`).join('');
   sheet(`<div class="mp-s3in"><h4 data-trn="${key}"><span style="color:${esc(R.c)}">■</span> <span>${esc(R.n)}</span></h4>
     <div class="mp-kv"><b>${RUN_K[R.k] || '列車'}</b><span><b translate="no">${esc(runName(tn, R.k))}</b>　<span>${esc(runDest(R, tn))}行き</span>${tn.day ? ' <small class="mp-tag">臨時</small>' : ''}</span>
-      <b>いま</b><span data-now></span><b>つぎ</b><span data-next></span>
+      <b>いま</b><span data-now></span><b>つぎ</b><span data-next></span>${S.wx && wxOk() ? '<b>天気</b><span data-wxt>—</span>' : ''}
       ${tn.fname ? `<b>${rail ? '編成' : '車両'}</b><span><span translate="no">${esc(tn.fname)}</span>${tn.fser ? `<small class="muted">（<span>${esc(tn.fser)}</span>）</small>` : ''}${rail ? `・<span>${tn.fn}両</span>` : ''}</span>` : ''}
       ${tn.onum ? `<b>運用</b><span>${esc(tn.onum)}</span>` : ''}
       <b>持ち主</b><span>${esc(R.own)}</span></div>
@@ -1223,6 +1225,7 @@ function showTrain(R, tn) {
       nxt = `<b>${nm(p.nx)}</b> <span>${hms(sc[p.nx][1])}着</span>`;
     }
     const a = S.sheet.querySelector('[data-now]'), b = S.sheet.querySelector('[data-next]'); if (a) a.innerHTML = now_; if (b) b.innerHTML = nxt || '—';
+    const wt = S.sheet.querySelector('[data-wxt]'); if (wt && p) { const k = Math.round(p.x / 4) + ',' + Math.round(p.y / 4) + ',' + Math.floor(Date.now() / 60000); if (wt.dataset.k !== k) { wt.dataset.k = k; wt.innerHTML = wxInner(p.x, p.y); } }
     const fol = RUN.follow && RUN.follow.rid === R.id && RUN.follow.tid === tn.id, fb = S.sheet.querySelector('[data-fol]');
     if (fb) { fb.textContent = T(fol ? '📍 追跡をやめる' : '📍 追跡する'); fb.classList.toggle('on', fol); }
     const cur = p ? (p.at >= 0 ? p.at : p.nx) : -1, tt = p ? p.tt : -1;
@@ -1347,6 +1350,48 @@ function openRunFind() {
   st.tmr = setInterval(() => { if (!document.body.contains(m)) { clearInterval(st.tmr); return; } drawList(); }, 10000);   // 10秒ごとに「いま」を書きなおす
 }
 
+/* ---------- 天気（t62）：季節・時刻・場所で決まる（map/wx.js。だれが見ても同じ）。
+   左下：地図のまん中の天気（タップでくわしく）。場所・駅・列車のシートにも「天気」 ---------- */
+const WXS = { t: 0, key: '' };
+const wxOk = () => !!window.MapWx;
+function wxElev(x, y) { const t = tileAt(Math.floor(x), Math.floor(y)); return t && t.e > 0 ? t.e : 0; }
+function wxCenter() { return S.v3 && Number.isFinite(S.v3.tx) && Number.isFinite(S.v3.ty) ? [S.v3.tx, S.v3.ty] : [S.cam.x, S.cam.y]; }
+const wxT = v => (Math.round(v * 10) / 10).toFixed(1).replace('-', '−') + '℃';
+const wxD = v => String(v).replace('-', '−') + '℃';
+function wxStep() {
+  const t = now(); if (t - WXS.t < 500) return; WXS.t = t;
+  const b = S.wrap && S.wrap.querySelector('.mp-wx'); if (!b) return;
+  if (!S.wx || !wxOk()) { b.hidden = true; return; }
+  const [x, y] = wxCenter(), ld = tileAt(Math.floor(x), Math.floor(y)) ? 1 : 0;
+  const key = Math.round(x / 4) + ',' + Math.round(y / 4) + ',' + Math.floor(Date.now() / 60000) + ',' + ld;   // まん中が動いた・1分たった・地形を読んだ
+  if (key === WXS.key && !b.hidden) return; WXS.key = key;
+  const w = MapWx.now(x, y, wxElev(x, y));
+  b.innerHTML = `<span>${w.ic}</span> <b>${wxT(w.T)}</b>${w.snow > 0 ? ` <small>⛄${w.snow}cm</small>` : ''}`;
+  b.title = T(w.nm); b.hidden = false;
+}
+// シートの「天気」の行の中み
+function wxInner(x, y, e) {
+  const w = MapWx.now(x, y, e == null ? wxElev(x, y) : e);
+  return `${w.ic} <span>${w.nm}</span>・<b>${wxT(w.T)}</b> <small class="muted">（<span>最高 ${wxD(w.hi)}</span>・<span>最低 ${wxD(w.lo)}</span>）</small>${w.snow > 0 ? `・<span>積雪 ${w.snow}cm</span>` : ''} <a href="#" data-wx="${Math.round(x * 10) / 10},${Math.round(y * 10) / 10}">くわしく</a>`;
+}
+function wxRow(x, y, e) { return S.wx && wxOk() ? `<b>天気</b><span>${wxInner(x, y, e)}</span>` : ''; }
+// くわしく：いま・3時間ごと・これから4日
+async function openWx(x, y) {
+  if (!wxOk()) return;
+  const e = wxElev(x, y), w = MapWx.now(x, y, e), hs = MapWx.hours(x, y, e, 8, 3), ds = MapWx.days(x, y, e, 4);
+  const WD = '日月火水木金土', dl = (d, i) => { if (i === 0) return 'きょう'; if (i === 1) return 'あした'; const j = new Date(d.date + 9 * 3600000); return `${j.getUTCMonth() + 1}月${j.getUTCDate()}日（${WD[j.getUTCDay()]}）`; };
+  const m = modal(['🌤 天気', `<p class="small" style="margin:0"><b data-wxa translate="no">${Math.floor(x)}, ${Math.floor(y)}</b>${e > 0 ? ` <small class="muted">（標高 約${Math.round(e)}m）</small>` : ''}</p>
+    <div class="mp-wxnow"><span class="ic">${w.ic}</span><b>${wxT(w.T)}</b><span>${w.nm}</span></div>
+    <div class="mp-kv"><b>きょう</b><span><span>最高 ${wxD(w.hi)}</span>・<span>最低 ${wxD(w.lo)}</span></span>${w.snow > 0 ? `<b>積雪</b><span>${w.snow}cm</span>` : ''}</div>
+    <h4 style="margin:10px 0 4px">3時間ごと</h4>
+    <div class="mp-wxh">${hs.map(h => `<div><small>${h.hr}時</small><span>${h.ic}</span><b>${wxD(Math.round(h.T))}</b></div>`).join('')}</div>
+    <h4 style="margin:10px 0 4px">これからの天気</h4>
+    <div class="mp-wxd">${ds.map((d, i) => `<div><small>${dl(d, i)}</small><span class="ic">${d.ic}</span><span>${d.nm}</span><b>${wxD(d.hi)}</b><small>${wxD(d.lo)}</small></div>`).join('')}</div>
+    <p class="muted small"><span>国土の天気は、季節・時刻・場所で決まります（だれが見ても同じです）。</span><span>北ほど寒く、北の冬は雪がよく降ります。南は暖かく、高いところほど寒くなります（100mで約0.65℃）。</span><span>首都 美東区の平年：春21℃・夏28℃・秋19℃・冬14℃</span></p>`], null);
+  const d = await api('mp_spot', { p_x: Math.floor(x * 5), p_y: Math.floor(y * 5) });
+  const a = m.querySelector('[data-wxa]'); if (a && d && d.addr) a.textContent = d.addr.text;
+}
+
 /* ---------- 画面（ボタン・下のシート） ---------- */
 const CSS = `
 .mp-wrap{position:relative;height:calc(100dvh - 210px);min-height:440px;border-radius:12px;overflow:hidden;background:#4680ba;touch-action:none;user-select:none;-webkit-user-select:none}
@@ -1381,6 +1426,20 @@ const CSS = `
 .mp-ttr.past{opacity:.45}
 .mp-ttr.now{background:#fff2b8;font-weight:800;border-radius:6px}
 .mp-cv3{touch-action:none}
+.mp-wx{position:absolute;left:8px;bottom:62px;border:1px solid rgba(0,0,0,.18);background:rgba(255,255,255,.94);color:#222;border-radius:16px;font-size:13px;padding:5px 11px;box-shadow:0 1px 3px rgba(0,0,0,.15);font-variant-numeric:tabular-nums}
+.mp-wx[hidden]{display:none}
+.mp-wx small{font-size:11.5px;color:#345;margin-left:2px}
+.mp-wrap.mp-3d .mp-wx{bottom:12px}
+.mp-wxnow{display:flex;align-items:baseline;gap:10px;margin:8px 0 2px}
+.mp-wxnow .ic{font-size:30px;line-height:1}
+.mp-wxnow b{font-size:28px;font-variant-numeric:tabular-nums}
+.mp-wxh,.mp-wxd{display:grid;gap:4px}
+.mp-wxh{grid-template-columns:repeat(8,1fr)}
+.mp-wxd{grid-template-columns:repeat(4,1fr)}
+.mp-wxh div,.mp-wxd div{display:flex;flex-direction:column;align-items:center;gap:1px;background:var(--soft,#f2f4f6);border-radius:8px;padding:5px 2px;font-size:12px;text-align:center;font-variant-numeric:tabular-nums}
+.mp-wxh small,.mp-wxd small{color:var(--muted,#666);font-size:11px}
+.mp-wxh span{font-size:17px}
+.mp-wxd .ic{font-size:20px}
 .mp-hint{position:absolute;left:50%;top:52px;transform:translateX(-50%);background:rgba(20,20,20,.78);color:#fff;font-size:12px;font-weight:700;border-radius:10px;padding:6px 10px;max-width:86%;text-align:center;pointer-events:none}
 .mp-sheet{position:absolute;left:6px;right:6px;bottom:56px;max-height:44%;overflow:auto;background:var(--panel,#fff);color:var(--ink,#222);border-radius:14px;box-shadow:0 4px 18px rgba(0,0,0,.28);padding:12px 12px 10px;font-size:14px}
 .mp-sheet h4{margin:0 0 6px;font-size:16px}
@@ -1428,11 +1487,12 @@ const CSS = `
 function el(html) { const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstChild; }
 // 地図の設定を変える（t61）。k：zone・own・label・run（層）／inertia・v3names・v3x
 function setOpt(k, on) {
-  const LS = { run: 'mp_run', inertia: 'mp_inertia', v3names: 'mp_v3n', v3x: 'mp_v3x' };
+  const LS = { run: 'mp_run', inertia: 'mp_inertia', v3names: 'mp_v3n', v3x: 'mp_v3x', wx: 'mp_wx' };
   if (k in S.layer) S.layer[k] = !!on; else S[k] = !!on;
   if (LS[k]) try { localStorage.setItem(LS[k], on ? '1' : '0'); } catch (e) {}
   if (k === 'inertia' && !on) S.glide = null;
   if (k === 'run') runReset();
+  if (k === 'wx') { WXS.key = ''; WXS.t = 0; }
   optSync(); S.dirty = true; if (S.v3) S.v3.dirty = true;
 }
 function optSync() {
@@ -1457,8 +1517,10 @@ function build(root) {
       <label><input type="checkbox" data-o="run"> 列車・バスの走行位置を出す</label>
       <label><input type="checkbox" data-o="v3names"> 3D で建物の名前を出す</label>
       <label><input type="checkbox" data-o="v3x"> 3D で横に回す向きを反対にする</label>
+      <label><input type="checkbox" data-o="wx"> 天気と気温を出す（左下に地図のまん中の天気。場所・駅・列車にも）</label>
     </div>
     <div class="mp-hint" hidden></div>
+    <button class="mp-wx" hidden title="天気"></button>
     <div class="mp-sheet" hidden></div>
     <div class="mp-tools">
       <button data-tool="look" class="on">👆 見る</button><button data-tool="land">▦ 土地</button><button data-tool="rail">🚃 線路</button>
@@ -1474,7 +1536,7 @@ function build(root) {
   asSel.value = S.as;
   asSel.onchange = () => { S.as = asSel.value; try { localStorage.setItem('mp_as', S.as); } catch (e) {} for (const c of S.cells.values()) c.stale = true; S.dirty = true; toolVis(); if (S.onAs) S.onAs(); };
   // 地図の設定（t61）：惰性・走行位置・3D の建物の名前・3D の左右反転。この端末におぼえる
-  try { S.inertia = localStorage.getItem('mp_inertia') === '1'; S.layer.run = localStorage.getItem('mp_run') === '1'; const n3 = localStorage.getItem('mp_v3n'); if (n3 != null) S.v3names = n3 !== '0'; } catch (e) {}
+  try { S.inertia = localStorage.getItem('mp_inertia') === '1'; S.layer.run = localStorage.getItem('mp_run') === '1'; const n3 = localStorage.getItem('mp_v3n'); if (n3 != null) S.v3names = n3 !== '0'; S.wx = localStorage.getItem('mp_wx') !== '0'; } catch (e) {}
   S.wrap.querySelector('[data-lay="run"]').classList.toggle('on', !!S.layer.run);
   runBar();   // 追跡中・しぼりこみ中のしるし（t62）
   S.wrap.querySelectorAll('[data-lay]').forEach(b => b.onclick = () => { const k = b.dataset.lay; setOpt(k, !S.layer[k]); });
@@ -1494,6 +1556,8 @@ function build(root) {
     v3.onclick = async () => { if (S.v3) m3Close(); else await m3Open(); v3.classList.toggle('on', !!S.v3); b25.hidden = !!S.v3; v3x.hidden = !S.v3; }; }
   S.wrap.querySelector('[data-full]').onclick = () => { S.wrap.classList.toggle('mp-full'); resize(); };
   S.wrap.querySelector('[data-find]').onclick = () => openFind();   // さがす（t59）
+  S.wrap.querySelector('.mp-wx').onclick = () => { const [x, y] = wxCenter(); openWx(x, y); };   // 天気（t62）
+  S.wrap.addEventListener('click', ev => { const a = ev.target.closest && ev.target.closest('[data-wx]'); if (!a) return; ev.preventDefault(); const [x, y] = a.dataset.wx.split(',').map(Number); openWx(x, y); });
   S.wrap.querySelector('[data-zin]').onclick = () => zoomAt(S.W / 2, S.H / 2, 1.6);
   S.wrap.querySelector('[data-zout]').onclick = () => zoomAt(S.W / 2, S.H / 2, 1 / 1.6);
   S.wrap.querySelector('[data-home]').onclick = () => setCam(HOME[0], HOME[1], 6);
@@ -1798,7 +1862,7 @@ async function showSpot(cx, cy) {
   const P = d.parcel; S.sel.parcel = P ? P.id : null; S.dirty = true;
   const on = (d.on || []).map(o => onH(o.name)).join('<br>');
   sheet(`<h4><span translate="no">${esc(d.addr.text)}</span>${d.addr.ban ? ` <span>${esc(d.addr.ban)}</span>` : ''}</h4>
-    <div class="mp-kv"><b>地形</b><span><span>${esc(d.ter)}</span>${d.elev ? `<small>（標高 約${d.elev}m）</small>` : ''}</span><b>地目</b><span>${esc(d.chimoku)}</span>
+    <div class="mp-kv"><b>地形</b><span><span>${esc(d.ter)}</span>${d.elev ? `<small>（標高 約${d.elev}m）</small>` : ''}</span>${wxRow((cx + 0.5) / 5, (cy + 0.5) / 5)}<b>地目</b><span>${esc(d.chimoku)}</span>
       <b>用途地域</b><span>${esc(d.zname)}</span><b>人の多さ</b><span>${fmt(d.dens)} 人/km²</span>
       ${d.cval != null ? `<b>地価</b><span>${X(d.cval)}（1区画・100㎡）</span>` : ''}
       ${d.cval0 != null ? `<b>評価額</b><span><span>${X(d.cval0)}（1区画・100㎡）</span><br><small class="muted">税・家賃・使用料は評価額で計算します</small></span>` : ''}
@@ -1944,6 +2008,7 @@ function showSta(s) {
   const gov = air && s.o === 'gov', adm = gov && S.admin;   // 国の空港（t54q）：だれでも使える。名前・使用料は管理者
   sheet(`<h4>${s.k === 'rail' ? '🚉 ' : air ? '✈ ' : port ? '⚓ ' : '🚏 '}<span>${esc(s.n)}</span>${s.k === 'rail' ? '<span>駅</span>' : gov ? '<span>（国の空港）</span>' : air ? '<span>（空港）</span>' : port ? '<span>（港）</span>' : ''}</h4><p class="small muted" data-addr translate="no" style="margin:0"></p>
     <div class="mp-kv"><b>持ち主</b><span><span>${s.o === 'gov' ? '国' : esc(S.vis.names[s.o] || '')}</span>${s.mine ? '<small>（あなた）</small>' : ''}</span>
+      ${wxRow(s.fx, s.fy)}
       ${s.k === 'rail' ? `<b>ホーム</b><span>${s.pl} m・${s.tr}番線まで</span>` : ''}
       ${s.k === 'rail' && s.tk ? `<b>発着番線</b><span>${s.tk.map((t, i) => `<span>${esc(trkL(t, i))}</span>`).join('<br>')}</span>` : ''}
       ${gov ? `<b>使用料</b><span>${s.ln != null ? `<span>空路に入れると 1路線・1日 ${X(s.ln)}（国庫へ）</span>` : '<span>いまは新しい空路に使えません</span>'}</span>`
