@@ -5,8 +5,8 @@
 (function () {
 'use strict';
 // map.js の中のもの（window.MapInt）を使う
-let S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runIsSel, runName, runDest, showTrain, runFollow, PAL;
-function m3Init() { ({ S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runIsSel, runName, runDest, showTrain, runFollow } = window.MapInt); PAL = window.MapPal; }
+let MQ, q, LITE, liteNeed, EDEC, B64I, S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runIsSel, runName, runDest, showTrain, runFollow, PAL;
+function m3Init() { ({ MQ, q, LITE, liteNeed, EDEC, B64I, S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runIsSel, runName, runDest, showTrain, runFollow } = window.MapInt); PAL = window.MapPal; }
 const M3 = { on: false, loading: false };
 const M3_LIB = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
 const M3_FH = 3.4;          // 1階の高さ（m）
@@ -83,16 +83,16 @@ async function m3Open() {
   const cv = document.createElement('canvas'); cv.className = 'mp-cv mp-cv3'; cv.style.cursor = 'grab';
   S.wrap.insertBefore(cv, S.cv.nextSibling);
   let r;
-  // logarithmicDepthBuffer：遠くと近くを両方きれいに（深さの精度）
-  try { r = new T3.WebGLRenderer({ canvas: cv, antialias: true, logarithmicDepthBuffer: !!M3.logz }); } catch (e) { cv.remove(); alertMsg('この端末では 3D が使えません'); return; }
-  r.setPixelRatio(Math.min(2, window.devicePixelRatio || 1)); r.setSize(S.W, S.H, false);
+  // logarithmicDepthBuffer：遠くと近くを両方きれいに（深さの精度）。antialias：ふちをなめらかに（画質の設定。t63）
+  try { r = new T3.WebGLRenderer({ canvas: cv, antialias: MQ.aa !== false, logarithmicDepthBuffer: !!M3.logz }); } catch (e) { cv.remove(); alertMsg('この端末では 3D が使えません'); return; }
+  r.setPixelRatio(m3PR()); r.setSize(S.W, S.H, false);
   const sc = new T3.Scene(); sc.background = new T3.Color('#b9d3ea'); sc.fog = new T3.Fog('#b9d3ea', 200, 900);
   const cam = new T3.PerspectiveCamera(45, S.W / Math.max(1, S.H), 0.05, 4000);
   sc.add(new T3.HemisphereLight('#e8f0ff', '#7d7566', 0.68));
   const sun = new T3.DirectionalLight('#fff6e8', 0.55); sun.position.set(-0.35, 1.2, 0.55); sc.add(sun);   // 南西の高いところから（北を見るとき、手前の壁が明るい）
   const sea = new T3.Mesh(new T3.PlaneGeometry(20000, 20000), new T3.MeshLambertMaterial({ color: '#4680ba' })); sea.rotation.x = -Math.PI / 2; sea.position.y = -0.4; sc.add(sea);   // チャンクのない深い海（チャンクの海は高さ 0）
-  const grpT = new T3.Group(), grpB = new T3.Group(), grpR = new T3.Group(); sc.add(grpT, grpB, grpR);
-  Object.assign(M3, { on: true, T: T3, r, sc, cam, sea, grpT, grpB, grpR, cv, cm: new Map(), bKey: '', rKey: '', tex: null,
+  const grpT = new T3.Group(), grpB = new T3.Group(), grpR = new T3.Group(), grpL = new T3.Group(); sc.add(grpT, grpB, grpR, grpL);   // grpL：遠くの建物（t63）
+  Object.assign(M3, { on: true, T: T3, r, sc, cam, sea, grpT, grpB, grpR, grpL, lm: new Map(), cv, cm: new Map(), bKey: '', rKey: '', tex: null,
     tx: S.cam.x, ty: S.cam.y, d: Math.max(10, Math.min(700, (S.H / S.cam.z) * 0.95)), yaw: 0, pitch: 0.92, gy: 0, dirty: true });
   M3.tex = m3WinTex(T3);
   S.v3 = M3; S.wrap.classList.add('mp-3d');
@@ -104,7 +104,7 @@ function m3Close() {
   if (!M3.on) return;
   // 2D のカメラを 3D の真ん中に
   S.cam.x = M3.tx; S.cam.y = M3.ty; S.cam.z = Math.max(1.2, Math.min(40, S.H / Math.max(4, M3.d * 1.05)));
-  for (const g of [M3.grpT, M3.grpB, M3.grpR]) m3Clear(g);
+  for (const g of [M3.grpT, M3.grpB, M3.grpR, M3.grpL]) m3Clear(g); M3.lm = new Map();
   if (M3.run) { M3.run.geometry.dispose(); M3.run.material.dispose(); M3.run = null; M3.runCap = 0; }
   if (M3.mark) { M3.mark.geometry.dispose(); M3.mark.material.dispose(); M3.mark = null; }
   M3.runHit = []; M3.selLab = null;
@@ -134,23 +134,35 @@ function m3Cam() {
   const gy = m3Ground(M3.tx, M3.ty); M3.gy += (gy - M3.gy) * 0.35;
   cam.position.set(M3.tx + Math.sin(M3.yaw) * c * M3.d, M3.gy + s * M3.d, M3.ty + Math.cos(M3.yaw) * c * M3.d);
   cam.lookAt(M3.tx, M3.gy, M3.ty);
-  cam.far = Math.max(600, M3.d * 14); cam.near = Math.max(0.05, M3.d / 400); cam.updateProjectionMatrix();
+  const R = M3.R || 700;
+  cam.far = Math.max(600, M3.d * 14, R * 1.3); cam.near = Math.max(0.05, M3.d / 400); cam.updateProjectionMatrix();
   M3.sc.fog.near = M3.d * 1.6; M3.sc.fog.far = M3.d * 1.6 + Math.max(260, M3.d * 6);
+  if (MQ.d3 >= 2) M3.sc.fog.far = Math.max(M3.sc.fog.far, R * 0.95);   // 遠くまで（t63）
+  else if (MQ.d3 <= 0) M3.sc.fog.far = Math.max(M3.sc.fog.near + 60, Math.min(M3.sc.fog.far, R * 1.1));   // 省エネ：地形のはしを霧でかくす
 }
 // 読むはんい：地形は広く、建物・道路は近くだけ
+//   画質の設定（t63）で遠さを変える。くわしい地形は RF まで、その先は あらい地形（サーバーにないときは前のまま 700 まで くわしい地形）
 function m3Rects() {
-  const R = Math.max(70, Math.min(700, M3.d * 4.2)), RB = Math.max(40, Math.min(220, M3.d * 2.2));
-  return { big: { x0: M3.tx - R, y0: M3.ty - R, x1: M3.tx + R, y1: M3.ty + R }, near: { x0: M3.tx - RB, y0: M3.ty - RB, x1: M3.tx + RB, y1: M3.ty + RB } };
+  const lv = MQ.d3, R = Math.max(70, Math.min(q('r3', lv), M3.d * q('k3', lv))), RB = Math.max(40, Math.min(q('rb3', lv), M3.d * 2.2));
+  const RF = LO.off ? Math.min(R, 700) : Math.min(R, q('rf3', lv));
+  const RL = q('rl3', lv) > 0 && !LITE.off ? Math.min(q('rl3', lv), Math.max(R, RB)) : 0;
+  const sq = r => ({ x0: M3.tx - r, y0: M3.ty - r, x1: M3.tx + r, y1: M3.ty + r });
+  return { big: sq(LO.off ? RF : R), full: sq(RF), near: sq(RB), lite: RL ? sq(RL) : null, R: LO.off ? RF : R, RF, RB, RL };
 }
 function m3Frame() {
   if (!M3.on) return;
   const rc = m3Rects();
   // 地形：チャンクを読む（2D の読みこみを、このはんいで）
   S.cam.x = M3.tx; S.cam.y = M3.ty;
-  S.v3rect = rc.big; S.cam.z = 2; needChunks(); trimChunks3(rc.big);
-  S.v3rect = rc.near; S.cam.z = M3.d < 160 ? 8 : 3; needCells();
-  m3Terrain(rc.big);
+  M3.R = rc.R;
+  S.v3rect = rc.full; S.cam.z = 2; needChunks(); trimChunks3(rc.full);
+  needLo(rc.big, rc.full);   // 遠くの地形（あらい版。t63）
+  const nearOn = M3.d < q('db3', MQ.d3);
+  S.v3rect = rc.near; S.cam.z = nearOn ? 8 : 3; needCells();
+  if (rc.lite) liteNeed(rc.lite, 80);   // 遠くの建物（t63）
+  m3Terrain(rc);
   m3Blds(rc.near);
+  try { m3Lite(rc, nearOn); } catch (e) { console.error(e); }
   try { m3Runs(rc.near); } catch (e) { console.error(e); }   // 列車・バス（t61）
   m3Cam();
   M3.r.render(M3.sc, M3.cam);
@@ -165,20 +177,33 @@ function trimChunks3(v) {
 }
 
 /* ---------- 地形：チャンクごとの網（遠いほどあらく） ---------- */
-function m3Terrain(v) {
-  const T3 = M3.T, cx0 = Math.floor(v.x0 / CS), cy0 = Math.floor(v.y0 / CS), cx1 = Math.floor(v.x1 / CS), cy1 = Math.floor(v.y1 / CS);
-  const keep = new Set(); let made = 0;
+function m3Terrain(rc) {
+  const v = rc.big, T3 = M3.T, cx0 = Math.floor(v.x0 / CS), cy0 = Math.floor(v.y0 / CS), cx1 = Math.floor(v.x1 / CS), cy1 = Math.floor(v.y1 / CS);
+  const keep = new Set(), todo = [];
   for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
-    const k = ckey(cx, cy), c = S.chunks.get(k); if (!c || c.sea) continue;
-    c.used = now(); keep.add(k);
-    const dist = Math.hypot(cx * CS + 32 - M3.tx, cy * CS + 32 - M3.ty), st = dist < Math.max(160, M3.d * 1.4) ? 1 : dist < Math.max(360, M3.d * 3) ? 2 : dist < 700 ? 4 : 8;
-    const nb = [[1, 0], [0, 1], [1, 1]].map(([dx, dy]) => S.chunks.get(ckey(cx + dx, cy + dy)) ? 'y' : 'n').join('');   // となりがあるか（へりをつなぐため）
+    const k = ckey(cx, cy), c = S.chunks.get(k), lo = LO.m.get(k);
+    const dist = Math.hypot(cx * CS + 32 - M3.tx, cy * CS + 32 - M3.ty);
+    let mode, st;
+    if (c && !c.sea && (dist <= rc.RF + 48 || !lo || lo.sea)) { mode = 'f'; st = dist < Math.max(160, M3.d * 1.4) ? 1 : dist < Math.max(360, M3.d * 3) ? 2 : dist < 700 ? 4 : 8; }
+    else if (lo && !lo.sea) { mode = 'l'; st = 4; }   // 遠くは あらい地形（t63）
+    else continue;
+    if (c) c.used = now(); if (lo) lo.used = now(); keep.add(k);
+    const nb = (mode === 'f' ? [[1, 0], [0, 1], [1, 1]] : [[1, 0], [0, 1], [1, 1], [-1, 0], [0, -1], [-1, -1], [1, -1], [-1, 1]])
+      .map(([dx, dy]) => S.chunks.get(ckey(cx + dx, cy + dy)) || (mode === 'l' && LO.m.get(ckey(cx + dx, cy + dy))) ? 'y' : 'n').join('');   // となりがあるか（へりをつなぐため）
     const old = M3.cm.get(k);
-    if (old && old.st === st && old.nb === nb) continue;
-    if (made >= 8) { M3.dirty = true; continue; }   // 1フレームに作るのは少しずつ
-    if (old) { M3.grpT.remove(old.mesh); old.mesh.geometry.dispose(); }
-    const mesh = m3ChunkMesh(T3, c, cx, cy, st); M3.grpT.add(mesh); M3.cm.set(k, { mesh, st, nb }); made++;
+    if (old && old.st === st && old.nb === nb && old.mode === mode) continue;
+    todo.push({ k, c, cx, cy, st, nb, mode, dist });
   }
+  // 1フレームに作るのは少しずつ（時間で区切る：速い端末はすぐそろい、遅い端末はカクつかない）。近いものから（t63）
+  todo.sort((a, b) => a.dist - b.dist);
+  const t0 = performance.now(), bud = [4, 6, 8, 10][Math.max(0, Math.min(3, Number(MQ.d3) || 0))]; let n = 0;
+  for (const t of todo) {
+    if (n >= 2 && performance.now() - t0 > bud) break;
+    const old = M3.cm.get(t.k);
+    if (old) { M3.grpT.remove(old.mesh); old.mesh.geometry.dispose(); }
+    const mesh = t.mode === 'f' ? m3ChunkMesh(T3, t.c, t.cx, t.cy, t.st) : m3LoMesh(T3, t.cx, t.cy); M3.grpT.add(mesh); M3.cm.set(t.k, { mesh, st: t.st, nb: t.nb, mode: t.mode }); n++;
+  }
+  if (n < todo.length) M3.dirty = true;
   for (const [k, o] of M3.cm) if (!keep.has(k)) { M3.grpT.remove(o.mesh); o.mesh.geometry.dispose(); M3.cm.delete(k); }
 }
 const M3_TMAT = { m: null };
@@ -203,6 +228,122 @@ function m3ChunkMesh(T3, c, cx, cy, st) {
   g.setAttribute('position', new T3.BufferAttribute(pos, 3)); g.setAttribute('color', new T3.BufferAttribute(col, 3)); g.setIndex(idx); g.computeVertexNormals();
   if (!M3_TMAT.m) { M3_TMAT.m = new T3.MeshLambertMaterial({ vertexColors: true }); M3_TMAT.m.keep = true; }
   return new T3.Mesh(g, M3_TMAT.m);
+}
+
+/* ---------- 遠くの地形（あらい版。t63・DB の更新47）：チャンクを 16×16 に（4マスごとのまん中）。サーバーには あらい版だけをたのむ ---------- */
+const LO = { m: new Map(), q: [], pend: new Set(), busy: 0, off: false };
+const m3PR = () => Math.max(0.5, Math.min(2, window.devicePixelRatio || 1) * (Number(MQ.res) || 1));   // 画面のこまかさ（t63）
+const inW = (cx, cy) => { const w = S.boot && S.boot.world; return w && cx >= w.cx0 && cx <= w.cx1 && cy >= w.cy0 && cy <= w.cy1; };
+function needLo(big, full) {
+  if (LO.off) return;
+  const cx0 = Math.floor(big.x0 / CS), cy0 = Math.floor(big.y0 / CS), cx1 = Math.floor(big.x1 / CS), cy1 = Math.floor(big.y1 / CS), want = [];
+  for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
+    const k = ckey(cx, cy), mx = cx * CS + 32, my = cy * CS + 32;
+    if (!inW(cx, cy) || LO.m.has(k) || LO.pend.has(k)) continue;
+    if (mx > full.x0 + 40 && mx < full.x1 - 40 && my > full.y0 + 40 && my < full.y1 - 40) continue;   // くわしい地形のところ（へりは両方）
+    want.push([cx, cy, (mx - M3.tx) ** 2 + (my - M3.ty) ** 2]);
+  }
+  want.sort((a, b) => a[2] - b[2]);
+  for (const [cx, cy] of want) { LO.pend.add(ckey(cx, cy)); LO.q.push([cx, cy]); }
+  pumpLo();
+  if (LO.m.size > 5000) { const all = [...LO.m.entries()].sort((a, b) => (a[1].used || 0) - (b[1].used || 0)); for (const [k] of all.slice(0, LO.m.size - 4000)) LO.m.delete(k); }
+}
+function pumpLo() {
+  while (LO.busy < 1 && LO.q.length && !LO.off) {
+    const batch = LO.q.splice(0, 128), keys = [];
+    for (const [cx, cy] of batch) keys.push(cx, cy);
+    LO.busy++;
+    call('mp_chunk_lo', { p_keys: keys }).then(rows => {
+      const got = new Set();
+      for (const c of rows) { const k = ckey(c.cx, c.cy); got.add(k); LO.m.set(k, { t: c.t, e: c.e, z: c.z, used: now() }); }
+      for (const [cx, cy] of batch) { const k = ckey(cx, cy); LO.pend.delete(k); if (!got.has(k)) LO.m.set(k, { sea: true, used: now() }); }
+      M3.dirty = true;
+    }).catch(e => { for (const [cx, cy] of batch) LO.pend.delete(ckey(cx, cy)); if (/Could not find the function|schema cache|does not exist/.test(e.message)) { LO.off = true; LO.q = []; M3.dirty = true; } })
+      .finally(() => { LO.busy--; pumpLo(); });
+  }
+}
+// あらい版の1点（gx, gy：4マスごとの格子）。なければ くわしいチャンクから
+function loAt(gx, gy) {
+  const cx = Math.floor(gx / 16), cy = Math.floor(gy / 16), L2 = LO.m.get(ckey(cx, cy));
+  if (L2 && !L2.sea) { const i = (gy - cy * 16) * 16 + (gx - cx * 16); return { t: L2.t[i], e: EDEC[B64I[L2.e.charCodeAt(i)]], z: L2.z[i] }; }
+  const t = tileAt(gx * 4 + 2, gy * 4 + 2); if (t) return t;
+  return L2 && L2.sea ? { t: 'D', e: -190, z: '-' } : null;
+}
+const loH = t => (t.t === 'D' || t.t === 'S') ? 0 : Math.max(0.02, t.e) * M3_U * M3_VEX;
+// 地面の高さ（くわしいチャンクがなければ あらい版）
+function m3H(x, y) { const t = tileAt(Math.floor(x), Math.floor(y)); if (t) return (t.t === 'D' || t.t === 'S') ? 0 : Math.max(0, t.e) * M3_U * M3_VEX; const l = loAt(Math.floor(x / 4), Math.floor(y / 4)); return l ? loH(l) : 0; }
+function m3LoMesh(T3, cx, cy) {
+  const n = 17, pos = [], col = [], idx = [];
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    const gx = cx * 16 + i, gy = cy * 16 + j; let h = 0, r = 0, g = 0, b = 0, m = 0;
+    for (const [a, c] of [[-1, -1], [0, -1], [-1, 0], [0, 0]]) { const t = loAt(gx + a, gy + c); if (!t) continue; h += loH(t); const cc = PAL.tileColor(t.t, t.e, t.z || '-', 0); r += cc[0]; g += cc[1]; b += cc[2]; m++; }
+    if (m) { h /= m; r /= m; g /= m; b /= m; } else { r = 70; g = 128; b = 186; }
+    pos.push(cx * CS + i * 4 + 0.5, h, cy * CS + j * 4 + 0.5); col.push(r / 255, g / 255, b / 255);
+  }
+  for (let j = 0; j < n - 1; j++) for (let i = 0; i < n - 1; i++) { const a = j * n + i, b2 = a + 1, d = a + n, e = d + 1; idx.push(a, d, b2, b2, d, e); }
+  // へりのすそ（となりとの すきまを かくす）
+  const edge = (list) => { const base = pos.length / 3; for (const v of list) { pos.push(pos[v * 3], pos[v * 3 + 1] - 0.6, pos[v * 3 + 2]); col.push(col[v * 3], col[v * 3 + 1], col[v * 3 + 2]); }
+    for (let k = 0; k < list.length - 1; k++) { const a = list[k], b2 = list[k + 1], c2 = base + k, d = base + k + 1; idx.push(a, c2, b2, b2, c2, d, a, b2, c2, b2, d, c2); } };
+  edge([...Array(n).keys()]); edge([...Array(n).keys()].map(i => (n - 1) * n + i)); edge([...Array(n).keys()].map(j => j * n)); edge([...Array(n).keys()].map(j => j * n + n - 1));
+  const geo = new T3.BufferGeometry();
+  geo.setAttribute('position', new T3.Float32BufferAttribute(pos, 3)); geo.setAttribute('color', new T3.Float32BufferAttribute(col, 3)); geo.setIndex(idx); geo.computeVertexNormals();
+  if (!M3_TMAT.m) { M3_TMAT.m = new T3.MeshLambertMaterial({ vertexColors: true }); M3_TMAT.m.keep = true; }
+  return new T3.Mesh(geo, M3_TMAT.m);
+}
+/* ---------- 遠くの建物（かんたんな形。t63）：ます目（192 マス）ごとに1つの形。遠いほど低い建物は出さない・数の上限 ---------- */
+const M3_LMAT = { m: null };
+const m3Hex = (h, f) => { const n = parseInt(String(h || '#cccccc').slice(1), 16); return [((n >> 16) & 255) / 255 * f, ((n >> 8) & 255) / 255 * f, (n & 255) / 255 * f]; };
+function m3Lite(rc, nearOn) {
+  const T3 = M3.T;
+  if (!rc.lite) { if (M3.lm.size) { m3Clear(M3.grpL); M3.lm = new Map(); } return; }
+  const L = LITE.LS, v = rc.lite, i0 = Math.floor(v.x0 / L), j0 = Math.floor(v.y0 / L), i1 = Math.floor(v.x1 / L), j1 = Math.floor(v.y1 / L);
+  const nr = rc.near, nk = nearOn ? [nr.x0, nr.y0, nr.x1, nr.y1].map(x => Math.round(x / 16)).join(',') : '-', cap = MQ.d3 >= 3 ? 9000 : 5000;
+  const keep = new Set(), todo = [];
+  for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+    const c = LITE.cells.get(i + ',' + j); if (!c || !c.items) continue;
+    const key = i + ',' + j, mx = (i + 0.5) * L, my = (j + 0.5) * L, dist = Math.hypot(mx - M3.tx, my - M3.ty);
+    if (dist > rc.RL + L * 0.71) continue;
+    keep.add(key);
+    const minF = dist > 560 ? 6 : dist > 380 ? 4 : dist > 240 ? 2 : 1;
+    const hits = nearOn && !(mx + L / 2 < nr.x0 || mx - L / 2 > nr.x1 || my + L / 2 < nr.y0 || my - L / 2 > nr.y1);
+    const gk = (S.chunks.get(ckey(Math.floor(mx / CS), Math.floor(my / CS))) || LO.m.get(ckey(Math.floor(mx / CS), Math.floor(my / CS)))) ? 'g' : '-';   // 地面の高さがわかるか
+    const sig = c.v + ':' + minF + ':' + (hits ? nk : '-') + ':' + gk;
+    const o = M3.lm.get(key); if (o && o.sig === sig) continue;
+    todo.push({ key, c, minF, hits, sig, dist });
+  }
+  todo.sort((a, b) => a.dist - b.dist);   // 1フレームに作るのは少しずつ（時間で区切る）。近いものから
+  const t0 = performance.now(), bud = [3, 4, 6, 8][Math.max(0, Math.min(3, Number(MQ.d3) || 0))]; let n = 0;
+  for (const t of todo) {
+    if (n && performance.now() - t0 > bud) break;
+    const o = M3.lm.get(t.key);
+    if (o && o.mesh) { M3.grpL.remove(o.mesh); o.mesh.geometry.dispose(); }
+    const mesh = m3LiteMesh(T3, t.c.items, t.minF, t.hits ? nr : null, cap); if (mesh) M3.grpL.add(mesh);
+    M3.lm.set(t.key, { mesh, sig: t.sig }); n++;
+  }
+  if (n < todo.length) M3.dirty = true;
+  for (const [k, o] of M3.lm) if (!keep.has(k)) { if (o.mesh) { M3.grpL.remove(o.mesh); o.mesh.geometry.dispose(); } M3.lm.delete(k); }
+}
+function m3LiteMesh(T3, items, minF, excl, cap) {
+  let bs = items.filter(b => b.f >= minF && !(excl && (b.x0 + b.x1) / 2 >= excl.x0 && (b.x0 + b.x1) / 2 <= excl.x1 && (b.y0 + b.y1) / 2 >= excl.y0 && (b.y0 + b.y1) / 2 <= excl.y1));
+  if (bs.length > cap) bs = bs.sort((a, b) => b.f - a.f).slice(0, cap);   // 多すぎたら高いものから
+  if (!bs.length) return null;
+  const pos = [], nrm = [], col = [], idx = [];
+  const quad = (p, nx, ny, nz, c) => { const b0 = pos.length / 3; for (const q2 of p) { pos.push(q2[0], q2[1], q2[2]); nrm.push(nx, ny, nz); col.push(c[0], c[1], c[2]); } idx.push(b0, b0 + 1, b0 + 2, b0, b0 + 2, b0 + 3); };
+  for (const b of bs) {
+    const id = Math.round(b.x0 * 5) * 7919 + Math.round(b.y0 * 5), st = m3Style(b.kind, { id, floors: b.f });
+    const g0 = m3H((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2) - 0.01, y1 = g0 + (b.f * M3_FH + 0.8) * M3_U, x0 = b.x0, x1 = b.x1, z0 = b.y0, z1 = b.y1;
+    const wc = m3Hex(st.wc, st.jit), rcl = m3Hex(st.rc, st.jit);
+    quad([[x0, g0, z1], [x1, g0, z1], [x1, y1, z1], [x0, y1, z1]], 0, 0, 1, wc);
+    quad([[x1, g0, z1], [x1, g0, z0], [x1, y1, z0], [x1, y1, z1]], 1, 0, 0, wc);
+    quad([[x1, g0, z0], [x0, g0, z0], [x0, y1, z0], [x1, y1, z0]], 0, 0, -1, wc);
+    quad([[x0, g0, z0], [x0, g0, z1], [x0, y1, z1], [x0, y1, z0]], -1, 0, 0, wc);
+    quad([[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]], 0, 1, 0, rcl);
+  }
+  const geo = new T3.BufferGeometry();
+  geo.setAttribute('position', new T3.Float32BufferAttribute(pos, 3)); geo.setAttribute('normal', new T3.Float32BufferAttribute(nrm, 3)); geo.setAttribute('color', new T3.Float32BufferAttribute(col, 3));
+  geo.setIndex(pos.length / 3 > 65535 ? new T3.Uint32BufferAttribute(idx, 1) : new T3.Uint16BufferAttribute(idx, 1));
+  if (!M3_LMAT.m) { M3_LMAT.m = new T3.MeshLambertMaterial({ vertexColors: true }); M3_LMAT.m.keep = true; }
+  return new T3.Mesh(geo, M3_LMAT.m);
 }
 
 /* ---------- 建物・道路・線路 ---------- */
@@ -512,7 +653,7 @@ function m3Bind(cv) {
 }
 function m3Zoom(f) { M3.d = Math.max(4, Math.min(900, M3.d / f)); }
 function m3Target(x, y) { M3.tx = x; M3.ty = y; }
-function m3Resize() { if (!M3.on) return; M3.r.setSize(S.W, S.H, false); M3.cam.aspect = S.W / Math.max(1, S.H); M3.cam.updateProjectionMatrix(); }
+function m3Resize() { if (!M3.on) return; M3.r.setPixelRatio(m3PR()); M3.r.setSize(S.W, S.H, false); M3.cam.aspect = S.W / Math.max(1, S.H); M3.cam.updateProjectionMatrix(); }
 
 Object.assign(window, { m3Open, m3Close, m3Frame, m3Zoom, m3Target, m3Resize, m3State: M3 });
 })();

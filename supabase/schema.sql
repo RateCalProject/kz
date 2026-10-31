@@ -18016,6 +18016,86 @@ begin
       on c.cx = k.kx and c.cy = k.ky;
   return r;
 end $$;
+-- =====================================================================
+-- 地図：遠くを軽く見る（2026-10-31・更新 20261031-47）
+--   mp_chunk_lo(keys)：地形の あらい版（チャンク 64×64 マスを 16×16 に。4マスごとのまん中）。3D の遠くの地形に使う（ふつうの 1/16 の大きさ）
+--   mp_blds_lite(i, j)：192 マス四方の建物を、かんたんな形（種類・階・外がわの四角）で。2D・2.5D・3D の遠くの建物に使う
+--     みんなに同じ中身なので、サーバーにとっておく（mp_lite_cache）。土地・建物が変わったとき（mp_changes の land）か6時間で作りなおす
+--   どちらも見るだけ（ゲームの決まりは変えない）
+-- =====================================================================
+create table if not exists public.mp_lite_cache (
+  i    int not null,
+  j    int not null,
+  ver  bigint not null,              -- 作ったときの mp_changes の ver
+  data jsonb not null,
+  at   timestamptz not null default now(),
+  primary key (i, j)
+);
+alter table public.mp_lite_cache enable row level security;
+revoke all on public.mp_lite_cache from anon, authenticated;
+
+-- 地形の あらい版（t・e・z を 16×16 に）
+create or replace function public.mp_chunk_lo(p_keys int[]) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); r jsonb;
+begin
+  perform _mp_ok(u);
+  if coalesce(array_length(p_keys, 1), 0) > 512 then raise exception '一度に読めるのは256チャンクまでです'; end if;
+  select coalesce(jsonb_agg(jsonb_build_object('cx', c.cx, 'cy', c.cy,
+           't', (select string_agg(chr(get_byte(c.tb, s.k)), '' order by s.n) from _mp_lo_idx() s),
+           'e', (select string_agg(chr(get_byte(c.eb, s.k)), '' order by s.n) from _mp_lo_idx() s),
+           'z', (select string_agg(chr(get_byte(c.zb, s.k)), '' order by s.n) from _mp_lo_idx() s))), '[]'::jsonb)
+    into r
+    from (select ch.cx, ch.cy, convert_to(ch.t, 'UTF8') tb, convert_to(ch.e, 'UTF8') eb, convert_to(ch.z, 'UTF8') zb
+            from mp_chunks ch join (select p_keys[2 * i - 1] kx, p_keys[2 * i] ky from generate_series(1, coalesce(array_length(p_keys, 1), 0) / 2) i) k
+              on ch.cx = k.kx and ch.cy = k.ky) c;
+  return r;
+end $$;
+-- 16×16 のとりかた：4マスごとのまん中（バイトの位置。0 から）
+create or replace function public._mp_lo_idx() returns table(n int, k int)
+language sql immutable as $$
+  select g, (4 * (g / 16) + 2) * 64 + 4 * (g % 16) + 2 from generate_series(0, 255) g
+$$;
+
+-- 0〜4095 を B64 の2文字に（はみ出したら はし）
+create or replace function public._mp_b64n(v int) returns text
+language sql immutable as $$
+  select substr('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', least(greatest(v, 0), 4095) / 64 + 1, 1)
+      || substr('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_', least(greatest(v, 0), 4095) % 64 + 1, 1)
+$$;
+
+-- 建物のかんたんな形（192 マス四方。i, j はそのます目）
+--   返す：k（種類の一覧）・b（建物ごとに 12文字：種類の番号・階・x0＋64・y0＋64・はば・高さ を 2文字ずつ（B64）。x0・y0 は ます目の左上から、10m の区画で）
+--   作ってから2分は、変わっていてもそのまま返す（遠くの見た目なので。作りなおしが多くなりすぎないように）
+create or replace function public.mp_blds_lite(p_i int, p_j int) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); c mp_lite_cache; v bigint; bx box; d jsonb; ox int := p_i * 960; oy int := p_j * 960;
+begin
+  perform _mp_ok(u);
+  if p_i is null or p_j is null or abs(p_i) > 400 or abs(p_j) > 400 then raise exception '範囲がちがいます'; end if;
+  v := coalesce((select max(ver) from mp_changes), 0);
+  bx := box(point(p_i * 192, p_j * 192), point((p_i + 1) * 192, (p_j + 1) * 192));
+  select * into c from mp_lite_cache where i = p_i and j = p_j;
+  if found and (c.at > now() - interval '2 minutes' or c.at > now() - interval '6 hours'
+     and (c.ver = v or (coalesce((select min(ver) from mp_changes), 0) <= c.ver + 1
+                        and not exists (select 1 from mp_changes x where x.ver > c.ver and x.kind = 'land' and (x.bb is null or x.bb && bx))))) then
+    if c.ver < v then update mp_lite_cache set ver = v where i = p_i and j = p_j and ver < v; end if;
+    return c.data;
+  end if;
+  with b as (
+    select bl.id, bl.kind, bl.floors, min(bl.cells[2 * g - 1]) x0, min(bl.cells[2 * g]) y0, max(bl.cells[2 * g - 1]) x1, max(bl.cells[2 * g]) y1
+      from mp_blds bl, generate_series(1, array_length(bl.cells, 1) / 2) g
+     where point(bl.cells[1], bl.cells[2]) <@ box(point(ox, oy), point(ox + 959.5, oy + 959.5))
+     group by bl.id, bl.kind, bl.floors
+  ), k as (select kind, row_number() over (order by kind) - 1 ki from (select distinct kind from b) z)
+  select jsonb_build_object('i', p_i, 'j', p_j, 'k', coalesce((select jsonb_agg(kind order by ki) from k), '[]'::jsonb),
+           'b', coalesce((select string_agg(_mp_b64n(k.ki::int) || _mp_b64n(greatest(b.floors, 0)) || _mp_b64n(b.x0 - ox + 64) || _mp_b64n(b.y0 - oy + 64)
+                                            || _mp_b64n(b.x1 - b.x0 + 1) || _mp_b64n(b.y1 - b.y0 + 1), '' order by b.y0, b.x0, b.id) from b join k on k.kind = b.kind), ''))
+    into d;
+  insert into mp_lite_cache(i, j, ver, data, at) values (p_i, p_j, v, d, now())
+  on conflict (i, j) do update set ver = excluded.ver, data = excluded.data, at = excluded.at;
+  return d;
+end $$;
 -- 線の点を間引く（遠くから見るとき）：k 点ごと＋さいご
 create or replace function public._mp_thin(p int[], k int) returns int[]
 language sql immutable as $$
@@ -21461,7 +21541,38 @@ begin
   perform _mp_chg('land', null, 'set', box(point(_mp_t5(x0), _mp_t5(y0)), point(_mp_t5(x1) + 1, _mp_t5(y1) + 1)));
   return jsonb_build_object('n', cnt, 'parcels', nb, 'total', total, 'why', why, 'tax_day', round(total0 * _mp_rate('prop_tax')));
 end $$;
--- 売りに出ている筆を買う（＋取得税：値段と評価額の小さいほうの3%）
+-- =====================================================================
+-- 国が売る土地・建物（2026-10-31・更新 20261031-48）
+--   mp_gov_sale にある国の筆は、時価（毎朝見なおす地価 mval）で売りに出しておく（毎時あわせる。ailinax-gov-sale）
+--   国の筆も、売りに出ていれば ふつうに買える（お金は国庫へ）。買った人のものになる
+-- =====================================================================
+create table if not exists public.mp_gov_sale (
+  parcel bigint primary key references public.mp_parcels(id) on delete cascade,
+  at     timestamptz not null default now()
+);
+alter table public.mp_gov_sale enable row level security;
+revoke all on public.mp_gov_sale from anon, authenticated;
+
+-- 国が売る筆の値段を、時価にあわせる
+create or replace function public._mp_gov_sale_sync() returns int
+language plpgsql set search_path = public as $$
+declare n int;
+begin
+  update mp_parcels p set sale = greatest(100, coalesce(p.mval, p.val, 0))
+    from mp_gov_sale g
+   where g.parcel = p.id and p.gov and p.sale is not null and p.sale <> greatest(100, coalesce(p.mval, p.val, 0));
+  get diagnostics n = row_count;
+  delete from mp_gov_sale g where not exists (select 1 from mp_parcels p where p.id = g.parcel and p.gov and p.sale is not null);
+  return n;
+end $$;
+
+do $$
+begin
+  if exists (select 1 from pg_namespace where nspname = 'cron') then
+    perform cron.schedule('ailinax-gov-sale', '41 * * * *', 'select public._mp_gov_sale_sync()');
+  end if;
+end $$;
+-- 売りに出ている筆を買う（＋取得税：値段と評価額の小さいほうの3%）。国の筆も、売りに出ていれば買える（お金は国庫へ。t63）
 create or replace function public.mp_parcel_buy(p_id bigint, p_as text, p_dry boolean default false) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); pa record; p mp_parcels; tax bigint; addr text;
@@ -21477,17 +21588,18 @@ begin
   if p_dry then return jsonb_build_object('price', p.sale, 'tax', tax, 'total', p.sale + tax, 'n', p.n); end if;
   addr := (select _mp_addr(_mp_t5((p.bb[1])[0]::int), _mp_t5((p.bb[1])[1]::int), null, null) ->> 'text') || ' ' || _mp_ban(p.ban, p.eda);
   perform _mp_pay(pa.pu, pa.pc, false, p.sale + tax, 'land', format('土地 %s（%s㎡）を買った（取得税 %s X をふくむ）', _mp_ban(p.ban, p.eda), p.n * 100, tax));
-  perform _mp_earn(p.own_u, p.own_c, false, p.sale, 'land', format('土地 %s（%s㎡）が売れた', _mp_ban(p.ban, p.eda), p.n * 100));
-  perform _notice(coalesce(p.own_u, (select owner from companies where id = p.own_c)), format('【国土】売りに出していた土地（%s）が %s X で売れました。', addr, _fmt(p.sale)));
+  perform _mp_earn(p.own_u, p.own_c, p.gov, p.sale, 'land', format('土地 %s（%s㎡）が売れた', _mp_ban(p.ban, p.eda), p.n * 100));   -- 国の筆なら国庫に入ったまま
+  if not p.gov then perform _notice(coalesce(p.own_u, (select owner from companies where id = p.own_c)), format('【国土】売りに出していた土地（%s）が %s X で売れました。', addr, _fmt(p.sale))); end if;
   -- 貸出料と申請は、新しい持ち主が決めなおす（作ってあるものの使用料はそのまま、新しい持ち主へ）
   perform _notice(w, format('【国土】土地を使う申請（%s）は、持ち主が変わったのでなくなりました。新しい持ち主に申請してください。', addr))
      from (select distinct coalesce(q.req_u, (select owner from companies where id = q.req_c)) w from mp_landreq q where q.parcel = p.id and q.st = 'wait') z where w is not null and w <> u;
   delete from mp_landreq where parcel = p.id;
-  update mp_parcels set own_u = pa.pu, own_c = pa.pc, price = p.sale, sale = null, rent = null, bought_at = now() where id = p.id;
+  update mp_parcels set own_u = pa.pu, own_c = pa.pc, gov = false, price = p.sale, sale = null, rent = null, bought_at = now() where id = p.id;
+  delete from mp_gov_sale where parcel = p.id;
   perform _mp_chg('land', null, 'set', box(point(_mp_t5((p.bb[1])[0]::int), _mp_t5((p.bb[1])[1]::int)), point(_mp_t5((p.bb[0])[0]::int) + 1, _mp_t5((p.bb[0])[1]::int) + 1)));
   return jsonb_build_object('price', p.sale, 'tax', tax, 'total', p.sale + tax, 'n', p.n);
 end $$;
--- 売りに出す（p_price が null なら売るのをやめる）
+-- 売りに出す（p_price が null なら売るのをやめる）。管理者が「国」として、国の筆も（t63。国が値段を決めたら、時価にあわせるのをやめる）
 create or replace function public.mp_parcel_sell(p_ids bigint[], p_price bigint, p_as text) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); pa record; n int := 0; p mp_parcels;
@@ -21495,8 +21607,10 @@ begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
   if p_price is not null and (p_price < 100 or p_price > 10000000000000000) then raise exception '値段は100 X 〜 1京 X にしてください'; end if;
-  for p in select * from mp_parcels where id = any(p_ids) and own_u is not distinct from pa.pu and own_c is not distinct from pa.pc and not gov for update loop
+  for p in select * from mp_parcels where id = any(p_ids)
+             and case when pa.gv then gov else own_u is not distinct from pa.pu and own_c is not distinct from pa.pc and not gov end for update loop
     update mp_parcels set sale = p_price where id = p.id;
+    if pa.gv then delete from mp_gov_sale where parcel = p.id; end if;
     n := n + 1;
     perform _mp_chg('land', null, 'set', box(point(_mp_t5((p.bb[1])[0]::int), _mp_t5((p.bb[1])[1]::int)), point(_mp_t5((p.bb[0])[0]::int) + 1, _mp_t5((p.bb[0])[1]::int) + 1)));
   end loop;
@@ -26599,6 +26713,8 @@ begin
             '_lot_seed','_lot_prize','_lot_tier_name','_rnd','_lot_next_at','_lot_tick','_lot_draw','lot_buy','lot_state','dm_list','dm_thread','dm_send','_sp_json','support_list','support_thread','support_open','support_send','support_close',
             'keiba_day','keiba_race','keiba_odds','keiba_bet','keiba_horse',
             'kb_sched','kb_alert_set','_kb_prog_ahead','_kb_alerts_json','_kb_alert_tick',
+            'mp_chunk_lo','mp_blds_lite','_mp_lo_idx','_mp_b64n',
+            '_mp_gov_sale_sync',
             'money_history','corp_ledger_page','money_days','corp_days','_kb_bid_min','_kb_can_run','_kb_colors','_kb_give_horse','_kb_hint','_kb_hjson','_kb_own_c','_kb_own_open','_kb_own_tick','_kb_owned_n','_kb_owner_row','_kb_prog_day','_kb_release','_kb_sale_at','_kb_sale_day','_kb_sales_tick','_kb_take_regs','_kb_upkeep_tick','owner_bid','owner_buy','owner_name','owner_reg','owner_retire','owner_sell','owner_silks','owner_state',
             'fi_cast','fi_consign','fi_hook','fi_join','fi_land','fi_state',
             '_pr_bonus','_pr_check_sel','_pr_hit','_pr_make_day','_pr_make_race','_pr_margin','_pr_month','_pr_name','_pr_new_racer','_pr_odds','_pr_open','_pr_prob','_pr_rate','_pr_seed','_pr_settle','_pr_status','_pr_tick','_pr_wx','pr_bet','pr_day','pr_odds','pr_race','pr_racer',

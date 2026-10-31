@@ -1234,7 +1234,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=a9bc6fe4","zh-TW":"zh-TW.js?v=5a04df3b","zh-CN":"zh-CN.js?v=cb53ea5c","ko":"ko.js?v=56d05a1e","ko-Hani":"ko-Hani.js?v=c8337075"};
+  window.AX_LANGS = {"en":"en.js?v=de14997a","zh-TW":"zh-TW.js?v=37beb541","zh-CN":"zh-CN.js?v=9e5b5f00","ko":"ko.js?v=0088d952","ko-Hani":"ko-Hani.js?v=32b6fd22"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -5020,7 +5020,7 @@ function stCmpDraw() {
    役所 → ヘルプ（t62）：遊び方・やり方（help/help.json。README からつくる）。さがせる（題・中身・ことば。ひらがな・カタカナ・全角半角は同じに）
    役所 → 意見箱（t62）：運営への問い合わせ（support_open）に「【意見箱】」の件名で送る
    ================================================================= */
-const HELP_V = '54d52b43';
+const HELP_V = '2310b230';
 const HP = { d: null, cat: 'start', q: '' };
 const hpNorm = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
 async function helpLoad() {
@@ -5512,7 +5512,7 @@ const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
 // 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
-const MAPV = '105';
+const MAPV = '106';
 let mapLoading = null;
 function mapScripts() {
   if (window.MapApp) return Promise.resolve();
@@ -6168,7 +6168,7 @@ async function adminLoad() {
         <span>国庫の外にあるお金の合計</span><b>${fmt(Number(d.supply || 0) + Number(d.corp_money || 0) + Number(d.bank_money || 0) + Number(d.order_money || 0))} X</b>
         <span>発行とあわない分</span><b>${fmt(Number(t.issued_total || 0) - Number(t.balance || 0) - (Number(d.supply || 0) + Number(d.corp_money || 0) + Number(d.bank_money || 0) + Number(d.order_money || 0)))} X</b></div>
       <p class="muted small" style="margin:4px 0 0">国庫の外にあるお金＝ユーザー・会社・銀行預金・注文で預かっている X の合計。あわない分＝発行 − 国庫 − 国庫の外（＋は記録の外で消えたお金、−は記録の外でふえたお金）</p>
-`) + card('money', '', '介入', '<div id="adIv"><p class="muted small" style="margin:0">読みこみ中…</p></div>') : '')
+`) + card('money', 'adGrant', '国庫から渡す', adGrantBody()) + card('money', '', '介入', '<div id="adIv"><p class="muted small" style="margin:0">読みこみ中…</p></div>') : '')
       + (ME.event ? adEventCards() : '')
       + (adm ? card('staff', '', '副管理者・イベント製作者', '<div id="adStaff"><p class="muted small" style="margin:0">読みこみ中…</p></div>') : '');
     $$('#adminBox [data-fxok], #adminBox [data-fxng]').forEach(b => b.onclick = async () => {
@@ -6218,6 +6218,7 @@ async function adminLoad() {
       if (a === 'bankrupt' && !confirm('本当に倒産させますか？もとに戻せません。')) return;
       try { await call('admin_corp_action', { p_cid: b.dataset.cid, p_action: a, p_reason: why }); toast('できました'); adminLoad(); } catch (e) { toast(e.message); }
     });
+    if (adm) adGrantBind();
     const fs = $('#adFeeSave');
     if (fs) fs.onclick = async () => { try { await call('admin_fx_fee', { p_pct: Number($('#adFee').value) }); toast('手数料を変えました'); adminLoad(); } catch (e) { toast(e.message); } };
     $('#adReload').onclick = () => adminLoad();
@@ -6228,6 +6229,45 @@ async function adminLoad() {
     });
     adShow(tabs.some(x => x[0] === AD.tab) ? AD.tab : tabs[0][0]);
   } catch (e) { toast(e.message); }
+}
+// 管理：国庫から渡す（管理者だけ。相手は ID・空なら自分。相手の所持金は出さない）
+const GR_UNITS = [[1, 'X'], [1e4, '万 X'], [1e8, '億 X'], [1e12, '兆 X']];
+function adGrantBody() {
+  return `<div class="row"><span class="small" style="width:5.5em">渡す相手</span><input class="inp grow" id="grUid" inputmode="numeric" autocomplete="off" placeholder="ID（空なら自分）" style="margin:0"><button class="btn s" id="grWho">確かめる</button></div>
+      <p class="small muted" id="grWhoOut" style="margin:2px 0 8px">空なら、自分に渡します</p>
+      <div class="row"><span class="small" style="width:5.5em">金額</span><input class="inp grow" id="grAmt" type="number" min="0" step="any" inputmode="decimal" style="margin:0"><select class="inp" id="grUnit" style="width:auto;margin:0">${GR_UNITS.map(([v, l]) => `<option value="${v}"${v === 1e12 ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+      <p class="small muted" id="grAmtOut" style="margin:2px 0 8px">—</p>
+      <div class="row" style="align-items:flex-start"><span class="small" style="width:5.5em">どこから</span><div class="grow" style="display:grid;gap:4px"><label class="small"><input type="radio" name="grFrom" value="mint" checked> 新しく発行して渡す</label><label class="small"><input type="radio" name="grFrom" value="bal"> 国庫の残高から渡す</label></div></div>
+      <div class="row"><span class="small" style="width:5.5em">メモ</span><input class="inp grow" id="grNote" maxlength="60" placeholder="受けとる人に届きます（なくてもよい）" style="margin:0"></div>
+      <div class="row"><button class="btn main s" id="grGo">渡す</button></div>
+      <p class="muted small" style="margin:6px 0 0">新しく発行すると、国庫の「発行」がふえます。国庫の残高から渡すと、国庫が減ります。受けとった人には、お知らせと「国庫から支給」の記録が残ります。</p>`;
+}
+function adGrantBind() {
+  if (!$('#grGo')) return;
+  const amt = () => { const n = Number(String($('#grAmt').value).replace(/[,，\s]/g, '')), u = Number($('#grUnit').value); return isFinite(n) && n > 0 ? Math.round(n * u) : 0; };
+  const showAmt = () => { const a = amt(); $('#grAmtOut').textContent = a ? `= ${fmt(a)} X` : '—'; };
+  $('#grAmt').oninput = showAmt; $('#grUnit').onchange = showAmt;
+  $('#grUid').oninput = () => { $('#grWhoOut').textContent = $('#grUid').value.trim() ? '「確かめる」で、名前を見られます' : '空なら、自分に渡します'; };
+  const who = async () => {
+    const r = await call('admin_grant_who', { p_uid: $('#grUid').value.trim() });
+    $('#grWhoOut').innerHTML = (r.self ? '<b>自分</b>：' : '') + `${nameB(r.name, r.badge)}（ID ${esc(r.uid || '—')}）`;
+    return r;
+  };
+  $('#grWho').onclick = async () => { try { await who(); } catch (e) { $('#grWhoOut').textContent = e.message; } };
+  $('#grGo').onclick = async () => {
+    const a = amt(); if (a < 1) return toast('金額を入れてください');
+    if (a > 1e15) return toast('1回に渡せるのは1000兆 X までです');
+    let r; try { r = await who(); } catch (e) { return toast(e.message); }
+    const from = ($('#adGrant input[name="grFrom"]:checked') || {}).value || 'mint', how = from === 'mint' ? '新しく発行' : '国庫の残高から';
+    if (!confirm(r.self ? `自分に ${fmt(a)} X を渡します（${how}）。よろしいですか？` : `${r.name}（ID ${r.uid}）に ${fmt(a)} X を渡します（${how}）。よろしいですか？`)) return;
+    const b = $('#grGo'); b.disabled = true;
+    try {
+      const x = await call('admin_grant', { p_uid: $('#grUid').value.trim(), p_amount: a, p_from: from, p_note: $('#grNote').value.trim() });
+      toast(x.self ? `自分に ${fmt(x.amount)} X を渡しました` : `${x.name}に ${fmt(x.amount)} X を渡しました`);
+      if (x.self) setBal(balance + Number(x.amount), true);
+      adminLoad();
+    } catch (e) { toast(e.message); b.disabled = false; }
+  };
 }
 // 管理：副管理者・イベント製作者（管理者だけ）
 async function adStaffLoad() {
