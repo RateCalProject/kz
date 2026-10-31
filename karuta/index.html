@@ -1145,7 +1145,7 @@ function renderOnlineHome(){
       <input type="text" class="search" id="olcode" data-olcode="1" maxlength="4" placeholder="部屋番号" autocomplete="off" autocapitalize="off" style="text-align:center;font-size:24px;letter-spacing:.3em">
       <button class="btn ghost" data-act="ol-join" style="width:100%">部屋に入る</button></section>
     <p class="note" id="olstat">接続を確認中…</p>
-    <p class="note">入れるのは、このページを共有で招待されて、サインインして開いた人だけです。リンクを知っているだけの人は入れません。</p>
+    <p class="note">${window.claude&&window.claude.__site?'部屋番号を知っている人なら、だれでも入れます（同じ端末の別のタブでも）。賞と X は、AI との対戦だけです。':'入れるのは、このページを共有で招待されて、サインインして開いた人だけです。リンクを知っているだけの人は入れません。'}</p>
   </div></div>`;
   roomCap().then(r=>{const e=$('#olstat');if(e)e.textContent=r?'オンライン対戦が使えます。':'この画面ではオンライン対戦が使えません。招待された人が、サインインして開いてください。';});
 }
@@ -1479,6 +1479,7 @@ showHome();
 <!-- 風の芽経済組（風の芽製作所）につなぐところ（2026-10-31）。ゲームの本体には手を入れない -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../config.js?v=20261031"></script>
-<script src="kz.js?v=1"></script>
+<script src="room.js?v=1"></script>
+<script src="kz.js?v=2"></script>
 </body>
 </html>

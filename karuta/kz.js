@@ -1,6 +1,6 @@
 /* 百人一首 かるた対戦：風の芽経済組（風の芽製作所）につなぐところ（2026-10-31）
    ゲームの本体（index.html の中）は、ホーム・対戦のはじめ・おわりで、ここを呼ぶ1行だけ足した：
-   - ホームに「‹ 風の芽経済組」と「🏆 賞・タスク」。オンライン対戦（作ったところの部屋の機能）は、ここでは使えないので出さない
+   - ホームに「‹ 風の芽経済組」と「🏆 賞・タスク」。オンライン対戦は room.js の部屋で（公開MQTTサーバー・Realtime・同じ端末）
    - AI と対戦したら、ログインしていれば結果をサーバーへ。プレイ時間・勝った強さで賞。強いAI（Lv7〜）に勝つと X（1日の上限あり）
 */
 (function () {
@@ -8,6 +8,7 @@
   const CFG = window.AILINAX_CONFIG || {};
   let sb = null, user = null, run = null, last = null, noSrv = false;
   try { if (window.supabase && CFG.url && CFG.anonKey) sb = window.supabase.createClient(CFG.url, CFG.anonKey); } catch (e) {}
+  window.KZ_SB = sb;   // オンライン対戦の部屋（room.js）が、近くの中継（Realtime）に使う
   const escH = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const fmtN = n => Number(n || 0).toLocaleString('ja-JP');
   async function rpc(fn, args) {
