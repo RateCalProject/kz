@@ -671,11 +671,11 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 .bal{color:var(--ink)}
 :root[data-theme="famicom"] .hm-w{border-radius:0!important}
 /* 角を小さく（パステルはそのまま） */
-:root:not([data-theme="pastel"]):not([data-theme="citypop"]){--radius:4px}
-:root:not([data-theme="pastel"]):not([data-theme="citypop"]) :is(.btn,.seg,.seg2,.inp,.item,.kb-row,.hm-tile,.hm-w,.th-tile,.toast,.okbox,.warnbox,.td-sum div,.ip-list,.mj-row,.pl,.kk-side,.oc-pick button,.picks button,.bet input,.mailform input,.wk-q input,.slots div,.nt-row.new,.mj-res,.kb-stage,.reel,.game-row .ic,.srv-ic){border-radius:4px}
-:root:not([data-theme="pastel"]):not([data-theme="citypop"]) :is(.bal,.bell,.world,.chips button,.tabs-s button,.men-box button,.tag,.chip,.ind){border-radius:4px}
-:root:not([data-theme="pastel"]):not([data-theme="citypop"]) .modal .sheet{border-radius:8px 8px 0 0}
-:root:not([data-theme="pastel"]):not([data-theme="citypop"]) .dk-m{border-radius:6px}
+:root:not([data-theme="pastel"]):not([data-theme="citypop"]):not([data-theme="sakura"]){--radius:4px}
+:root:not([data-theme="pastel"]):not([data-theme="citypop"]):not([data-theme="sakura"]) :is(.btn,.seg,.seg2,.inp,.item,.kb-row,.hm-tile,.hm-w,.th-tile,.ft-tile,.toast,.okbox,.warnbox,.td-sum div,.ip-list,.mj-row,.pl,.kk-side,.oc-pick button,.picks button,.bet input,.mailform input,.wk-q input,.slots div,.nt-row.new,.mj-res,.kb-stage,.reel,.game-row .ic,.srv-ic){border-radius:4px}
+:root:not([data-theme="pastel"]):not([data-theme="citypop"]):not([data-theme="sakura"]) :is(.bal,.bell,.world,.chips button,.tabs-s button,.men-box button,.tag,.chip,.ind){border-radius:4px}
+:root:not([data-theme="pastel"]):not([data-theme="citypop"]):not([data-theme="sakura"]) .modal .sheet{border-radius:8px 8px 0 0}
+:root:not([data-theme="pastel"]):not([data-theme="citypop"]):not([data-theme="sakura"]) .dk-m{border-radius:6px}
 /* メニューのウィジェット */
 .hm-w{grid-column:1/-1;border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:10px 12px;text-align:left}
 .hm-wh{display:flex;align-items:center;gap:8px;margin-bottom:4px}
@@ -868,6 +868,131 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 :root[data-theme="citypop"] .seg button.on{background:linear-gradient(90deg,#7A6FF0,#38C9E0)}
 :root[data-theme="citypop"] .game-row .ic,:root[data-theme="citypop"] .srv-ic{background:linear-gradient(135deg,#FFB86B,#F2547D 55%,#7A6FF0)}
 :root[data-theme="citypop"] .btn,:root[data-theme="citypop"] .seg,:root[data-theme="citypop"] .inp{border-radius:999px}
+/* ---- 桜（t62） ---- */
+:root[data-theme="sakura"]{--bg:#FFF5F7;--panel:#FFFFFF;--ink:#4A2B35;--muted:#8E6672;--line:#F6D4DF;--accent:#D94F7A;--accent-ink:#FFFFFF;--soft:#FDE7EE;
+  --red:#D9405F;--win:#3E8E6B;--lose:#D9405F;--up:#3E8E6B;--down:#D9405F;--night:#6C6CC8;--noon:#C77A2E;--radius:14px;
+  --font:"Zen Maru Gothic","Hiragino Maru Gothic ProN","Hiragino Sans",sans-serif}
+:root[data-theme="sakura"] body{background:radial-gradient(ellipse 6px 3.5px at 50% 50%,rgba(236,128,163,.30) 95%,transparent 100%) 0 0/97px 89px,
+  radial-gradient(ellipse 4px 6px at 50% 50%,rgba(246,170,196,.32) 95%,transparent 100%) 41px 47px/113px 101px,#FFF5F7}
+:root[data-theme="sakura"] header{background:linear-gradient(90deg,#F9C9D8,#FDE3EB);border-bottom:3px solid #EE97B3;color:#4A2B35}
+:root[data-theme="sakura"] .logo small{color:#A35A72}
+:root[data-theme="sakura"] nav.tabs{background:rgba(255,255,255,.95);border-top:3px solid #F4B6CA}
+:root[data-theme="sakura"] nav.tabs button.on{color:#D94F7A}
+:root[data-theme="sakura"] nav.tabs button.tb-mid b{background:#D94F7A;border-color:#FFFFFF}
+:root[data-theme="sakura"] .card{border-color:#F8DCE5;box-shadow:0 4px 14px rgba(217,79,122,.10)}
+:root[data-theme="sakura"] h3::before{content:"✿";color:#E8789C;margin-right:6px}
+:root[data-theme="sakura"] .btn,:root[data-theme="sakura"] .seg,:root[data-theme="sakura"] .inp{border-radius:999px}
+:root[data-theme="sakura"] .btn.main{background:linear-gradient(90deg,#EE7FA2,#D94F7A);border-color:#D94F7A}
+/* ---- 海（t62） ---- */
+:root[data-theme="ocean"]{--bg:#06283D;--panel:#0B3550;--ink:#E6F4FA;--muted:#8FB8CC;--line:#1D5878;--accent:#3FD0C9;--accent-ink:#03222B;--soft:#0F4262;
+  --red:#FF7A70;--black:#021620;--win:#5FE3A8;--lose:#FF7A70;--up:#5FE3A8;--down:#FF8A7A;--night:#9FB6FF;--noon:#FFC266;--felt:#0E4D5C}
+:root[data-theme="ocean"] body{background:linear-gradient(180deg,#0A4A6E 0%,#06283D 55%,#041C2C 100%) fixed}
+:root[data-theme="ocean"] header{background:#041C2C;border-bottom:3px solid #1F8FB0;color:#E6F4FA}
+:root[data-theme="ocean"] .logo small{color:#8FB8CC}
+:root[data-theme="ocean"] nav.tabs{background:#041C2C;border-top:3px solid #1F8FB0}
+:root[data-theme="ocean"] nav.tabs button{color:#8FB8CC}
+:root[data-theme="ocean"] nav.tabs button.on{color:#3FD0C9}
+:root[data-theme="ocean"] nav.tabs button.tb-mid b{background:linear-gradient(135deg,#3FD0C9,#1F8FB0);color:#03222B;border-color:#041C2C}
+:root[data-theme="ocean"] .card{border-color:#1D5878;box-shadow:0 6px 18px rgba(0,0,0,.25)}
+:root[data-theme="ocean"] h3::before{content:"≈";color:#3FD0C9;margin-right:6px;font-weight:900}
+:root[data-theme="ocean"] .btn{background:#0F4262;border-color:#1D5878}
+:root[data-theme="ocean"] .btn.main{background:linear-gradient(90deg,#3FD0C9,#2BA8D8);border-color:#2BA8D8;color:#03222B}
+:root[data-theme="ocean"] .seg button.on{background:#3FD0C9;color:#03222B}
+:root[data-theme="ocean"] .inp{background:#08304A;border-color:#1D5878}
+/* ---- 森（t62） ---- */
+:root[data-theme="forest"]{--bg:#EEF3E6;--panel:#FBFDF7;--ink:#24321F;--muted:#66755C;--line:#CFDCC0;--accent:#3F7D3A;--accent-ink:#FFFFFF;--soft:#E2EDD6;
+  --red:#B4462F;--win:#3F7D3A;--lose:#B4462F;--up:#3F7D3A;--down:#B4462F;--night:#3E5C8A;--noon:#A86B1E;--felt:#2F5E3A}
+:root[data-theme="forest"] body{background:#EEF3E6 radial-gradient(rgba(63,125,58,.08) 2px,transparent 2.6px) 0 0/16px 16px}
+:root[data-theme="forest"] header{background:#5B4632;border-bottom:4px solid #3F7D3A;color:#F4EBDD}
+:root[data-theme="forest"] .logo small{color:#D9C9B0}
+:root[data-theme="forest"] nav.tabs{background:#5B4632;border-top:4px solid #3F7D3A}
+:root[data-theme="forest"] nav.tabs button{color:#D9C9B0}
+:root[data-theme="forest"] nav.tabs button.on{color:#B8E07A}
+:root[data-theme="forest"] nav.tabs button.tb-mid b{background:#3F7D3A;border-color:#5B4632}
+:root[data-theme="forest"] .card{border-color:#CFDCC0;box-shadow:0 2px 0 rgba(63,125,58,.14)}
+:root[data-theme="forest"] h3::before{content:"▲";color:#3F7D3A;margin-right:6px;font-size:.8em}
+:root[data-theme="forest"] .btn.main{background:#3F7D3A;border-color:#2F5E2B}
+/* ---- 液晶ゲーム風（t62）：4色の緑 ---- */
+:root[data-theme="lcd"]{--bg:#9BBC0F;--panel:#8BAC0F;--ink:#0F380F;--muted:#306230;--line:#306230;--accent:#0F380F;--accent-ink:#9BBC0F;--soft:#8BAC0F;
+  --red:#7A1F1F;--black:#0F380F;--win:#0F380F;--lose:#7A1F1F;--up:#0F380F;--down:#7A1F1F;--night:#0F380F;--noon:#306230;--felt:#306230;--radius:0px;
+  --font:"DotGothic16","Courier New",monospace}
+:root[data-theme="lcd"] body{background:#9BBC0F repeating-linear-gradient(0deg,rgba(15,56,15,.05) 0 1px,transparent 1px 3px)}
+:root[data-theme="lcd"] .card,:root[data-theme="lcd"] .item{background:#8BAC0F;border:3px solid #0F380F;border-radius:0;box-shadow:3px 3px 0 #306230}
+:root[data-theme="lcd"] .btn,:root[data-theme="lcd"] .seg,:root[data-theme="lcd"] .tabs-s button,:root[data-theme="lcd"] .chips button,
+:root[data-theme="lcd"] .inp,:root[data-theme="lcd"] .bal,:root[data-theme="lcd"] .bell,:root[data-theme="lcd"] .world,:root[data-theme="lcd"] .chip,:root[data-theme="lcd"] .tag,
+:root[data-theme="lcd"] .hm-tile,:root[data-theme="lcd"] .hm-w,:root[data-theme="lcd"] .kindtag{border-radius:0!important}
+:root[data-theme="lcd"] .btn{border:2px solid #0F380F;background:#9BBC0F;color:#0F380F}
+:root[data-theme="lcd"] .btn.main{background:#0F380F;color:#9BBC0F}
+:root[data-theme="lcd"] .seg{border:2px solid #0F380F}
+:root[data-theme="lcd"] .seg button.on,:root[data-theme="lcd"] .tabs-s button.on{background:#0F380F;color:#9BBC0F}
+:root[data-theme="lcd"] .inp{background:#9BBC0F;border-color:#0F380F;color:#0F380F}
+:root[data-theme="lcd"] header{background:#0F380F;border-bottom:4px solid #306230;color:#9BBC0F}
+:root[data-theme="lcd"] .logo small{color:#8BAC0F}
+:root[data-theme="lcd"] nav.tabs{background:#0F380F;border-top:4px solid #306230}
+:root[data-theme="lcd"] nav.tabs button{color:#8BAC0F}
+:root[data-theme="lcd"] nav.tabs button.on{color:#9BBC0F;text-decoration:underline}
+:root[data-theme="lcd"] nav.tabs button.tb-mid b{border-radius:0;background:#9BBC0F;color:#0F380F;border-color:#0F380F}
+:root[data-theme="lcd"] .modal .sheet{background:#9BBC0F;border:4px solid #0F380F;border-bottom:0;border-radius:0}
+:root[data-theme="lcd"] h3::before{content:"▶";color:#0F380F;margin-right:6px}
+:root[data-theme="lcd"] .toast{background:#0F380F;color:#9BBC0F;border:3px solid #306230;border-radius:0}
+/* ---- 黒と金（t62） ---- */
+:root[data-theme="luxury"]{--bg:#0B0B0D;--panel:#141416;--ink:#F3EBDD;--muted:#A89F8C;--line:#3A3326;--accent:#C9A55A;--accent-ink:#14100A;--soft:#1E1B16;
+  --red:#E06A5A;--black:#050506;--win:#8FD3A6;--lose:#E06A5A;--up:#8FD3A6;--down:#E8826F;--night:#AEB8F0;--noon:#E2B868;--felt:#1C3A2E;--radius:2px;
+  --font:"Zen Old Mincho","Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif}
+:root[data-theme="luxury"] body{background:radial-gradient(ellipse at 50% -10%,#26221A 0,#0B0B0D 62%) fixed}
+:root[data-theme="luxury"] header{background:#0B0B0D;border-bottom:1px solid #C9A55A;box-shadow:0 3px 0 -2px #3A3326;color:#F3EBDD}
+:root[data-theme="luxury"] .logo{color:#E2C47E;letter-spacing:.12em}
+:root[data-theme="luxury"] .logo small{color:#A89F8C}
+:root[data-theme="luxury"] nav.tabs{background:#0B0B0D;border-top:1px solid #C9A55A}
+:root[data-theme="luxury"] nav.tabs button{color:#A89F8C}
+:root[data-theme="luxury"] nav.tabs button.on{color:#E2C47E}
+:root[data-theme="luxury"] nav.tabs button.tb-mid b{background:linear-gradient(135deg,#E8CD8A,#B08A3E);color:#14100A;border-color:#0B0B0D}
+:root[data-theme="luxury"] .card{border:1px solid #3A3326;border-top-color:#C9A55A;box-shadow:inset 0 0 0 1px rgba(201,165,90,.06)}
+:root[data-theme="luxury"] h3,:root[data-theme="luxury"] h2{color:#E2C47E;letter-spacing:.08em}
+:root[data-theme="luxury"] h3::before{content:"◆";color:#C9A55A;margin-right:8px;font-size:.7em;vertical-align:2px}
+:root[data-theme="luxury"] .btn{background:transparent;border:1px solid #6E5B33;color:#F3EBDD}
+:root[data-theme="luxury"] .btn.main{background:linear-gradient(135deg,#E8CD8A,#B08A3E);border-color:#B08A3E;color:#14100A}
+:root[data-theme="luxury"] .seg button.on{background:#C9A55A;color:#14100A}
+:root[data-theme="luxury"] .inp{background:#0F0F11;border-color:#3A3326}
+/* ---- 雪（t62） ---- */
+:root[data-theme="snow"]{--bg:#E8F0F7;--panel:#FFFFFF;--ink:#1D2B3A;--muted:#5F7387;--line:#CFDCE8;--accent:#2F7FC1;--accent-ink:#FFFFFF;--soft:#E3EEF8;
+  --red:#C8435A;--win:#1F8A70;--lose:#C8435A;--up:#1F8A70;--down:#C8435A;--night:#3D4FA8;--noon:#B06A1A;--felt:#2C6A62}
+:root[data-theme="snow"] body{background:radial-gradient(circle,#FFFFFF 0 1.6px,transparent 2.2px) 0 0/38px 38px,
+  radial-gradient(circle,rgba(255,255,255,.9) 0 1.1px,transparent 1.6px) 19px 22px/46px 46px,linear-gradient(180deg,#D7E5F2,#F3F7FB);background-attachment:fixed}
+:root[data-theme="snow"] header{background:linear-gradient(90deg,#2F7FC1,#5FA8DD);border-bottom:3px solid #FFFFFF;box-shadow:0 2px 8px rgba(47,127,193,.25);color:#FFFFFF}
+:root[data-theme="snow"] .logo small{color:#E3EEF8}
+:root[data-theme="snow"] nav.tabs{background:rgba(255,255,255,.95);border-top:2px solid #CFDCE8}
+:root[data-theme="snow"] nav.tabs button.on{color:#2F7FC1}
+:root[data-theme="snow"] nav.tabs button.tb-mid b{background:#2F7FC1;border-color:#FFFFFF}
+:root[data-theme="snow"] .card{border-color:#FFFFFF;box-shadow:0 4px 14px rgba(47,90,140,.10)}
+:root[data-theme="snow"] h3::before{content:"❄\FE0E";color:#5FA8DD;margin-right:6px}
+/* ---- サイバー（t62）：ターミナル風 ---- */
+:root[data-theme="cyber"]{--bg:#030806;--panel:#07120D;--ink:#B8FFCF;--muted:#5FA97A;--line:#12452A;--accent:#39FF88;--accent-ink:#021208;--soft:#0B2016;
+  --red:#FF4D6D;--black:#010302;--win:#39FF88;--lose:#FF4D6D;--up:#39FF88;--down:#FF4D6D;--night:#7AA8FF;--noon:#FFD23F;--felt:#0B3A26;--radius:0px;
+  --font:"BIZ UDGothic","Osaka-Mono","MS Gothic",monospace}
+:root[data-theme="cyber"] body{background:#030806 repeating-linear-gradient(0deg,rgba(57,255,136,.035) 0 1px,transparent 1px 3px)}
+:root[data-theme="cyber"] header{background:#030806;border-bottom:1px solid #39FF88;box-shadow:0 0 10px rgba(57,255,136,.35);color:#B8FFCF}
+:root[data-theme="cyber"] .logo{color:#39FF88;text-shadow:0 0 8px rgba(57,255,136,.6)}
+:root[data-theme="cyber"] .logo small{color:#5FA97A}
+:root[data-theme="cyber"] nav.tabs{background:#030806;border-top:1px solid #39FF88;box-shadow:0 0 10px rgba(57,255,136,.3)}
+:root[data-theme="cyber"] nav.tabs button{color:#5FA97A}
+:root[data-theme="cyber"] nav.tabs button.on{color:#39FF88}
+:root[data-theme="cyber"] nav.tabs button.tb-mid b{border-radius:0;background:#39FF88;color:#021208;border-color:#030806}
+:root[data-theme="cyber"] .card{border:1px solid #12452A;border-radius:0;box-shadow:0 0 0 1px rgba(57,255,136,.06)}
+:root[data-theme="cyber"] h3::before{content:">";color:#39FF88;margin-right:6px}
+:root[data-theme="cyber"] h3{text-shadow:0 0 6px rgba(57,255,136,.45)}
+:root[data-theme="cyber"] .btn{background:#030806;border:1px solid #39FF88;color:#B8FFCF;border-radius:0}
+:root[data-theme="cyber"] .btn.main{background:#39FF88;color:#021208}
+:root[data-theme="cyber"] .seg{border-color:#39FF88}
+:root[data-theme="cyber"] .seg button.on{background:#39FF88;color:#021208}
+:root[data-theme="cyber"] .inp{background:#010302;border-color:#12452A;color:#B8FFCF;caret-color:#39FF88}
+:root[data-theme="cyber"] .toast{background:#39FF88;color:#021208;border-radius:0}
+/* 書体の見本（設定・t62） */
+.ft-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:8px}
+.ft-tile{border:2px solid var(--line);border-radius:12px;padding:8px 10px;text-align:left;background:var(--panel);color:var(--ink);display:flex;flex-direction:column;gap:3px}
+.ft-tile.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
+.ft-tile b{font-size:17px;font-weight:700;line-height:1.3}
+.ft-tile small{font-size:11px;color:var(--muted)}
 /* テーマの見本（設定） */
 .th-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:8px}
 .th-tile{border:2px solid var(--line);border-radius:12px;padding:0;overflow:hidden;text-align:left;background:var(--panel)}
@@ -1009,11 +1134,17 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (t && t !== 'std') r.dataset.theme = t;
     if (c && c !== 'off') r.dataset.cvd = c;
     var F = { famicom: 'DotGothic16', wa: 'Shippori+Mincho:wght@400;700;800', pastel: 'M+PLUS+Rounded+1c:wght@400;700;800',
-      chalk: 'Klee+One:wght@400;600', paper: 'Zen+Old+Mincho:wght@400;700;900', citypop: 'Zen+Maru+Gothic:wght@400;700;900' };
+      chalk: 'Klee+One:wght@400;600', paper: 'Zen+Old+Mincho:wght@400;700;900', citypop: 'Zen+Maru+Gothic:wght@400;700;900',
+      sakura: 'Zen+Maru+Gothic:wght@400;700;900', lcd: 'DotGothic16', luxury: 'Zen+Old+Mincho:wght@400;700;900', cyber: 'BIZ+UDGothic:wght@400;700' };
+    var fo = localStorage.getItem('font'), fg = localStorage.getItem('font_gf'), fc = localStorage.getItem('font_css');   // 書体（t62）
+    if (fo && fo !== 'auto' && fc) {
+      r.style.setProperty('--font', fc); r.dataset.font = fo;
+      if (fg && /^[A-Za-z0-9+:;@,.]+$/.test(fg)) { var lf = document.createElement('link'); lf.rel = 'stylesheet'; lf.id = 'ff-' + fo; lf.href = 'https://fonts.googleapis.com/css2?family=' + fg + '&display=swap'; document.head.appendChild(lf); }
+    }
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=80ebed4d","zh-TW":"zh-TW.js?v=4b487e4a","zh-CN":"zh-CN.js?v=eaddaa4a","ko":"ko.js?v=26eebc10","ko-Hani":"ko-Hani.js?v=e54b83ce"};
+  window.AX_LANGS = {"en":"en.js?v=94be3e21","zh-TW":"zh-TW.js?v=a7b15b71","zh-CN":"zh-CN.js?v=9e7b80e5","ko":"ko.js?v=c12ad9d7","ko-Hani":"ko-Hani.js?v=75cf103a"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -1565,6 +1696,11 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <p class="muted small" style="margin:8px 0 0">サイト全体の見た目が変わります。保存すると、ほかの端末でも同じになります。</p>
   </div>
   <div class="card" data-sub="style">
+    <h3 style="margin-top:0">書体（フォント）</h3>
+    <div class="ft-grid" id="ftGrid"></div>
+    <p class="muted small" style="margin:8px 0 0">サイト全体の文字の形が変わります（「テーマのまま」は、テーマに合った書体）。</p>
+  </div>
+  <div class="card" data-sub="style">
     <h3 style="margin-top:0">色覚サポート</h3>
     <div class="seg sm" id="cvdSeg" style="display:flex;flex-wrap:wrap"><button data-k="off">ふつう</button><button data-k="mark">記号をつける</button><button data-k="safe">記号＋見分けやすい色</button></div>
     <div id="cvdEx" style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center"></div>
@@ -1729,15 +1865,45 @@ const THEMES = [
   ['casino', 'カジノ', '緑のフェルトと金色', '#0E3B2C', '#2A170D', '#D4AF37', '#F6EED9'],
   ['win95', '90年代パソコン風', '灰色の立体ボタンと青いタイトルバー', '#008080', '#C0C0C0', '#000080', '#FFFFFF'],
   ['paper', '新聞', 'モノクロの紙面と明朝体', '#ECE8DF', '#F7F4ED', '#141414', '#141414'],
-  ['citypop', 'シティポップ', '80年代の夕焼けとネオン色', 'linear-gradient(90deg,#FFC48A,#FF7BA5,#9C8CFF)', '#FFFFFF', '#26203F', '#26203F']];
+  ['citypop', 'シティポップ', '80年代の夕焼けとネオン色', 'linear-gradient(90deg,#FFC48A,#FF7BA5,#9C8CFF)', '#FFFFFF', '#26203F', '#26203F'],
+  ['sakura', '桜', '花びらの舞う、やわらかいピンク', '#FFF5F7', '#F9C9D8', '#D94F7A', '#4A2B35'],
+  ['ocean', '海', '深い青の海と、エメラルドの光', 'linear-gradient(180deg,#0A4A6E,#06283D)', '#0B3550', '#3FD0C9', '#E6F4FA'],
+  ['forest', '森', '若葉の緑と、木の茶色', '#EEF3E6', '#5B4632', '#3F7D3A', '#24321F'],
+  ['lcd', '液晶ゲーム風', '4色の緑の液晶とドットの字', '#9BBC0F', '#306230', '#0F380F', '#0F380F'],
+  ['luxury', '黒と金', '黒い地に金色の明朝体', '#0B0B0D', '#141416', '#C9A55A', '#F3EBDD'],
+  ['snow', '雪', '白い雪と、氷の青', '#E8F0F7', '#FFFFFF', '#2F7FC1', '#1D2B3A'],
+  ['cyber', 'サイバー', '黒い画面に緑の文字（ターミナル風）', '#030806', '#07120D', '#39FF88', '#B8FFCF']];
+const NEW_TH = ['sakura', 'ocean', 'forest', 'lcd', 'luxury', 'snow', 'cyber'];   // t62：サーバーの更新の前は、この端末だけにおぼえる
 const THEME_FONT = { famicom: 'DotGothic16', wa: 'Shippori+Mincho:wght@400;700;800', pastel: 'M+PLUS+Rounded+1c:wght@400;700;800',
-  chalk: 'Klee+One:wght@400;600', paper: 'Zen+Old+Mincho:wght@400;700;900', citypop: 'Zen+Maru+Gothic:wght@400;700;900' };
+  chalk: 'Klee+One:wght@400;600', paper: 'Zen+Old+Mincho:wght@400;700;900', citypop: 'Zen+Maru+Gothic:wght@400;700;900',
+  sakura: 'Zen+Maru+Gothic:wght@400;700;900', lcd: 'DotGothic16', luxury: 'Zen+Old+Mincho:wght@400;700;900', cyber: 'BIZ+UDGothic:wght@400;700' };
+// 書体（フォント）：テーマとは別にえらべる（t62）。[キー, 名前, せつめい, Google Fonts, font-family]
+const FONTS = [
+  ['auto', 'テーマのまま', 'テーマに合った書体', '', ''],
+  ['gothic', 'ゴシック', 'すっきり', 'Noto+Sans+JP:wght@400;700;900', '"Noto Sans JP","Hiragino Sans",sans-serif'],
+  ['kaku', '角ゴシック', 'かっちり・太め', 'M+PLUS+1p:wght@400;700;800', '"M PLUS 1p","Hiragino Sans",sans-serif'],
+  ['ud', 'UDゴシック', '読みまちがえにくい', 'BIZ+UDPGothic:wght@400;700', '"BIZ UDPGothic","Hiragino Sans",sans-serif'],
+  ['maru', '丸ゴシック', 'やわらかい', 'Zen+Maru+Gothic:wght@400;700;900', '"Zen Maru Gothic","Hiragino Maru Gothic ProN",sans-serif'],
+  ['mincho', '明朝', '本や新聞のような', 'Shippori+Mincho:wght@400;700;800', '"Shippori Mincho","Hiragino Mincho ProN","Yu Mincho",serif'],
+  ['hand', '手書き風', 'ペンで書いたような', 'Klee+One:wght@400;600', '"Klee One","Hiragino Maru Gothic ProN",sans-serif'],
+  ['pop', 'ポップ', '元気な丸い字', 'Mochiy+Pop+One', '"Mochiy Pop One","Hiragino Maru Gothic ProN",sans-serif'],
+  ['brush', '毛筆', '筆で書いたような字', 'Yuji+Syuku', '"Yuji Syuku","Hiragino Mincho ProN",serif'],
+  ['dot', 'ドット', 'ゲームのような点の字', 'DotGothic16', '"DotGothic16","Courier New",monospace']];
+function fontLink(k) {
+  const f = FONTS.find(x => x[0] === k); if (!f || !f[3] || document.getElementById('ff-' + k)) return;
+  const l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'ff-' + k; l.href = `https://fonts.googleapis.com/css2?family=${f[3]}&display=swap`; document.head.appendChild(l);
+}
 const lookLocal = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
-function applyLook(theme, cvd) {
+function applyLook(theme, cvd, font) {
   const r = document.documentElement;
   theme = THEMES.some(t => t[0] === theme) ? theme : 'std'; cvd = ['off', 'mark', 'safe'].includes(cvd) ? cvd : 'off';
+  if (font === undefined) font = lookLocal('font') || 'auto';
+  if (!FONTS.some(f => f[0] === font)) font = 'auto';
   if (theme !== 'std') r.dataset.theme = theme; else delete r.dataset.theme;
   if (cvd !== 'off') r.dataset.cvd = cvd; else delete r.dataset.cvd;
+  const ff = FONTS.find(f => f[0] === font);   // 書体（t62）：テーマの書体の上に。画面が出る前にもあてるので、この端末にもおぼえる
+  if (ff && ff[4]) { fontLink(font); r.style.setProperty('--font', ff[4]); r.dataset.font = font; } else { r.style.removeProperty('--font'); delete r.dataset.font; }
+  try { localStorage.setItem('font', font); localStorage.setItem('font_gf', ff && ff[3] || ''); localStorage.setItem('font_css', ff && ff[4] || ''); } catch (e) {}
   const f = THEME_FONT[theme];
   if (f && !document.getElementById('tf-' + theme)) {
     const l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + theme; l.href = `https://fonts.googleapis.com/css2?family=${f}&display=swap`; document.head.appendChild(l);
@@ -1747,15 +1913,17 @@ function applyLook(theme, cvd) {
 // ログインしたら、サーバーに保存してある設定をあてる（なければ、この端末のもの）
 function lookFromServer() {
   const p = ME.prefs || {};
-  applyLook(p.theme || lookLocal('theme') || 'std', p.cvd || lookLocal('cvd') || 'off');
+  const lt = lookLocal('theme');   // t62：新しいテーマ・書体は、サーバーの更新の前はこの端末だけにある
+  applyLook(lt && NEW_TH.includes(lt) && p.theme !== lt ? lt : (p.theme || lt || 'std'), p.cvd || lookLocal('cvd') || 'off', p.font || lookLocal('font') || 'auto');
   const ll = lookLocal('lang');
   if (!ll && p.lang && p.lang !== LANG) { try { localStorage.setItem('lang', p.lang); if (localStorage.getItem('lang') === p.lang) location.reload(); } catch (e) {} }
   else if (ll && ll !== (p.lang || 'ja')) call('prefs_save', { p_prefs: { lang: ll } }).then(x => { ME.prefs = x; }).catch(() => {});
 }
 async function lookSave(k, v) {
-  const theme = k === 'theme' ? v : (document.documentElement.dataset.theme || 'std'), cvd = k === 'cvd' ? v : (document.documentElement.dataset.cvd || 'off');
-  applyLook(theme, cvd); styleLoad();
-  try { ME.prefs = await call('prefs_save', { p_prefs: { [k]: v } }); } catch (e) { toast(e.message); }
+  const r = document.documentElement, theme = k === 'theme' ? v : (r.dataset.theme || 'std'), cvd = k === 'cvd' ? v : (r.dataset.cvd || 'off'), font = k === 'font' ? v : (r.dataset.font || 'auto');
+  applyLook(theme, cvd, font); styleLoad();
+  try { ME.prefs = await call('prefs_save', { p_prefs: { [k]: v } }); }
+  catch (e) { if (!((k === 'theme' && NEW_TH.includes(v)) || k === 'font')) toast(e.message); }   // 新しいテーマ・書体：サーバーの更新の前は、この端末にだけおぼえる
 }
 function styleLoad() {
   const cur = document.documentElement.dataset.theme || 'std', cv = document.documentElement.dataset.cvd || 'off';
@@ -1763,6 +1931,10 @@ function styleLoad() {
       <span class="pv" style="background:${t[3]}"><i style="background:${t[4]}"></i><i style="background:${t[5]}"></i><b style="color:${t[6]}">Aa あ</b></span>
       <span class="nm">${t[1]}<small>${t[2]}</small></span></button>`).join('');
   $$('#thGrid [data-th]').forEach(b => b.onclick = () => lookSave('theme', b.dataset.th));
+  const fc = document.documentElement.dataset.font || 'auto';   // 書体（t62）：見本を出すために、ぜんぶ読む
+  FONTS.forEach(f => fontLink(f[0]));
+  $('#ftGrid').innerHTML = FONTS.map(f => `<button class="ft-tile ${f[0] === fc ? 'on' : ''}" data-ft="${f[0]}"><b translate="no" style="${f[4] ? `font-family:${f[4].replace(/"/g, "'")}` : ''}">あア字 Aa 1</b><small><span>${f[1]}</span>・<span>${f[2]}</span></small></button>`).join('');
+  $$('#ftGrid [data-ft]').forEach(b => b.onclick = () => lookSave('font', b.dataset.ft));
   $$('#cvdSeg button').forEach(b => { b.classList.toggle('on', b.dataset.k === cv); b.onclick = () => lookSave('cvd', b.dataset.k); });
   $('#cvdEx').innerHTML = [0, 26, 52, 78].map(c => ocCard(c)).join('') + `<span class="small muted" style="margin-left:6px">← ワンカードの色（赤・黄・緑・青）</span>`;
 }
