@@ -204,7 +204,9 @@ function m3Blds(v) {
   const it = visibleItems();   // S.v3rect（近いはんい）・S.cam.z（細かさ）は m3Frame で合わせてある
   const bs = [...it.blds.values()].filter(b => b.bb[2] >= v.x0 && b.bb[0] <= v.x1 && b.bb[3] >= v.y0 && b.bb[1] <= v.y1);
   const segs = [...it.segs.values()].filter(s => s.bb[2] >= v.x0 && s.bb[0] <= v.x1 && s.bb[3] >= v.y0 && s.bb[1] <= v.y1);
-  const key = bs.length + ':' + bs.reduce((a, b) => (a + b.id * 31 + b.floors) % 1e9, 0) + '|' + segs.length + ':' + segs.reduce((a, s) => (a + s.id * 17) % 1e9, 0) + '|' + M3.cm.size;
+  const rws = [...(it.rwys ? it.rwys.values() : [])].filter(r => r.bb && r.bb[2] >= v.x0 && r.bb[0] <= v.x1 && r.bb[3] >= v.y0 && r.bb[1] <= v.y1);
+  const key = bs.length + ':' + bs.reduce((a, b) => (a + b.id * 31 + b.floors) % 1e9, 0) + '|' + segs.length + ':' + segs.reduce((a, s) => (a + s.id * 17) % 1e9, 0) + '|' + M3.cm.size
+            + '|' + rws.length + ':' + rws.reduce((a, r) => (a + r.id * 13) % 1e9, 0);
   if (key === M3.bKey) return;
   M3.bKey = key;
   m3Clear(M3.grpB); m3Clear(M3.grpR);
@@ -282,19 +284,27 @@ function m3Blds(v) {
   mkMesh(RF, null, M3.grpB);
   // 道路・線路：地面の少し上に帯で（道のはば・地面の高さにそって）
   const RD = [];
+  // 帯（a→b・はば wdt マス・地面から lift だけ上）
+  const strip = (ax, ay, bx, by, wdt, col, lift) => {
+    const L = Math.hypot(bx - ax, by - ay); if (L < 1e-6) return;
+    const m = Math.max(1, Math.ceil(L / 1)), nx = -(by - ay) / L * wdt / 2, ny = (bx - ax) / L * wdt / 2;
+    for (let q = 0; q < m; q++) {
+      const t0 = q / m, t1 = (q + 1) / m, x0 = ax + (bx - ax) * t0, y0 = ay + (by - ay) * t0, x1 = ax + (bx - ax) * t1, y1 = ay + (by - ay) * t1;
+      const h0 = m3Ground(x0, y0) + lift, h1 = m3Ground(x1, y1) + lift;
+      RD.push(x0 + nx, h0, y0 + ny, x1 + nx, h1, y1 + ny, x1 - nx, h1, y1 - ny, x0 + nx, h0, y0 + ny, x1 - nx, h1, y1 - ny, x0 - nx, h0, y0 - ny);
+      for (let k = 0; k < 6; k++) RD.push(...col);
+    }
+  };
   for (const s of segs) {
     const isRail = s.k === 'rail', wdt = Math.max(isRail ? 0.18 : 0.14, s.w || 0.2), col = isRail ? [0.42, 0.38, 0.35] : (s.c === 'exp' ? [0.62, 0.66, 0.72] : [0.72, 0.72, 0.70]);
     const P = s.P, n = s.np;
-    for (let i = 0; i < n - 1; i++) {
-      const ax = P[i * 2], ay = P[i * 2 + 1], bx = P[i * 2 + 2], by = P[i * 2 + 3], L = Math.hypot(bx - ax, by - ay); if (L < 1e-6) continue;
-      const m = Math.max(1, Math.ceil(L / 1)), nx = -(by - ay) / L * wdt / 2, ny = (bx - ax) / L * wdt / 2;
-      for (let q = 0; q < m; q++) {
-        const t0 = q / m, t1 = (q + 1) / m, x0 = ax + (bx - ax) * t0, y0 = ay + (by - ay) * t0, x1 = ax + (bx - ax) * t1, y1 = ay + (by - ay) * t1;
-        const h0 = m3Ground(x0, y0) + 0.05 * M3_U * 20, h1 = m3Ground(x1, y1) + 0.05 * M3_U * 20;
-        RD.push(x0 + nx, h0, y0 + ny, x1 + nx, h1, y1 + ny, x1 - nx, h1, y1 - ny, x0 + nx, h0, y0 + ny, x1 - nx, h1, y1 - ny, x0 - nx, h0, y0 - ny);
-        for (let k = 0; k < 6; k++) RD.push(...col);
-      }
-    }
+    for (let i = 0; i < n - 1; i++) strip(P[i * 2], P[i * 2 + 1], P[i * 2 + 2], P[i * 2 + 3], wdt, col, 0.05 * M3_U * 20);
+  }
+  // 滑走路（t61）：黒っぽい帯（はば r.w マス）と、白い中心線
+  for (const r of rws) {
+    const [ax, ay, bx, by] = r.P;
+    strip(ax, ay, bx, by, r.w || 1.2, [0.30, 0.31, 0.33], 0.07 * M3_U * 20);
+    strip(ax + r.ux * 0.6, ay + r.uy * 0.6, bx - r.ux * 0.6, by - r.uy * 0.6, 0.04, [0.95, 0.95, 0.93], 0.09 * M3_U * 20);
   }
   if (RD.length) {   // 四角ごとに 位置18・色18 の順
     const P = [], C = [];
