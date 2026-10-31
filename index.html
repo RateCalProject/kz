@@ -265,7 +265,7 @@ h3{font-size:15px;margin:16px 0 8px}
 .rank li:first-child{border-top:0}
 .rank li b{width:22px;color:var(--muted)}
 .rank li .v{margin-left:auto;font-weight:700}
-.links a{color:var(--accent);font-weight:700}
+.links a{color:var(--accent);font-weight:700}.lg-links a{display:inline-block;margin:0 7px}
 .terms{font-size:13px;line-height:1.8;color:var(--muted);padding-left:18px;margin:0}
 /* タブまわり・仕事・送金 */
 .subnav{margin:10px 0 0}
@@ -646,6 +646,14 @@ details.ed{margin:6px 0}
 details.ed summary{cursor:pointer;color:var(--accent);font-weight:700;font-size:14px}
 .inp{width:100%;font-size:16px;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);margin:4px 0;color:var(--ink)}
 .wk-pick{display:flex;flex-direction:column;gap:4px;width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer}
+.ad-slot{margin:12px 0}.ad-slot:empty,.ad-slot:has(ins[data-ad-status="unfilled"]){display:none}.ad-lbl{font-size:11px;color:var(--muted,#888);margin:0 0 2px}
+.ga-tix{font-size:26px;margin-right:2px}.ga-res{text-align:center}.ga-spin{font-size:18px;margin:6px 0;animation:gaPulse .5s ease-in-out infinite alternate}
+@keyframes gaPulse{from{opacity:.45}to{opacity:1}}
+.ga-big{font-size:24px;font-weight:800}.ga-big.win{color:var(--accent)}
+.ga-items{display:flex;flex-wrap:wrap;gap:4px;justify-content:center;margin-top:8px}.ga-items span{padding:2px 8px;border:1px solid var(--line);border-radius:8px;font-size:13px}.ga-items span.big{border-color:var(--accent);color:var(--accent);font-weight:800}
+.ga-tbl{border-collapse:collapse;width:100%}.ga-tbl td{border-top:1px solid var(--line);padding:4px 2px}.ga-tbl td:last-child{text-align:right;white-space:nowrap}
+.ga-lr{display:grid;grid-template-columns:auto auto 1fr;gap:8px;padding:5px 0;border-top:1px solid var(--line)}.ga-lr b{text-align:right}
+.ad-bar{height:10px;border-radius:6px;background:var(--line);overflow:hidden}.ad-bar i{display:block;height:100%;width:0;background:var(--accent,#1F6B4F);transition:width .4s}
 .wk-pick b{font-size:16px}
 .wk-q{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line)}
 .wk-q:first-of-type{border-top:0}
@@ -1234,7 +1242,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=de14997a","zh-TW":"zh-TW.js?v=37beb541","zh-CN":"zh-CN.js?v=9e5b5f00","ko":"ko.js?v=0088d952","ko-Hani":"ko-Hani.js?v=32b6fd22"};
+  window.AX_LANGS = {"en":"en.js?v=b00499f0","zh-TW":"zh-TW.js?v=dc6c1578","zh-CN":"zh-CN.js?v=7609e37a","ko":"ko.js?v=8122071f","ko-Hani":"ko-Hani.js?v=0fb47a42"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -1313,6 +1321,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <div id="ppList"></div>
     <p class="muted small" style="margin:8px 0 0">何も入れないと、フレンドが並びます。人のページでは、ニックネーム・ID・バッジ・社長をしている会社・書いた本・TLの投稿が見られます（所持金は見えません）。</p>
   </div>
+  <div class="ad-slot" data-sub="today pub stats" id="adInfo"></div>
 </section>
 
 <!-- メイン（下のメニューのまん中） -->
@@ -1489,12 +1498,38 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   <p class="notice small hidden" id="mailSent"></p>
   <p class="notice small"><b>AiliNaX は現金・物・電子マネーなどと交換できません。</b>現金での売買や、その持ちかけも禁止です。ゲーム内アイテム（マイクラのブロックなど）との取引はOKです。</p>
   <p class="links small"><a href="battle/">付属ゲーム：市区町村バトル（ログインなしで遊べます）</a></p>
+  <p class="links small lg-links"><a href="guide/">遊び方（ヘルプ）</a> <a href="guide/#terms">利用規約</a> <a href="privacy.html">プライバシーポリシー</a></p>
 </section>
 
 <!-- 遊戯：ゲームの一覧 -->
 <section id="vGameList" class="view hidden">
   <div class="card" style="padding:6px 16px"><div id="gameList"></div></div>
   <p class="muted small" style="margin:8px 4px">勝ち負けはすべてサーバーで決まります。もうけ（払い戻し − 賭け金）は所得になり、税金の対象です（風の芽ジャンボの当せん金はのぞく）。</p>
+</section>
+
+<!-- 遊戯：抽選（広告を見て🎫チケット → ガチャ） -->
+<section id="vGacha" class="view hidden">
+  <div class="card hidden" id="gaOff"><p class="muted small" style="margin:0">準備中です。もうしばらくお待ちください。</p></div>
+  <div class="card ga-on">
+    <div class="row"><b class="grow" style="font-size:17px">🎫 チケット</b><b class="ga-tix num" id="gaTix">0</b><span class="muted" id="gaMai">枚</span></div>
+    <p class="muted small" id="adNote" style="margin:8px 0"></p>
+    <div id="adMeter"><div class="ad-bar"><i id="adBarIn"></i></div><p class="small" id="adCnt" style="margin:6px 0 8px"></p></div>
+    <button class="btn main wide" id="adGo">📺 広告を見る</button>
+    <p class="muted small" style="margin:8px 0 0">広告は Google が出します（1つずつ、全画面）。最後まで見るとチケットがもらえます。チケットは本人だけが使えます（送れません。期限はありません）。</p>
+  </div>
+  <div class="card ga-on">
+    <h3 style="margin-top:0">🎰 X ガチャ</h3>
+    <p class="muted small" id="gaXNote" style="margin:0 0 8px"></p>
+    <div class="row"><button class="btn main grow" data-ga="x1">1回（🎫1）</button><button class="btn main grow" data-ga="x10">10連（🎫10）</button></div>
+  </div>
+  <div class="card ga-on">
+    <h3 style="margin-top:0">🏞 国有地ガチャ</h3>
+    <p class="muted small" id="gaLNote" style="margin:0 0 8px"></p>
+    <button class="btn main wide" data-ga="land" id="gaLandBtn">1回（🎫10）</button>
+  </div>
+  <div class="card hidden ga-res" id="gaRes"></div>
+  <details class="card ga-on"><summary><b>確率と中身</b></summary><div id="gaOdds" class="small"></div></details>
+  <details class="card ga-on"><summary><b>自分の結果（20件）</b></summary><div id="gaLog" class="small"></div></details>
 </section>
 
 <!-- 遊戯：ゲームタスク・ゲームランク・カジノランク -->
@@ -1782,6 +1817,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <div id="hpList"><p class="muted small" style="margin:8px 0 0">読みこみ中…</p></div>
     <p class="muted small" style="margin:10px 0 0"><span>見つからないときは、意見箱で聞いてください。</span> <a href="#" id="hpAsk">📮 意見箱へ</a></p>
   </div>
+  <div class="ad-slot" data-sub="help" id="adHelp"></div>
   <div class="card" data-sub="idea">
     <h3 style="margin-top:0">📮 意見箱</h3>
     <p class="muted small" style="margin:0 0 8px">「こうなったらいいな」「ここが使いにくい」「不具合を見つけた」など、なんでも送ってください。運営（管理者）が読みます。</p>
@@ -1891,10 +1927,12 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
       <li>AiliNaX を現金などで売り買いすること、その持ちかけ、AiliNaX を使ったお金の賭けは禁止です。</li>
       <li>はじめてログインしたときに 110,000 X を配ります（ゲストは 5,000 X で、本登録したときに残りの 105,000 X）。毎年、元日・旧正月・建国記念の日（2月11日）にも 80,000 X ずつ配ります。</li>
       <li>送金には手数料（送る額の1%・最低1 X）がかかります。AiliNaXを現金などで売り買いするための送金は禁止です。</li>
+      <li>広告を見てもらえるチケットは、もらった本人だけが、このサイトの中で使えます（送ったり、売り買いしたりはできません）。</li>
       <li>勝ち負けはサーバーで決めています。残高は予告なくリセット・調整することがあります。</li>
       <li>ほかの人がいやな気持ちになるニックネームはやめましょう。</li>
       <li>このサイトを使って起きたトラブルや損害について、制作者は責任を負いません。内容は予告なく変わることがあります。</li>
     </ul>
+    <p class="small" style="margin:10px 0 0"><a href="privacy.html" target="_blank" rel="noopener">プライバシーポリシー</a> <a href="guide/" target="_blank" rel="noopener" style="margin-left:12px">遊び方（ログインしなくても読めるページ）</a></p>
     <p class="small muted" style="margin:10px 0 0">制作：<a href="https://x.com/Airln_7" target="_blank" rel="noopener">@Airln_7</a></p>
   </div>
   <button class="btn wide" id="logout" data-sub="prof">ログアウト</button>
@@ -2288,13 +2326,13 @@ async function enter() {
   }
 }
 function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
-const GAMES = ['vGameList', 'vTask', 'vRace', 'vBoat', 'vBike', 'vSlot', 'vBj', 'vRou', 'vHilo', 'vLobby', 'vRoom', 'vLot', 'vFish', 'vOwner'];
+const GAMES = ['vGacha', 'vGameList', 'vTask', 'vRace', 'vBoat', 'vBike', 'vSlot', 'vBj', 'vRou', 'vHilo', 'vLobby', 'vRoom', 'vLot', 'vFish', 'vOwner'];
 const HIDDEN_SUBS = ['vLobby', 'vRoom', 'vLot', 'vFish', 'vOwner'];
 // メインメニュー（左から）とサブメニュー
 const MENU = [
   ['vInfo', '情報', 'i', [['today', '今日'], ['cur', '通貨'], ['pub', '広報・書籍'], ['mkt', '相場'], ['stats', '統計'], ['tl', 'TL'], ['people', '人をさがす'], ['jack', '競馬億万長者']]],
   ['vWork', '仕事', '✎', [['jobs', '仕事をえらぶ'], ['stat', '給料'], ['corp', '企業ページ'], ['mywork', '勤め先']]],
-  ['vGame', '遊戯', '♠', [['vGameList', '≡ 一覧'], ['vTask', '★ タスク'], ['vRace', '🏇 競馬'], ['vBoat', '🚤 競艇'], ['vBike', '🚲 競輪'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
+  ['vGame', '遊戯', '♠', [['vGacha', '🎫 抽選'], ['vGameList', '≡ 一覧'], ['vTask', '★ タスク'], ['vRace', '🏇 競馬'], ['vBoat', '🚤 競艇'], ['vBike', '🚲 競輪'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
   ['vHome', 'メイン', '◉', [['menu', 'メニュー'], ['horses', '所持馬'], ['friend', 'フレンド'], ['msg', '連絡']]],
   ['vCorp', '企業', LANG !== 'ja' ? '🏢' : '社', [['search', '会社検索'], ['review', '評価（500 X）'], ['pin', 'ピン留め'], ['desk', '相談'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '取引所'], ['map', '国土']]],
   ['vTax', '役所', LANG !== 'ja' ? '🏛' : '税', [['tax', '税金'], ['xfer', '送金'], ['bill', '請求'], ['court', '訴え'], ['kokko', '国庫・番付'], ['help', 'ヘルプ'], ['idea', '意見箱']]],
@@ -2326,9 +2364,10 @@ function go(v, sub) {
   $$('#subNav button').forEach(b => b.onclick = () => { if (b.dataset.s === 'vGameList') setGcat(null); go(main, b.dataset.s); });
   { const sn = $('#subNav'), on = sn.querySelector('button.on'); if (on) sn.scrollLeft = on.offsetLeft - (sn.clientWidth - on.offsetWidth) / 2; }
   window.scrollTo(0, 0);
-  if (sec === 'vInfo') { if (sub === 'today') todayLoad(); if (sub === 'cur' || sub === 'jack') infoLoad(); if (sub === 'tl') tlLoad(true); if (sub === 'mkt') mktLoad(); if (sub === 'stats') statsLoad(); if (sub === 'pub') pubLoad(); if (sub === 'people') peopleLoad(); }
+  if (sec === 'vInfo') { if (sub === 'today') todayLoad(); if (sub === 'cur' || sub === 'jack') infoLoad(); if (sub === 'tl') tlLoad(true); if (sub === 'mkt') mktLoad(); if (sub === 'stats') statsLoad(); if (sub === 'pub') pubLoad(); if (sub === 'people') peopleLoad(); if (['today', 'pub', 'stats'].includes(sub)) adBanner($('#adInfo')); }
   if (sec === 'vHome') homeLoad(sub);
   if (sec === 'vWork') workLoad();
+  if (sec === 'vGacha') gachaLoad();
   if (sec === 'vRace') kbLoad();
   if (sec === 'vBoat') prLoad('boat');
   if (sec === 'vBike') prLoad('bike');
@@ -2343,7 +2382,7 @@ function go(v, sub) {
   if (sec === 'vHilo') hiloLoad();
   if (sec === 'vMore') moreLoad();
   if (sec === 'vMore' && sub === 'style') styleLoad();
-  if (sec === 'vTax') { if (sub === 'help') helpLoad(); else if (sub === 'idea') ideaLoad(); else taxLoad(); }
+  if (sec === 'vTax') { if (sub === 'help') { helpLoad(); adBanner($('#adHelp')); } else if (sub === 'idea') ideaLoad(); else taxLoad(); }
   if (sec === 'vCorp') corpLoad(sub);
   if (sec === 'vWork' && sub === 'corp') ownLoad();
   if (sec === 'vWork' && sub === 'mywork') myWorkLoad();
@@ -2397,10 +2436,11 @@ function subStep(d) {
 const GAME_GROUPS = [
   ['公営競技', '', ['vRace', 'vOwner', 'vBike', 'vBoat'], '🏇'],
   ['ミニゲーム', 'その他', ['vSlot', 'vBj', 'vRou', 'vHilo', 'reversi', 'chess', 'shogi', 'onecard', 'mahjong', 'koikoi', 'auction', 'vFish'], '🎲'],
-  ['風の芽製作所', 'オリジナル', ['battle', 'ebifry', 'karuta', 'vLot'], '🌱'],   // 風の芽製作所は、うちの作品だけ（花札・競り市・釣りはミニゲームへ）
+  ['風の芽製作所', 'オリジナル', ['vGacha', 'battle', 'ebifry', 'karuta', 'vLot'], '🌱'],   // 風の芽製作所は、うちの作品だけ（花札・競り市・釣りはミニゲームへ）
   ['メダカ研究所', '', ['kani'], '🐟'],
 ];
 const GAME_LIST = [
+  ['vGacha', '🎫', '抽選', '広告を見てチケットをもらい、ガチャを引く。X ガチャ（チケット1枚）と、国が売っている土地が当たる国有地ガチャ（10枚）'],
   ['vRace', '🏇', '競馬', '毎日 12:30〜13:30（昼競馬）と 16:30〜22:30（20:30はメインレース、そのあと深夜競馬）。みんなで同じレースに賭ける、いちばんの目玉'],
   ['vOwner', '🐴', '馬主', '新東京競馬競市のせりで馬を買い、調教・エサ・休養で育ててレースへ。5着までに入ると賞金、走るたびに出走手当（メイン →「所持馬」）'],
   ['vBike', '🚲', '競輪', '毎日 13:50〜15:40（12R）。同じ地区の選手がラインを組んで走る。2車単・3連単・2枠複など7種類の車券'],
@@ -5020,7 +5060,7 @@ function stCmpDraw() {
    役所 → ヘルプ（t62）：遊び方・やり方（help/help.json。README からつくる）。さがせる（題・中身・ことば。ひらがな・カタカナ・全角半角は同じに）
    役所 → 意見箱（t62）：運営への問い合わせ（support_open）に「【意見箱】」の件名で送る
    ================================================================= */
-const HELP_V = '2310b230';
+const HELP_V = '798b4d8b';
 const HP = { d: null, cat: 'start', q: '' };
 const hpNorm = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
 async function helpLoad() {
@@ -5240,6 +5280,155 @@ $('#tdBox').addEventListener('click', ev => {
    仕事
    ================================================================= */
 let WK = null, wkTimer = null;
+/* ---------------- 広告（Google AdSense）と抽選（🎫チケット → ガチャ） ----------------
+   config.js の ads：client（ca-pub-…）・reward（「リワード広告」ユニットの番号）・banner（バナーの番号）・h5（true で H5 ゲーム広告の adBreak を使う）・test（true でテストの広告）
+   広告を最後まで見ると、サーバー（ad_begin → 見る → ad_end）がチケットをわたす（1日の回数まで）。チケットは本人だけ・サイトの中だけで使う（Google のきまり）
+   抽選：遊戯のいちばん上。X ガチャ（1枚・10連）と国有地ガチャ（10枚）。DB の更新49 がまだのときは「準備中」 */
+const ADS = Object.assign({ client: '', reward: '', banner: '', h5: false, test: false }, CFG.ads || {});
+const adsReady = () => !!(ADS.client && (ADS.reward || ADS.h5));
+let adLib = null, GA = null, adBusy = false, gaBusy = false;
+function adLoadLib() {
+  if (adLib) return adLib;
+  return (adLib = new Promise((res, rej) => {
+    window.adsbygoogle = window.adsbygoogle || [];
+    if (ADS.h5) { window.adBreak = window.adConfig = o => window.adsbygoogle.push(o); }
+    const sc = document.createElement('script');
+    sc.async = true; sc.crossOrigin = 'anonymous';
+    sc.src = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=' + encodeURIComponent(ADS.client);
+    if (ADS.test) sc.setAttribute(ADS.h5 ? 'data-adbreak-test' : 'data-adtest', 'on');
+    if (ADS.h5) sc.setAttribute('data-ad-frequency-hint', '30s');
+    sc.onload = () => { if (ADS.h5) window.adConfig({ preloadAdBreaks: 'on', sound: 'on' }); res(); };
+    sc.onerror = () => { adLib = null; sc.remove(); rej(new Error('広告を読みこめませんでした（広告ブロックや通信を見てください）')); };
+    document.head.appendChild(sc);
+  }));
+}
+async function gachaLoad() {
+  try { GA = await call('ad_info'); } catch (e) { GA = null; }   // DB の更新49 がまだ
+  gaDraw();
+}
+function gaDraw() {
+  const d = GA;
+  $('#gaOff').classList.toggle('hidden', !!d);
+  $$('#vGacha .ga-on').forEach(x => x.classList.toggle('hidden', !d));
+  if (!d) return;
+  $('#gaTix').textContent = fmt(d.tix); $('#gaMai').hidden = LANG !== 'ja';
+  // 広告
+  const blocked = d.guest && !d.guest_ok, full = d.n >= d.max, can = adsReady() && d.on && !blocked;
+  $('#adNote').textContent = !adsReady() ? '広告の準備中です。Google の審査がおわったら、広告を見てチケットをもらえるようになります。'
+    : blocked ? '広告でチケットをもらえるのは本登録した人だけです（設定 → プロフィール）。'
+    : !d.on ? 'いまは広告でチケットをもらえません。'
+    : `広告を1つ最後まで見るごとに 🎫 ${fmt(d.per)}枚（1日 ${fmt(d.max)}回まで）。見るかどうかは自由です。`;
+  $('#adMeter').classList.toggle('hidden', !can);
+  $('#adCnt').textContent = `きょう ${fmt(d.n)} / ${fmt(d.max)} 回`;
+  $('#adBarIn').style.width = Math.min(100, d.max ? d.n / d.max * 100 : 0) + '%';
+  const b = $('#adGo'); b.classList.toggle('hidden', !can);
+  b.disabled = adBusy || gaBusy || full;
+  b.textContent = adBusy ? '広告を読みこんでいます…' : full ? 'きょうの分は見おわりました' : `📺 広告を見る（🎫+${fmt(d.per)}）`;
+  // ガチャ
+  const g = d.gacha || {}, L = g.land || {};
+  $('#gaXNote').textContent = `チケット1枚で1回。いちばん上は ${fmt(Math.max(...(g.x || [{ amt: 0 }]).map(x => x.amt)))} X（平均 約${fmt(g.ev)} X）。`;
+  $('#gaLNote').textContent = d.guest ? '国有地ガチャは、本登録してから引けます（設定 → プロフィール）。'
+    : `${L.p}% で、国が売っている土地（いま ${fmt(L.left)}筆・時価 ${fmt(L.lo)}〜${fmt(L.hi)} X）が建物ごと当たる。はずれは ${fmt(L.miss)} X。`;
+  $('#gaLandBtn').textContent = `1回（🎫${fmt(L.cost)}）`;
+  $$('#vGacha [data-ga]').forEach(x => {
+    const cost = x.dataset.ga === 'land' ? L.cost : x.dataset.ga === 'x10' ? 10 : 1;
+    x.disabled = gaBusy || adBusy || d.tix < cost || (x.dataset.ga === 'land' && (d.guest || !L.left));
+  });
+  $('#gaOdds').innerHTML = `<p style="margin:8px 0 4px"><b>🎰 X ガチャ</b>（🎫1枚で1回）</p>
+    <table class="ga-tbl">${(g.x || []).map(x => `<tr><td>${fmt(x.amt)} X</td><td>${x.p}%</td></tr>`).join('')}</table>
+    <p style="margin:4px 0">平均 約${fmt(g.ev)} X</p>
+    <p style="margin:10px 0 4px"><b>🏞 国有地ガチャ</b>（🎫${fmt(L.cost)}枚で1回）</p>
+    <table class="ga-tbl"><tr><td>当たり：国が売っている土地を1筆（建物ごと）</td><td>${L.p}%</td></tr><tr><td>はずれ：${fmt(L.miss)} X</td><td>${Math.round((100 - L.p) * 1000) / 1000}%</td></tr></table>
+    <p class="muted" style="margin:4px 0 0">当たる土地は、いま国が時価で売っている ${fmt(L.left)}筆から1つ（どれも同じ確率）。府県庁・役所・学校・病院などの国の建物は出ません。当たった土地は、そのままあなたのものになります。ガチャの X は国が発行します（所得には入りません）。</p>`;
+  $('#gaLog').innerHTML = (d.log || []).length ? d.log.map(r => `<div class="ga-lr"><span class="muted">${esc(new Date(r.at_ms).toLocaleString(LANG === 'ja' ? 'ja-JP' : undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>
+      <span>${r.kind === 'land' ? '🏞 国有地' : r.cost >= 10 ? '🎰 10連' : '🎰 1回'}</span><b>${r.land ? `<span translate="no">${esc(r.land.addr)}</span>` : `+${fmt(r.x)} X`}</b></div>`).join('')
+    : '<p class="muted" style="margin:8px 0 0">まだ引いていません</p>';
+}
+$('#adGo').onclick = async () => {
+  if (adBusy || gaBusy || !GA) return;
+  adBusy = true; gaDraw();
+  try {
+    await adLoadLib();
+    const b = await call('ad_begin'); Object.assign(GA, b);
+    const r = await (ADS.h5 ? adShowH5() : adShowUnit());
+    if (r === 'viewed') {
+      const e = await call('ad_end', { p_tok: b.tok }); Object.assign(GA, e);
+      toast(`🎫 チケットを ${fmt(e.got)}枚 もらいました`);
+    } else toast(r === 'dismissed' ? '最後まで見るとチケットがもらえます' : 'いまは見られる広告がありません。少したってから、もう一度おしてください');
+  } catch (e) { toast(e.message); }
+  adBusy = false; gaDraw();
+};
+// リワード広告ユニット：viewed（最後まで）・dismissed（とちゅうで閉じた）・none（広告がない）
+function adShowUnit() {
+  return new Promise(res => {
+    let done = false;
+    const fin = v => { if (!done) { done = true; clearTimeout(t); res(v); } };
+    const t = setTimeout(() => fin('none'), 20000);
+    window.adsbygoogle.push({ params: { google_ad_slot: String(ADS.reward), google_ad_format: 'rewarded',
+      google_ad_loaded_callback: ad => {
+        if (!ad) return fin('none');
+        if (done) { try { if (typeof ad.disposeAd === 'function') ad.disposeAd(); } catch (e) {} return; }   // おそすぎた
+        clearTimeout(t);
+        try { ad.show(r => fin(r && r.status === 'viewed' ? 'viewed' : r && r.status === 'dismissed' ? 'dismissed' : 'none')); } catch (e) { fin('none'); }
+      } } });
+  });
+}
+// H5 ゲーム広告（Ad Placement API）
+function adShowH5() {
+  return new Promise(res => {
+    let st = 'none';
+    window.adBreak({ type: 'reward', name: 'ailinax_ticket',
+      beforeReward: showAdFn => showAdFn(), adViewed: () => { st = 'viewed'; }, adDismissed: () => { st = 'dismissed'; },
+      adBreakDone: () => res(st) });
+  });
+}
+$$('#vGacha [data-ga]').forEach(b => b.onclick = () => gaPull(b.dataset.ga));
+async function gaPull(k) {
+  if (gaBusy || adBusy || !GA) return;
+  const kind = k === 'land' ? 'land' : 'x', times = k === 'x10' ? 10 : 1;
+  gaBusy = true; gaDraw();
+  const box = $('#gaRes'); box.classList.remove('hidden'); box.innerHTML = '<p class="ga-spin">🎰 抽選中…</p>';
+  box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  try {
+    const [r] = await Promise.all([call('gacha_pull', { p_kind: kind, p_times: times }), sleep(900)]);
+    Object.assign(GA, r); setBal(r.balance, true); gaShow(r);
+    call('ad_info').then(d => { GA = d; gaDraw(); }).catch(() => {});   // 自分の結果と、のこりの土地
+  } catch (e) { box.innerHTML = `<p class="muted small" style="margin:0">${esc(e.message)}</p>`; }
+  gaBusy = false; gaDraw();
+}
+function gaShow(r) {
+  const box = $('#gaRes');
+  let h;
+  if (r.kind === 'land') {
+    h = r.land ? `<div class="ga-big win">🏞 当たり！</div><p style="margin:6px 0 2px"><b translate="no">${esc(r.land.addr)}</b></p>
+        <p class="small" style="margin:0">${fmt(r.land.m2)}㎡・時価 ${fmt(r.land.val)} X${r.land.bld ? '・建物つき' : ''}</p>
+        <p class="small muted" style="margin:4px 0 8px">もう、あなたの土地です。</p><button class="btn main" data-gamap>🗺 地図で見る</button>`
+      : `<div class="ga-big">ざんねん、はずれ…</div><p style="margin:6px 0 0">+${fmt(r.x)} X</p>`;
+  } else {
+    const top = Math.max(...r.items);
+    h = `<div class="ga-big ${top >= 5000 ? 'win' : ''}">🎰 +${fmt(r.x)} X</div>`
+      + (r.items.length > 1 ? `<div class="ga-items">${r.items.map(a => `<span class="${a >= 5000 ? 'big' : ''}">${fmt(a)}</span>`).join('')}</div>` : '');
+  }
+  if (r.later > 0) h += `<p class="small muted" style="margin:8px 0 0">ゲストの所持金は 40,000 X までなので、${fmt(r.later)} X は本登録したときにわたします。</p>`;
+  box.innerHTML = h;
+  const m = box.querySelector('[data-gamap]'); if (m) m.onclick = () => mapSpot(r.land.x, r.land.y);
+}
+// 国土の地図をひらいて、その区画を出す（区画の座標）
+async function mapSpot(x, y) {
+  go('vCorp', 'map');
+  const t0 = Date.now();
+  while (Date.now() - t0 < 20000 && !(window.MapApp && MapApp.state && MapApp.state.open && MapApp.state.wrap)) await sleep(120);
+  if (window.MapApp && MapApp.state.open && MapApp.goto) MapApp.goto(Number(x), Number(y));
+}
+// バナー（もらえるものはなし）：host に1つ。見えているところにだけ入れる
+function adBanner(host) {
+  if (!ADS.client || !ADS.banner || !host || host.dataset.ad || host.classList.contains('subhide') || !(host.parentElement && host.parentElement.offsetWidth)) return;
+  host.dataset.ad = '1';
+  adLoadLib().then(() => {
+    host.innerHTML = `<div class="ad-lbl">広告</div><ins class="adsbygoogle notr" translate="no" style="display:block" data-ad-client="${esc(ADS.client)}" data-ad-slot="${esc(String(ADS.banner))}" data-ad-format="horizontal" data-full-width-responsive="true"></ins>`;
+    window.adsbygoogle.push({});
+  }).catch(() => { delete host.dataset.ad; });
+}
 async function workLoad() {
   if (WK) return;
   try { wkStat(await call('work_state')); } catch (e) { toast(e.message); }
@@ -6168,7 +6357,7 @@ async function adminLoad() {
         <span>国庫の外にあるお金の合計</span><b>${fmt(Number(d.supply || 0) + Number(d.corp_money || 0) + Number(d.bank_money || 0) + Number(d.order_money || 0))} X</b>
         <span>発行とあわない分</span><b>${fmt(Number(t.issued_total || 0) - Number(t.balance || 0) - (Number(d.supply || 0) + Number(d.corp_money || 0) + Number(d.bank_money || 0) + Number(d.order_money || 0)))} X</b></div>
       <p class="muted small" style="margin:4px 0 0">国庫の外にあるお金＝ユーザー・会社・銀行預金・注文で預かっている X の合計。あわない分＝発行 − 国庫 − 国庫の外（＋は記録の外で消えたお金、−は記録の外でふえたお金）</p>
-`) + card('money', 'adGrant', '国庫から渡す', adGrantBody()) + card('money', '', '介入', '<div id="adIv"><p class="muted small" style="margin:0">読みこみ中…</p></div>') : '')
+`) + card('money', 'adGrant', '国庫から渡す', adGrantBody()) + card('money', 'adAds', '広告と抽選', '<div id="adAdsBox"><p class="muted small" style="margin:0">読みこみ中…</p></div>') + card('money', '', '介入', '<div id="adIv"><p class="muted small" style="margin:0">読みこみ中…</p></div>') : '')
       + (ME.event ? adEventCards() : '')
       + (adm ? card('staff', '', '副管理者・イベント製作者', '<div id="adStaff"><p class="muted small" style="margin:0">読みこみ中…</p></div>') : '');
     $$('#adminBox [data-fxok], #adminBox [data-fxng]').forEach(b => b.onclick = async () => {
@@ -6218,7 +6407,7 @@ async function adminLoad() {
       if (a === 'bankrupt' && !confirm('本当に倒産させますか？もとに戻せません。')) return;
       try { await call('admin_corp_action', { p_cid: b.dataset.cid, p_action: a, p_reason: why }); toast('できました'); adminLoad(); } catch (e) { toast(e.message); }
     });
-    if (adm) adGrantBind();
+    if (adm) { adGrantBind(); adAdsLoad(); }
     const fs = $('#adFeeSave');
     if (fs) fs.onclick = async () => { try { await call('admin_fx_fee', { p_pct: Number($('#adFee').value) }); toast('手数料を変えました'); adminLoad(); } catch (e) { toast(e.message); } };
     $('#adReload').onclick = () => adminLoad();
@@ -6268,6 +6457,36 @@ function adGrantBind() {
       adminLoad();
     } catch (e) { toast(e.message); b.disabled = false; }
   };
+}
+// 管理：広告と抽選（回数・人数・ガチャで出た X と土地、設定。管理者だけ）
+async function adAdsLoad(set) {
+  const box = $('#adAdsBox'); if (!box) return;
+  let d;
+  try { d = await call('ad_admin', { p_set: set || null }); }
+  catch (e) { box.innerHTML = `<p class="muted small" style="margin:0">${esc(/Could not find|does not exist|schema cache/.test(e.message) ? 'DB の更新49 を入れると使えます' : e.message)}</p>`; if (set) throw e; return; }
+  const T = d.today, W = d.week;
+  box.innerHTML = `<div class="kv"><span>きょう</span><b>広告 ${fmt(T.ads)}回（${fmt(T.users)}人）・ガチャ ${fmt(T.pulls)}回・${fmt(T.x)} X・土地 ${fmt(T.lands)}筆</b>
+      <span>7日</span><b>広告 ${fmt(W.ads)}回（${fmt(W.users)}人）・ガチャ ${fmt(W.pulls)}回・${fmt(W.x)} X・土地 ${fmt(W.lands)}筆</b>
+      <span>国が売っている土地</span><b>${fmt(d.gacha.land.left)}筆</b></div>
+    <div class="row" style="margin-top:8px"><span class="small" style="width:8em">1日の広告</span><input class="inp grow" id="adDay" type="number" min="0" max="100" inputmode="numeric" value="${Number(d.ad_day)}" style="margin:0"><span class="small">回（0 で止める）</span></div>
+    <div class="row"><span class="small" style="width:8em">1回のチケット</span><input class="inp grow" id="adTix" type="number" min="1" max="10" inputmode="numeric" value="${Number(d.ad_tix)}" style="margin:0"><span class="small">枚</span></div>
+    <label class="small"><input type="checkbox" id="adGuest" ${d.ad_guest ? 'checked' : ''}> ゲストも広告でチケットをもらえる</label>
+    <div class="row" style="margin-top:6px"><span class="small" style="width:8em">X ガチャの表</span><input class="inp grow" id="gaX" value="${esc(d.gacha_x)}" style="margin:0"></div>
+    <p class="muted small" style="margin:2px 0 6px">「額:重み」をカンマでつなぐ（重みの合計で割って確率に）。いまの平均 約${fmt(d.gacha.ev)} X</p>
+    <div class="row"><span class="small" style="width:8em">国有地の当たり</span><input class="inp grow" id="gaLp" type="number" min="0" max="10000" inputmode="numeric" value="${Number(d.gacha_land_p)}" style="margin:0"><span class="small">/ 1万（50＝0.5%）</span></div>
+    <div class="row"><span class="small" style="width:8em">国有地の枚数</span><input class="inp grow" id="gaLc" type="number" min="1" max="1000" inputmode="numeric" value="${Number(d.gacha_land_cost)}" style="margin:0"><span class="small">枚</span></div>
+    <div class="row"><span class="small" style="width:8em">はずれの X</span><input class="inp grow" id="gaLm" type="number" min="0" max="1000000" inputmode="numeric" value="${Number(d.gacha_land_miss)}" style="margin:0"><span class="small">X</span></div>
+    <div class="row" style="margin-top:6px"><button class="btn main s" id="adSave">保存</button></div>
+    <div class="row" style="margin-top:10px"><span class="small" style="width:8em">ためしに自分へ</span><input class="inp grow" id="adSelf" type="number" min="1" max="1000" inputmode="numeric" value="10" style="margin:0"><button class="btn s" id="adSelfGo">🎫 わたす</button></div>
+    <p class="muted small" style="margin:4px 0 0">いまの自分のチケット ${fmt(d.my_tix)}枚。ガチャの X は国が新しく発行します。広告のボタンは、config.js の ads に AdSense の番号を入れると出ます${ADS.client ? '' : '（いまは番号なし）'}。</p>`;
+  $('#adSave').onclick = async () => {
+    try {
+      await adAdsLoad({ ad_day: Number($('#adDay').value), ad_tix: Number($('#adTix').value), ad_guest: $('#adGuest').checked,
+        gacha_x: $('#gaX').value.trim(), gacha_land_p: Number($('#gaLp').value), gacha_land_cost: Number($('#gaLc').value), gacha_land_miss: Number($('#gaLm').value) });
+      toast('保存しました');
+    } catch (e) { toast(e.message); }
+  };
+  $('#adSelfGo').onclick = async () => { try { await adAdsLoad({ tix_self: Number($('#adSelf').value) }); toast('チケットをわたしました'); GA = null; } catch (e) { toast(e.message); } };
 }
 // 管理：副管理者・イベント製作者（管理者だけ）
 async function adStaffLoad() {
@@ -6610,7 +6829,7 @@ function homeLoad(sub) {
 }
 // よく使うメニュー：えらべるもの（メニューのサブメニューと、対戦ゲーム）
 const HM_IC = { 'vInfo:today': '📰', 'vInfo:cur': '💱', 'vInfo:pub': '📚', 'vInfo:mkt': '📈', 'vInfo:stats': '📊', 'vInfo:tl': '💬', 'vInfo:people': '🔍', 'vInfo:jack': '🏆',
-  'vWork:jobs': '🛠️', 'vWork:stat': '💴', 'vWork:corp': '🏢', 'vWork:mywork': '👔', 'vCorp:search': '🔎', 'vCorp:review': '⭐', 'vCorp:pin': '📌',
+  'vGame:vGacha': '🎫', 'vWork:jobs': '🛠️', 'vWork:stat': '💴', 'vWork:corp': '🏢', 'vWork:mywork': '👔', 'vCorp:search': '🔎', 'vCorp:review': '⭐', 'vCorp:pin': '📌',
   'vCorp:desk': '🗨️', 'vCorp:job': '📋', 'vCorp:bank': '🏦', 'vCorp:order': '🛍️', 'vCorp:stock': '📊', 'vCorp:invest': '💹', 'vCorp:map': '🗾', 'vTax:tax': '🧾',
   'vTax:xfer': '💸', 'vTax:help': '❓', 'vTax:idea': '📮', 'vTax:bill': '📨', 'vTax:court': '⚖️', 'vTax:kokko': '🏛️', 'vMore:prof': '👤', 'vMore:hist': '📜', 'vMore:rule': '📖',
   'vMore:admin': '🛡️', 'vMore:users': '🗂️', 'vHome:friend': '👥', 'vHome:msg': '✉️', 'vHome:horses': '🐴', 'vGame:vGameList': '🎮' };
@@ -8465,6 +8684,7 @@ function noticeGo(n) {
   if (L.go === 'lot') return go('vLot');
   if (L.go === 'race' && L.day) return kbGoRace(L.day, L.no);
   if (L.go === 'map') {   // 国土：地図をひらいて、土地の申請など
+    if (L.k === 'spot' && L.x != null) return mapSpot(L.x, L.y);   // 国有地ガチャで当たった土地など
     go('vCorp', 'map');
     const fn = { landreq: 'landReqs', xfer: 'xfers', thru: 'thru', slot: 'slots' }[L.k];   // 土地の申請・編成の譲渡・乗り入れ・発着口（t57）
     if (fn) { let n = 0; const w = () => { if (window.MapApp && MapApp.state && MapApp.state.open && MapApp[fn]) MapApp[fn](L); else if (n++ < 40) setTimeout(w, 250); }; w(); }
@@ -8627,7 +8847,7 @@ $('#rvSend').onclick = async () => {
 };
 
 /* ---------------- その他 ---------------- */
-const GAME = { start: 'はじめての配布', gift: 'お祝いの配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上（消費税をのぞく）', ctax: '消費税（請求の支払い）', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て', guest_rest: 'ゲストの残り（上限をこえた分・消えたゲスト）', lottery: '風の芽ジャンボ', auction: '競り市', boat: '競艇', keirin: '競輪', fishing: '釣り', review: '評価のお礼', gov_share: '国から株', owner: '馬主', owner_hold: 'せり（あずかり）', owner_back: 'せり（あずかりを返した）', task: 'タスクのごほうび', map: '国土（工事・土地・車両）', map_in: '国土（運賃・家賃・維持費・使用料）' };
+const GAME = { start: 'はじめての配布', gift: 'お祝いの配布', gacha: 'ガチャ', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上（消費税をのぞく）', ctax: '消費税（請求の支払い）', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て', guest_rest: 'ゲストの残り（上限をこえた分・消えたゲスト）', lottery: '風の芽ジャンボ', auction: '競り市', boat: '競艇', keirin: '競輪', fishing: '釣り', review: '評価のお礼', gov_share: '国から株', owner: '馬主', owner_hold: 'せり（あずかり）', owner_back: 'せり（あずかりを返した）', task: 'タスクのごほうび', map: '国土（工事・土地・車両）', map_in: '国土（運賃・家賃・維持費・使用料）' };
 // 記録のない所持金の動き（あずかり・返金など）は、呼ばれた操作から
 const MH_SRC = { room_move: '競り市・対戦（あずかり・返金）', room_state: '競り市・対戦（返金など）', room_list: '競り市・対戦（返金など）', room_join: '対戦の賭け金',
   room_start: '対戦の賭け金', room_leave: '対戦の賭け金（返金）', room_quit: '対戦の賭け金', stock_order: '株の注文（代金をあずかる）', stock_cancel: '株の注文の取り消し（返金）',
