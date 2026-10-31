@@ -5,6 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="author" content="Airln_7 (https://x.com/Airln_7)">
 <title>風の芽経済組</title>
+<meta name="description" content="架空の通貨で遊ぶ経済ゲーム！競馬にカジノ、会社と株、鉄道と街づくりまで、ぜんぶ無料。はじめてのログインで11万Xプレゼント！">
+<link rel="canonical" href="https://a-ruri.com/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="風の芽経済組">
+<meta property="og:title" content="風の芽経済組">
+<meta property="og:description" content="架空の通貨で遊ぶ経済ゲーム！競馬にカジノ、会社と株、鉄道と街づくりまで、ぜんぶ無料。はじめてのログインで11万Xプレゼント！">
+<meta property="og:url" content="https://a-ruri.com/">
+<meta property="og:locale" content="ja_JP">
+<meta name="twitter:card" content="summary">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"風の芽経済組","url":"https://a-ruri.com/"}</script>
 <link rel="preload" href="fonts/ax-emoji-ui-400.woff2" as="font" type="font/woff2" crossorigin>
 <style>
 /* 絵文字は白黒（文字と同じ色）で出す：画面で使う分だけの小さいフォント → それ以外の絵文字（Noto Emoji・SIL OFL） */
@@ -993,6 +1003,31 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 .ft-tile.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
 .ft-tile b{font-size:17px;font-weight:700;line-height:1.3}
 .ft-tile small{font-size:11px;color:var(--muted)}
+/* ヘルプ・意見箱（役所・t62） */
+.hp-cats{margin-top:8px}
+.hp-cats button{color:var(--ink)}
+.hp-cats button.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.hp-it{border-top:1px solid var(--line)}
+.hp-it:first-child{border-top:0}
+.hp-it summary{cursor:pointer;padding:10px 2px;font-weight:700;font-size:14px;list-style:none;display:flex;gap:8px;align-items:baseline}
+.hp-it summary::-webkit-details-marker{display:none}
+.hp-it summary::before{content:"＋";color:var(--accent);font-weight:900;flex:none}
+.hp-it[open] summary::before{content:"－"}
+.hp-it summary small{display:block;font-weight:400;color:var(--muted);font-size:12px;margin-top:2px}
+.hp-b{padding:0 2px 12px 22px;font-size:14px;line-height:1.75}
+.hp-b p{margin:0 0 6px}
+.hp-b ul{margin:4px 0 6px;padding-left:1.2em}
+.hp-b li{margin:2px 0}
+.hp-b .hp-warn{background:var(--soft);border-radius:8px;padding:6px 10px}
+.hp-tw{overflow-x:auto;margin:6px 0}
+.hp-b table{border-collapse:collapse;font-size:13px}
+.hp-b th,.hp-b td{border:1px solid var(--line);padding:4px 6px;text-align:left;vertical-align:top}
+.hp-b mark,.hp-it mark{background:#ffe27a;color:#222;border-radius:2px;padding:0 1px}
+.hp-cat{font-size:11px;color:var(--muted);font-weight:700;margin-right:4px;flex:none}
+.id-row{display:flex;gap:8px;align-items:center;padding:8px 2px;border-top:1px solid var(--line);cursor:pointer}
+.id-row:first-child{border-top:0}
+.id-row b{flex:1;min-width:0;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.id-row small{color:var(--muted);font-size:12px;white-space:nowrap}
 /* 統計・ランキング（情報・t62） */
 .st-wrap{overflow-x:auto;margin:8px -4px 0;-webkit-overflow-scrolling:touch}
 .st-tb{border-collapse:separate;border-spacing:0;font-size:13px;min-width:100%}
@@ -1194,7 +1229,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=63547e6e","zh-TW":"zh-TW.js?v=dd67edf6","zh-CN":"zh-CN.js?v=90685e83","ko":"ko.js?v=18994545","ko-Hani":"ko-Hani.js?v=71cafcad"};
+  window.AX_LANGS = {"en":"en.js?v=4a39ea50","zh-TW":"zh-TW.js?v=d54ab23a","zh-CN":"zh-CN.js?v=5f7cd9cd","ko":"ko.js?v=7f9ec94e","ko-Hani":"ko-Hani.js?v=dcf7628c"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -1426,7 +1461,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 <section id="vLogin" class="center hidden">
   <div class="langs lg-lang" id="lgLang" translate="no"></div>
   <h1 translate="no">風の芽経済組<small class="logo-rm hidden" style="display:block;font-size:13px;font-weight:700;color:var(--muted);margin-top:2px">Kazenome-EconomicGroup</small></h1>
-  <p class="notice">架空通貨 <b>AiliNaX</b>（単位 X）で、働く・会社をつくる・競馬やカジノで遊ぶ経済ゲームです。<br>はじめてログインした人に 1,000 X を配ります（1回だけ）。</p>
+  <p class="notice"><b>架空の通貨 AiliNaX（X）で遊ぶ経済ゲーム！</b><br>競馬にカジノ、会社と株、鉄道と街づくりまで、ぜんぶ無料。はじめてのログインで 11万 X プレゼント！ お正月（新・旧）と建国記念の日にも 8万 X ずつ配ります。</p>
   <div class="mailform hidden" id="oauthBox"></div>
   <div class="seg" id="lgMode"><button type="button" data-k="pw" class="on">パスワード</button><button type="button" data-k="link">メールのリンク</button></div>
   <form id="mailForm" class="mailform">
@@ -1443,7 +1478,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
       <input type="password" id="gPin" inputmode="numeric" maxlength="4" autocomplete="new-password" placeholder="パスワード（数字4けた）">
       <button class="btn main big" id="gStart" type="submit">ゲストではじめる</button>
     </form>
-    <p class="muted small" style="margin:0">メールアドレスと数字4けたのパスワードを決めるだけで、すぐ遊べます（1,000 X つき）。次からは、上の「ログイン」にそのメールと数字4けたを入れて入れます。</p>
+    <p class="muted small" style="margin:0">メールアドレスと数字4けたのパスワードを決めるだけで、すぐ遊べます（10,000 X つき。本登録すると さらに 100,000 X）。次からは、上の「ログイン」にそのメールと数字4けたを入れて入れます。</p>
     <p class="muted small" style="margin:0">ゲストは31日で消えます（5日間ログインしないと、その前に消えます）。消える前に本登録（メールの確認）をすると、そのまま続けられます。確定申告をしたゲストは、申告した月ごとに1回、消える日を31日のばせます。ゲストのあいだは、所持金は40,000 Xまで・賭け金は1回100 Xまで・送金は5日間で2,000 Xまでです（はじめて7日は送金できません）。</p>
   </div>
   <p class="notice small hidden" id="mailSent"></p>
@@ -1734,6 +1769,24 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   </div>
   <div data-sub="court" class="card"><h3 style="margin-top:0">自分が訴えたもの</h3><div id="ctMine"></div></div>
   <div data-sub="court" class="card"><h3 style="margin-top:0">訴えられたもの</h3><div id="ctAgainst"></div></div>
+  <div class="card" data-sub="help">
+    <div class="row"><h3 style="margin:0" class="grow">❓ ヘルプ</h3><small class="muted" id="hpN"></small></div>
+    <input class="inp" id="hpQ" type="search" placeholder="さがす（例：送金・税金・馬券・駅・株）" style="margin:8px 0 0" autocomplete="off">
+    <p class="muted small hidden" id="hpJa" style="margin:6px 0 0">ヘルプの記事は日本語だけです。</p>
+    <div class="chips hp-cats" id="hpCats"></div>
+    <div id="hpList"><p class="muted small" style="margin:8px 0 0">読みこみ中…</p></div>
+    <p class="muted small" style="margin:10px 0 0"><span>見つからないときは、意見箱で聞いてください。</span> <a href="#" id="hpAsk">📮 意見箱へ</a></p>
+  </div>
+  <div class="card" data-sub="idea">
+    <h3 style="margin-top:0">📮 意見箱</h3>
+    <p class="muted small" style="margin:0 0 8px">「こうなったらいいな」「ここが使いにくい」「不具合を見つけた」など、なんでも送ってください。運営（管理者）が読みます。</p>
+    <div class="seg sm" id="idK" style="display:flex;flex-wrap:wrap"><button data-k="提案" class="on">💡 提案</button><button data-k="使いにくい">🤔 使いにくい</button><button data-k="不具合">🐛 不具合</button><button data-k="その他">💬 その他</button></div>
+    <input class="inp" id="idSub" maxlength="28" placeholder="ひとことで（例：天気図に雷のマークがほしい）" style="margin-top:8px">
+    <textarea class="inp" id="idBody" rows="5" maxlength="2000" placeholder="くわしく（なくてもよい）"></textarea>
+    <button class="btn main wide" id="idGo">意見を送る</button>
+    <p class="muted small" style="margin:8px 0 0">返事は メイン → 連絡 の「運営への問い合わせ」に届きます。受付中は問い合わせと合わせて3件まで・1日5件まで。</p>
+    <h4 style="margin:14px 0 4px">送った意見</h4><div id="idList"></div>
+  </div>
   <div data-sub="kokko" class="card" id="txTreasury"></div>
   <div data-sub="kokko" class="card" id="txTop"></div>
   <div data-sub="tax" class="card hist" id="txHist"></div>
@@ -1785,7 +1838,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   <div class="card hidden" data-sub="prof" id="guestCard">
     <h3 style="margin-top:0">本登録する（メールの確認）</h3>
     <p class="small" style="margin:0 0 8px" id="guestLeft"></p>
-    <p class="small" style="margin:0 0 8px">本登録すると、<b>いまの所持金と記録のまま</b>続けられ、株・会社・TLなども使えるようになります。所持金・賭け金・送金の上限もなくなります。</p>
+    <p class="small" style="margin:0 0 8px">本登録すると、<b>いまの所持金と記録のまま</b>続けられ、株・会社・TLなども使えるようになります。所持金・賭け金・送金の上限もなくなります。ゲストのあいだにとっておいたお祝い（はじめての配布の残りなど）も、そのとき受けとれます。</p>
     <div class="row"><span class="grow small" style="min-width:0;word-break:break-all">メール： <b id="guestMailNow" translate="no"></b></span><button class="btn main" id="guestVerify" type="button">確認メールを送る</button></div>
     <p class="muted small" id="guestMailMsg" style="margin:6px 0 0">届いたメールのリンクを押すと本登録になります（英語のメールです。届かないときは迷惑メールフォルダも見てください）。</p>
     <details style="margin-top:8px"><summary class="small">メールアドレスをまちがえたとき</summary>
@@ -1831,7 +1884,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
       <li><b>ゲーム内アイテム（マイクラのブロックなど）との交換・売買はOKです。</b>ただし、そのアイテムを現金などで売り買いする（RMT）のは禁止です。課金して手に入れたアイテム・課金通貨との交換も禁止です。</li>
       <li>同じ系列の架空通貨 Cièlani-Nièpha（風の芽公式サーバー）・Cièlani-Alpićsk とは、取引所や運営者を通して交換できます。これらの通貨も、現金などとは交換できません。</li>
       <li>AiliNaX を現金などで売り買いすること、その持ちかけ、AiliNaX を使ったお金の賭けは禁止です。</li>
-      <li>はじめてログインしたときに 1,000 X を配ります。</li>
+      <li>はじめてログインしたときに 110,000 X を配ります（ゲストは 10,000 X で、本登録したときに残りの 100,000 X）。毎年、元日・旧正月・建国記念の日（2月11日）にも 80,000 X ずつ配ります。</li>
       <li>送金には手数料（送る額の1%・最低1 X）がかかります。AiliNaXを現金などで売り買いするための送金は禁止です。</li>
       <li>勝ち負けはサーバーで決めています。残高は予告なくリセット・調整することがあります。</li>
       <li>ほかの人がいやな気持ちになるニックネームはやめましょう。</li>
@@ -2239,7 +2292,7 @@ const MENU = [
   ['vGame', '遊戯', '♠', [['vGameList', '≡ 一覧'], ['vTask', '★ タスク'], ['vRace', '🏇 競馬'], ['vBoat', '🚤 競艇'], ['vBike', '🚲 競輪'], ['vSlot', '7 スロット'], ['vBj', '♠ ブラックジャック'], ['vRou', '◎ ルーレット'], ['vHilo', '↕ ハイ＆ロー']]],
   ['vHome', 'メイン', '◉', [['menu', 'メニュー'], ['horses', '所持馬'], ['friend', 'フレンド'], ['msg', '連絡']]],
   ['vCorp', '企業', LANG !== 'ja' ? '🏢' : '社', [['search', '会社検索'], ['review', '評価（500 X）'], ['pin', 'ピン留め'], ['desk', '相談'], ['job', '求人'], ['bank', '銀行口座'], ['order', '買ったもの'], ['stock', '持ち株'], ['invest', '取引所'], ['map', '国土']]],
-  ['vTax', '役所', LANG !== 'ja' ? '🏛' : '税', [['tax', '税金'], ['xfer', '送金'], ['bill', '請求'], ['court', '訴え'], ['kokko', '国庫・番付']]],
+  ['vTax', '役所', LANG !== 'ja' ? '🏛' : '税', [['tax', '税金'], ['xfer', '送金'], ['bill', '請求'], ['court', '訴え'], ['kokko', '国庫・番付'], ['help', 'ヘルプ'], ['idea', '意見箱']]],
   ['vMore', '設定', '⚙', [['prof', 'プロフィール'], ['style', 'スタイル'], ['hist', '記録'], ['rule', '規約']]],
 ];
 const MENU_OF = Object.fromEntries(MENU.map(m => [m[0], m]));
@@ -2285,7 +2338,7 @@ function go(v, sub) {
   if (sec === 'vHilo') hiloLoad();
   if (sec === 'vMore') moreLoad();
   if (sec === 'vMore' && sub === 'style') styleLoad();
-  if (sec === 'vTax') taxLoad();
+  if (sec === 'vTax') { if (sub === 'help') helpLoad(); else if (sub === 'idea') ideaLoad(); else taxLoad(); }
   if (sec === 'vCorp') corpLoad(sub);
   if (sec === 'vWork' && sub === 'corp') ownLoad();
   if (sec === 'vWork' && sub === 'mywork') myWorkLoad();
@@ -4864,6 +4917,87 @@ function stCmpDraw() {
   box.querySelector('[data-x]').onclick = () => { ST.cmp = false; box.classList.add('hidden'); };
 }
 
+/* =================================================================
+   役所 → ヘルプ（t62）：遊び方・やり方（help/help.json。README からつくる）。さがせる（題・中身・ことば。ひらがな・カタカナ・全角半角は同じに）
+   役所 → 意見箱（t62）：運営への問い合わせ（support_open）に「【意見箱】」の件名で送る
+   ================================================================= */
+const HELP_V = 'ffd74210';
+const HP = { d: null, cat: 'start', q: '' };
+const hpNorm = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
+async function helpLoad() {
+  if (!HP.d) {
+    try { const d = await (await fetch('help/help.json?v=' + HELP_V)).json(); d.items.forEach(x => { const tx = x.h.replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'); x.txt = tx; x.nt = hpNorm(x.t); x.nk = hpNorm(x.k); x.nb = hpNorm(tx); }); HP.d = d; }
+    catch (e) { $('#hpList').innerHTML = `<p class="muted small">${esc(e.message)}</p>`; return; }
+  }
+  const q = $('#hpQ'); q.value = HP.q;
+  q.oninput = () => { HP.q = q.value; clearTimeout(HP.t); HP.t = setTimeout(helpDraw, 150); };
+  $('#hpAsk').onclick = ev => { ev.preventDefault(); go('vTax', 'idea'); };
+  $('#hpJa').classList.toggle('hidden', LANG === 'ja');
+  helpDraw();
+}
+// 見つかったことばに印をつける（文字だけ。タグの中はさわらない）
+function hpMark(root, terms) {
+  if (!terms.length) return;
+  const tw = document.createTreeWalker(root, NodeFilter.SHOW_TEXT), nodes = [];
+  while (tw.nextNode()) nodes.push(tw.currentNode);
+  for (const n of nodes) {
+    const t = n.nodeValue, nt = hpNorm(t); if (nt.length !== t.length) continue;   // 長さが変わる字（合字など）はやめておく
+    const hits = [];
+    for (const w of terms) { let i = 0; while ((i = nt.indexOf(w, i)) >= 0) { hits.push([i, i + w.length]); i += w.length; } }
+    if (!hits.length) continue;
+    hits.sort((a, b) => a[0] - b[0]);
+    const f = document.createDocumentFragment(); let p = 0;
+    for (const [a, b] of hits) { if (a < p) continue; f.appendChild(document.createTextNode(t.slice(p, a))); const m = document.createElement('mark'); m.textContent = t.slice(a, b); f.appendChild(m); p = b; }
+    f.appendChild(document.createTextNode(t.slice(p))); n.parentNode.replaceChild(f, n);
+  }
+}
+function helpDraw() {
+  const d = HP.d; if (!d) return;
+  const terms = hpNorm(HP.q).split(/\s+/).filter(Boolean), cats = Object.fromEntries(d.cats.map(c => [c[0], c]));
+  $('#hpCats').classList.toggle('hidden', !!terms.length);
+  $('#hpCats').innerHTML = d.cats.map(c => `<button data-hc="${c[0]}" class="${c[0] === HP.cat ? 'on' : ''}">${c[2]} ${esc(c[1])}</button>`).join('');
+  $$('#hpCats [data-hc]').forEach(b => b.onclick = () => { HP.cat = b.dataset.hc; helpDraw(); });
+  let list;
+  if (terms.length) {
+    list = d.items.map(x => { let sc = 0; for (const w of terms) { const inT = x.nt.includes(w), inK = x.nk.includes(w), nb = x.nb.split(w).length - 1; if (!inT && !inK && !nb) return null; sc += (inT ? 20 : 0) + (inK ? 8 : 0) + Math.min(nb, 6); } return { x, sc }; })
+      .filter(Boolean).sort((a, b) => b.sc - a.sc).slice(0, 60).map(o => o.x);
+    $('#hpN').textContent = `${list.length}件`;
+  } else { list = d.items.filter(x => x.c === HP.cat); $('#hpN').textContent = ''; }
+  const snip = x => { if (!terms.length) return ''; const i = x.nb.indexOf(terms[0]); if (i < 0) return ''; const a = Math.max(0, i - 24); return `<small translate="no">${a ? '…' : ''}${esc(x.txt.slice(a, i + 48).replace(/\s+/g, ' '))}…</small>`; };
+  $('#hpList').innerHTML = list.length ? list.map(x => `<details class="hp-it" data-hid="${x.id}"><summary>${terms.length ? `<span class="hp-cat">${esc((cats[x.c] || [])[1] || '')}</span>` : ''}<span><span translate="no">${esc(x.t)}</span>${snip(x)}</span></summary><div class="hp-b" translate="no"></div></details>`).join('')
+    : `<p class="muted small" style="margin:10px 0 0">見つかりませんでした。ほかのことばでさがすか、意見箱で聞いてください。</p>`;
+  $$('#hpList details').forEach(el => el.ontoggle = () => {
+    if (!el.open) return; const b = el.querySelector('.hp-b'); if (b.dataset.on) return;
+    const x = d.items.find(i => i.id === el.dataset.hid); b.innerHTML = x.h; b.dataset.on = '1'; hpMark(b, terms);
+  });
+  if (terms.length) $$('#hpList summary').forEach(sm => hpMark(sm.lastElementChild, terms));   // 分類の名前には印をつけない
+  if (list.length === 1) { const el = $('#hpList details'); if (el) el.open = true; }
+}
+// 意見箱
+const IDEA_PRE = '【意見箱】';
+async function ideaLoad() {
+  $$('#idK button').forEach(b => b.onclick = () => $$('#idK button').forEach(x => x.classList.toggle('on', x === b)));
+  $('#idBody').placeholder = tr('くわしく（なくてもよい）');   // textarea は自動で訳されないので
+  $('#idGo').onclick = async ev => {
+    const k = ($('#idK button.on') || {}).dataset ? $('#idK button.on').dataset.k : '提案', sub = $('#idSub').value.trim(), body = $('#idBody').value.trim();
+    if (!sub) return toast('ひとことを書いてください');
+    ev.target.disabled = true;
+    try {
+      await call('support_open', { p_subject: (IDEA_PRE + k + '：' + sub).slice(0, 40), p_body: body || sub });
+      $('#idSub').value = ''; $('#idBody').value = ''; toast('ありがとうございます。意見を送りました'); ideaList();
+    } catch (e) { toast(e.message); }
+    ev.target.disabled = false;
+  };
+  ideaList();
+}
+async function ideaList() {
+  let d; try { d = await call('support_list'); } catch (e) { $('#idList').innerHTML = `<p class="muted small" style="margin:0">${esc(e.message)}</p>`; return; }
+  const ts = (d.threads || []).filter(t => String(t.subject || '').startsWith(IDEA_PRE));
+  $('#idList').innerHTML = ts.length ? ts.map(t => `<div class="id-row" data-spt="${t.id}"><b>${esc(String(t.subject).slice(IDEA_PRE.length))}${t.unread ? '<span class="dm-n">!</span>' : ''}</b><small>${t.status === 'open' ? '受付中' : '解決済み'}・${t.at} ${t.time}</small></div>`).join('')
+    : '<p class="muted small" style="margin:0">まだありません</p>';
+  $$('#idList [data-spt]').forEach(el => el.onclick = () => spOpen(Number(el.dataset.spt)));
+}
+
 async function infoLoad() {
   try {
     const d = await call('info_state');
@@ -6339,7 +6473,7 @@ function homeLoad(sub) {
 const HM_IC = { 'vInfo:today': '📰', 'vInfo:cur': '💱', 'vInfo:pub': '📚', 'vInfo:mkt': '📈', 'vInfo:stats': '📊', 'vInfo:tl': '💬', 'vInfo:people': '🔍', 'vInfo:jack': '🏆',
   'vWork:jobs': '🛠️', 'vWork:stat': '💴', 'vWork:corp': '🏢', 'vWork:mywork': '👔', 'vCorp:search': '🔎', 'vCorp:review': '⭐', 'vCorp:pin': '📌',
   'vCorp:desk': '🗨️', 'vCorp:job': '📋', 'vCorp:bank': '🏦', 'vCorp:order': '🛍️', 'vCorp:stock': '📊', 'vCorp:invest': '💹', 'vCorp:map': '🗾', 'vTax:tax': '🧾',
-  'vTax:xfer': '💸', 'vTax:bill': '📨', 'vTax:court': '⚖️', 'vTax:kokko': '🏛️', 'vMore:prof': '👤', 'vMore:hist': '📜', 'vMore:rule': '📖',
+  'vTax:xfer': '💸', 'vTax:help': '❓', 'vTax:idea': '📮', 'vTax:bill': '📨', 'vTax:court': '⚖️', 'vTax:kokko': '🏛️', 'vMore:prof': '👤', 'vMore:hist': '📜', 'vMore:rule': '📖',
   'vMore:admin': '🛡️', 'vMore:users': '🗂️', 'vHome:friend': '👥', 'vHome:msg': '✉️', 'vHome:horses': '🐴', 'vGame:vGameList': '🎮' };
 const HM_DEF = ['vGame:vTask', 'vGame:vRace', 'vInfo:today', 'vHome:msg', 'vWork:jobs', 'vTax:xfer', 'vCorp:invest'];
 function hmCatalog() {
@@ -6548,6 +6682,7 @@ function mgSheet(html) {
 function mgAfter() {
   clearTimeout(MG.timer); MG.key = null;
   if (view === 'vHome' && sessionStorageGet('sub:vHome') === 'msg') msgLoad();
+  if (view === 'vTax' && sessionStorageGet('sub:vTax') === 'idea') ideaList();
   bellPoll();
 }
 // 一定時間ごとに新しいメッセージを見る（開いているあいだだけ）
@@ -8352,7 +8487,7 @@ $('#rvSend').onclick = async () => {
 };
 
 /* ---------------- その他 ---------------- */
-const GAME = { start: 'はじめての配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上（消費税をのぞく）', ctax: '消費税（請求の支払い）', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て', guest_rest: 'ゲストの残り（上限をこえた分・消えたゲスト）', lottery: '風の芽ジャンボ', auction: '競り市', boat: '競艇', keirin: '競輪', fishing: '釣り', review: '評価のお礼', gov_share: '国から株', owner: '馬主', owner_hold: 'せり（あずかり）', owner_back: 'せり（あずかりを返した）', task: 'タスクのごほうび', map: '国土（工事・土地・車両）', map_in: '国土（運賃・家賃・維持費・使用料）' };
+const GAME = { start: 'はじめての配布', gift: 'お祝いの配布', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上（消費税をのぞく）', ctax: '消費税（請求の支払い）', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て', guest_rest: 'ゲストの残り（上限をこえた分・消えたゲスト）', lottery: '風の芽ジャンボ', auction: '競り市', boat: '競艇', keirin: '競輪', fishing: '釣り', review: '評価のお礼', gov_share: '国から株', owner: '馬主', owner_hold: 'せり（あずかり）', owner_back: 'せり（あずかりを返した）', task: 'タスクのごほうび', map: '国土（工事・土地・車両）', map_in: '国土（運賃・家賃・維持費・使用料）' };
 // 記録のない所持金の動き（あずかり・返金など）は、呼ばれた操作から
 const MH_SRC = { room_move: '競り市・対戦（あずかり・返金）', room_state: '競り市・対戦（返金など）', room_list: '競り市・対戦（返金など）', room_join: '対戦の賭け金',
   room_start: '対戦の賭け金', room_leave: '対戦の賭け金（返金）', room_quit: '対戦の賭け金', stock_order: '株の注文（代金をあずかる）', stock_cancel: '株の注文の取り消し（返金）',
