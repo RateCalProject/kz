@@ -316,7 +316,7 @@ function m3Bind(cv) {
     const p = P.get(e.pointerId); if (!p) return;
     const dx = e.clientX - p.x, dy = e.clientY - p.y;
     if (P.size === 1) {
-      if (p.b === 2 || p.sh) { M3.yaw -= dx * 0.006; M3.pitch = Math.max(0.22, Math.min(1.5, M3.pitch + dy * 0.005)); }
+      if (p.b === 2 || p.sh) { M3.yaw -= dx * 0.006 * (S.v3x ? -1 : 1); M3.pitch = Math.max(0.22, Math.min(1.5, M3.pitch + dy * 0.005)); }
       else pan(dx, dy);
     } else if (P.size === 2) {
       const [a, b] = [...P.values()], ids = [...P.keys()];
@@ -324,7 +324,8 @@ function m3Bind(cv) {
       const d0 = Math.hypot(b.x - a.x, b.y - a.y), d1 = Math.hypot(nb.x - na.x, nb.y - na.y);
       const a0 = Math.atan2(b.y - a.y, b.x - a.x), a1 = Math.atan2(nb.y - na.y, nb.x - na.x);
       if (d0 > 10 && d1 > 10) M3.d = Math.max(4, Math.min(900, M3.d * d0 / d1));
-      M3.yaw -= (a1 - a0);
+      let da = a1 - a0; if (da > Math.PI) da -= 2 * Math.PI; else if (da < -Math.PI) da += 2 * Math.PI;
+      M3.yaw += da * (S.v3x ? -1 : 1);   // 2本指でひねった向きに地図が回る（⇄ 左右反転で反対に）
       const my0 = (a.y + b.y) / 2, my1 = (na.y + nb.y) / 2;
       M3.pitch = Math.max(0.22, Math.min(1.5, M3.pitch + (my1 - my0) * 0.004));
     }

@@ -996,7 +996,7 @@ function build(root) {
     <canvas class="mp-cv"></canvas>
     <div class="mp-top">
       <select class="mp-as" title="だれの名前で"></select>
-      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button><button data-v3 title="ななめから立体に見る">🗻 3D</button>
+      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button><button data-v3 title="ななめから立体に見る">🗻 3D</button><button data-v3x hidden title="横に回す向きを反対にする（2本指でひねる・右ドラッグ）">⇄ 左右反転</button>
       <span class="mp-addr" translate="no" hidden></span>
     </div>
     <div class="mp-zoom"><button data-find title="さがす">🔍</button><button data-full title="大きく">⤢</button><button data-zin>＋</button><button data-zout>－</button><button data-home title="瑠璃市役所">⌂</button></div>
@@ -1019,7 +1019,12 @@ function build(root) {
   try { const v = localStorage.getItem('mp_b25'); if (v != null) S.b25 = v !== '0'; } catch (e) {}
   const b25 = S.wrap.querySelector('[data-b25]'), b25L = () => { b25.textContent = S.b25 ? '🏢 2.5D' : '🏢 2D'; };
   b25L(); b25.onclick = () => { S.b25 = !S.b25; b25L(); try { localStorage.setItem('mp_b25', S.b25 ? '1' : '0'); } catch (e) {} S.dirty = true; };
-  { const v3 = S.wrap.querySelector('[data-v3]'); v3.onclick = async () => { if (S.v3) m3Close(); else await m3Open(); v3.classList.toggle('on', !!S.v3); b25.hidden = !!S.v3; }; }   // 3D（t61）
+  // 3D（t61）。⇄ 左右反転：横に回す向きを反対に（この端末におぼえる）
+  { const v3 = S.wrap.querySelector('[data-v3]'), v3x = S.wrap.querySelector('[data-v3x]');
+    try { S.v3x = localStorage.getItem('mp_v3x') === '1'; } catch (e) { S.v3x = false; }
+    v3x.classList.toggle('on', !!S.v3x);
+    v3x.onclick = () => { S.v3x = !S.v3x; v3x.classList.toggle('on', S.v3x); try { localStorage.setItem('mp_v3x', S.v3x ? '1' : '0'); } catch (e) {} };
+    v3.onclick = async () => { if (S.v3) m3Close(); else await m3Open(); v3.classList.toggle('on', !!S.v3); b25.hidden = !!S.v3; v3x.hidden = !S.v3; }; }
   S.wrap.querySelector('[data-full]').onclick = () => { S.wrap.classList.toggle('mp-full'); resize(); };
   S.wrap.querySelector('[data-find]').onclick = () => openFind();   // さがす（t59）
   S.wrap.querySelector('[data-zin]').onclick = () => zoomAt(S.W / 2, S.H / 2, 1.6);
