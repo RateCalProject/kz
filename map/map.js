@@ -514,6 +514,7 @@ function prepArea(d) {
   if (d.sup) S.supOK = true;     // 給水・給炭（DB の更新78）のあるサーバー
   if (d.hgt2) S.hgt2 = true;     // 平坦・高さを決める・勾配の上限・駅の高さ（DB の更新84）のあるサーバー
   if (d.sig) S.sigOK = true;     // 信号の段（DB の更新85）のあるサーバー
+  if (d.quad) S.quadOK = true;   // 複々線（DB の更新86）のあるサーバー
   for (const s of d.segs) prepSeg(s);
   for (const s of d.stas) { s.fx = s.x / 100; s.fy = s.y / 100; }
   for (const s of d.deps) { s.fx = s.x / 100; s.fy = s.y / 100; }
@@ -813,7 +814,7 @@ function render() {
   for (const s of rails) segParts(s, 'G', () => drawRail(g, s, z));
   // 高架・橋（t108）：かげ → 道路・線路（地面のものの上に）
   const ups = segs.filter(s => s.runs && (s.k === 'rail' || s.c !== 'exp') && s.runs.some(r => r[2] === 'V' || r[2] === 'B') && (s.k === 'rail' || !far));
-  for (const s of ups) segParts(s, 'VB', () => drawUpShadow(g, s, z, s.k === 'rail' ? Math.max(1.8, (s.dbl ? 0.34 : 0.22) * z) : wpx(s)));
+  for (const s of ups) segParts(s, 'VB', () => drawUpShadow(g, s, z, s.k === 'rail' ? Math.max(1.8, (s.q ? 0.52 : s.dbl ? 0.34 : 0.22) * z) : wpx(s)));
   for (const s of ups) {
     if (s.k === 'rail') { if (S.layer.track) segParts(s, 'VB', () => trackMark(g, s, z)); segParts(s, 'VB', () => drawRail(g, s, z)); }
     else { roadPass(s, 'VB'); if (asph && s.l) segParts(s, 'VB', () => laneMarks(g, s, z)); }
@@ -967,7 +968,7 @@ function trackMark(g, s, z) {
 }
 // 高さ（t108）：トンネル・地下（点線で うすく。入口に短い線）・高架と橋のかげ
 function drawTunnel(g, s, z) {
-  const rail = s.k === 'rail', w = rail ? Math.max(1.6, (s.dbl ? 0.3 : 0.2) * z) : Math.max(1.2, s.w * z * 0.75);
+  const rail = s.k === 'rail', w = rail ? Math.max(1.6, (s.q ? 0.46 : s.dbl ? 0.3 : 0.2) * z) : Math.max(1.2, s.w * z * 0.75);
   g.lineCap = 'butt';
   g.strokeStyle = rail ? 'rgba(70,70,70,.5)' : 'rgba(150,140,120,.55)'; g.lineWidth = w; g.setLineDash([Math.max(4, z * 0.45), Math.max(3, z * 0.3)]); pathSeg(g, s); g.stroke();
   g.setLineDash([]);
@@ -995,10 +996,10 @@ function drawUpShadow(g, s, z, w) {
 }
 function drawRail(g, s, z) {
   const mine = s.mine, col = s.col && /^#[0-9a-f]{6}$/i.test(s.col) ? s.col : null;   // 路線カラー（2026-10-29）
-  const w = Math.max(1.8, (s.dbl ? 0.34 : 0.22) * z);
+  const w = Math.max(1.8, (s.q ? 0.52 : s.dbl ? 0.34 : 0.22) * z);   // 複々線（DB の更新86）は太く
   g.lineCap = 'butt';
   if (z >= 10 && s.dbl) {
-    for (const off of [0.09, -0.09]) {
+    for (const off of s.q ? [0.27, 0.09, -0.09, -0.27] : [0.09, -0.09]) {
       g.strokeStyle = col || '#4a4a4a'; g.lineWidth = Math.max(1.5, 0.12 * z); g.setLineDash([]); pathSeg(g, s, off); g.stroke();
       g.strokeStyle = '#ffffff'; g.lineWidth = Math.max(1, 0.07 * z); g.setLineDash([z * 0.5, z * 0.5]); pathSeg(g, s, off); g.stroke();
     }
@@ -1010,12 +1011,12 @@ function drawRail(g, s, z) {
   }
   if (z >= 10 && !s.el) { /* 非電化：そのまま */ }
   g.setLineDash([]); g.lineCap = 'round';
-  if (mine && z >= 10 && s.dbl) { g.strokeStyle = 'rgba(40,110,220,.35)'; g.lineWidth = 0.5 * z + 4; pathSeg(g, s); g.stroke(); }
+  if (mine && z >= 10 && s.dbl) { g.strokeStyle = 'rgba(40,110,220,.35)'; g.lineWidth = (s.q ? 0.86 : 0.5) * z + 4; pathSeg(g, s); g.stroke(); }
   // 雪よけ（t108）：スノーシェッドは線路の上の屋根（灰色の帯と、はりの線）・防雪柵は両わきの茶色の点線
   if (s.sp && z >= 1.5) {
     g.lineCap = 'butt';
     if (s.sp === 2) {
-      const rw = Math.max(w + 5, (s.dbl ? 0.55 : 0.42) * z);
+      const rw = Math.max(w + 5, (s.q ? 0.9 : s.dbl ? 0.55 : 0.42) * z);
       g.strokeStyle = 'rgba(96,104,118,.62)'; g.lineWidth = rw; g.setLineDash([]); pathSeg(g, s); g.stroke();
       if (z >= 4) { g.strokeStyle = 'rgba(235,238,242,.75)'; g.lineWidth = rw; g.setLineDash([Math.max(1, 0.06 * z), Math.max(5, 0.4 * z)]); pathSeg(g, s); g.stroke(); }
     } else {
@@ -3431,7 +3432,7 @@ function showSeg(s, hit) {
   sheet(`<h4><span data-cls>${esc(CLS_NAME[s.c] || s.c)}</span>${s.n ? `・<span>${esc(s.n)}</span>` : ''}</h4><p class="small muted" data-addr translate="no" style="margin:0"></p>
     <div class="mp-kv"><b>持ち主</b><span><span>${esc(own)}</span>${s.mine && s.o !== 'gov' ? '<small>（あなた）</small>' : ''}</span>
       <b>長さ</b><span>${fmt(Math.round(s.len * 50))} m</span>
-      ${s.k === 'road' ? `<b>車線</b><span>${s.l ? '片側' + s.l + '車線' : '中央線なし'}</span>` : `<b>線路</b><span>${s.dbl ? '複線' : '単線'}・${s.el ? '電化' : '非電化'}</span>`}
+      ${s.k === 'road' ? `<b>車線</b><span>${s.l ? '片側' + s.l + '車線' : '中央線なし'}</span>` : `<b>線路</b><span>${s.q ? '複々線' : s.dbl ? '複線' : '単線'}・${s.el ? '電化' : '非電化'}</span>`}
       ${s.k === 'rail' && s.col ? `<b>路線カラー</b><span><span style="display:inline-block;width:2.2em;height:.8em;border-radius:3px;vertical-align:middle;background:${esc(s.col)}"></span></span>` : ''}
       <b>制限速度</b><span data-spd><span>${s.v} km/h</span></span>${segSnowRow(s)}
       ${s.k === 'rail' && S.sigOK ? `<b>信号</b><span>${SIG_N[s.sg || 0]}</span>` : ''}
@@ -3514,11 +3515,12 @@ async function addrInto(x, y, still) {   // x, y：マス（50m）の座標。�
   return d;
 }
 function segOpts(s) {
-  const st = { dbl: s.dbl, el: s.el, l: s.l, name: s.n || '', q: null, quoting: false, seq: 0, col: s.col || null, rts: null, same: 0, sc: 'one' };
-  const same = () => st.dbl === s.dbl && st.el === s.el && st.l === s.l;   // 名前だけ
+  const st = { dbl: s.dbl, qd: !!s.q, el: s.el, l: s.l, name: s.n || '', q: null, quoting: false, seq: 0, col: s.col || null, rts: null, same: 0, sc: 'one' };   // qd：複々線（DB の更新86）
+  const same = () => st.dbl === s.dbl && st.qd === !!s.q && st.el === s.el && st.l === s.l;   // 名前だけ
+  const oa = dry => ({ p_id: s.id, p_dbl: st.dbl, p_elec: st.el, p_name: st.name, p_dry: dry, p_lanes: st.l, ...(S.quadOK && s.k === 'rail' ? { p_quad: st.qd } : {}) });
   const quote = async () => {
     const my = ++st.seq; st.quoting = true; draw();
-    const q = await api('mp_seg_opts', { p_id: s.id, p_dbl: st.dbl, p_elec: st.el, p_name: st.name, p_dry: true, p_lanes: st.l });
+    const q = await api('mp_seg_opts', oa(true));
     if (st.seq !== my) return;
     st.quoting = false; st.q = q; draw();
   };
@@ -3526,7 +3528,7 @@ function segOpts(s) {
   const draw = () => {
     const q = st.q;
     sheet(`<h4 data-segopt="${s.id}">${s.k === 'rail' ? '線路' : '道路'}の設定</h4>
-      ${s.k === 'rail' ? `<div class="mp-row"><span class="mp-seg"><button data-d="0" class="${!st.dbl ? 'on' : ''}">単線</button><button data-d="1" class="${st.dbl ? 'on' : ''}">複線</button></span>
+      ${s.k === 'rail' ? `<div class="mp-row"><span class="mp-seg"><button data-d="0" class="${!st.dbl ? 'on' : ''}">単線</button><button data-d="1" class="${st.dbl && !st.qd ? 'on' : ''}">複線</button>${S.quadOK ? `<button data-d="2" class="${st.qd ? 'on' : ''}">複々線</button>` : ''}</span>
         <span class="mp-seg"><button data-e="0" class="${!st.el ? 'on' : ''}">非電化</button><button data-e="1" class="${st.el ? 'on' : ''}">電化</button></span></div>`
       : `<div class="mp-row">片側 <span class="mp-seg">${[0, 1, 2, 3].map(n => `<button data-l="${n}" class="${st.l === n ? 'on' : ''}">${n ? n + '車線' : '細い道'}</button>`).join('')}</span></div>`}
       <div class="mp-row"><input class="mp-inp" data-nm placeholder="名前（路線名など）" value="${esc(st.name)}"></div>
@@ -3546,7 +3548,7 @@ function segOpts(s) {
       <p class="muted small">もとにもどしても（単線にする・車線をへらす）お金はもどりません</p>
       <div class="mp-row"><button class="btn main" data-ok ${same() || (q && !hasNeed(q)) ? '' : 'disabled'}>この設定にする</button></div>`, sh => {
       needBind(sh, !same() && q && q.need, () => quote());
-      sh.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { st.dbl = b.dataset.d === '1'; changed(); });
+      sh.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { st.dbl = b.dataset.d !== '0'; st.qd = b.dataset.d === '2'; changed(); });
       sh.querySelectorAll('[data-e]').forEach(b => b.onclick = () => { st.el = b.dataset.e === '1'; changed(); });
       sh.querySelectorAll('[data-l]').forEach(b => b.onclick = () => { st.l = Number(b.dataset.l); changed(); });
       { const es = sh.querySelector('[data-est]'); if (es) es.onclick = () => quote(); }
@@ -3563,7 +3565,7 @@ function segOpts(s) {
       { const e = sh.querySelector('[data-colx]'); if (e) e.onclick = () => setCol(null); }
       sh.querySelector('[data-ok]').onclick = async () => {
         st.name = sh.querySelector('[data-nm]').value;
-        if (await api('mp_seg_opts', { p_id: s.id, p_dbl: st.dbl, p_elec: st.el, p_name: st.name, p_dry: false, p_lanes: st.l }, '設定を変えました')) { refreshBox(...s.bb); sheet(null); }
+        if (await api('mp_seg_opts', oa(false), '設定を変えました')) { refreshBox(...s.bb); sheet(null); }
       };
     });
   };
@@ -4205,7 +4207,7 @@ function drawArgs(st, dry) {
   if (st.edit) return { p_id: st.edit.id, p_ctl: toInts(st.ctrl), p_pts: toInts(st.curve), p_dry: dry };
   const o = st.opts;
   return { p_kind: st.kind, p_cls: st.kind === 'road' ? o.cls : null, p_ctl: st.mode === 'arc' ? null : toInts(st.ctrl), p_pts: toInts(st.curve),
-    p_opts: { dbl: o.dbl, elec: o.elec, name: o.name, lanes: o.lanes, ...(S.hgtOK ? { hm: o.hm || 'auto', rack: st.kind === 'rail' && !!o.rack, prof: pinArr(st.pins) } : {}), ...(S.hgt2 ? hgtOpt({ ...o, hm: o.hm || 'auto' }) : {}) },
+    p_opts: { dbl: o.dbl, elec: o.elec, name: o.name, lanes: o.lanes, ...(S.quadOK && o.quad ? { quad: true } : {}), ...(S.hgtOK ? { hm: o.hm || 'auto', rack: st.kind === 'rail' && !!o.rack, prof: pinArr(st.pins) } : {}), ...(S.hgt2 ? hgtOpt({ ...o, hm: o.hm || 'auto' }) : {}) },
     p_as: S.as, p_from: st.A ? st.A.att : null, p_to: st.B ? st.B.att : null, p_dry: dry };
 }
 function drawSheet() {
@@ -4219,7 +4221,7 @@ function drawSheet() {
       ${st.mode === 'arc' ? `<span>カーブの半径</span> <select class="mp-inp" data-rad style="width:auto">${(rail ? [160, 200, 250, 300, 400, 500, 600, 800, 1000, 1500, 2000, 3000] : [15, 20, 30, 50, 80, 100, 150, 200, 300, 500]).map(m => `<option value="${m}" ${st.rad === m ? 'selected' : ''}>${fmt(m)} m</option>`).join('')}</select>` : ''}</div>`}
     ${st.geoBad ? `<p class="mp-warn">この点では、えらんだ半径のカーブでつながりません（点を動かすか、半径を小さく）</p>` : ''}
     ${tight ? `<p class="mp-warn">${rail ? 'カーブがきつすぎます（線路は半径150m以上）' : 'カーブがきつすぎます'}</p>` : ''}
-    ${st.edit ? '' : rail ? `<div class="mp-row"><span class="mp-seg"><button data-d="0" class="${!o.dbl ? 'on' : ''}">単線</button><button data-d="1" class="${o.dbl ? 'on' : ''}">複線</button></span>
+    ${st.edit ? '' : rail ? `<div class="mp-row"><span class="mp-seg"><button data-d="0" class="${!o.dbl ? 'on' : ''}">単線</button><button data-d="1" class="${o.dbl && !o.quad ? 'on' : ''}">複線</button>${S.quadOK ? `<button data-d="2" class="${o.quad ? 'on' : ''}">複々線</button>` : ''}</span>
         <span class="mp-seg"><button data-e="0" class="${!o.elec ? 'on' : ''}">非電化</button><button data-e="1" class="${o.elec ? 'on' : ''}">電化</button></span></div>`
       : `<div class="mp-row">${gov ? `<select class="mp-inp" style="width:auto" data-cls>${[['exp', '高速道路'], ['nat', '国道'], ['pref', '府県道'], ['city', '市道'], ['lane', '細い道']].map(c => `<option value="${c[0]}" ${o.cls === c[0] ? 'selected' : ''}>${c[1]}</option>`).join('')}</select>` : ''}
         片側 <span class="mp-seg">${(gov ? [0, 1, 2, 3] : [0, 1, 2]).map(n => `<button data-l="${n}" class="${o.lanes === n ? 'on' : ''}">${n ? n + '車線' : '細い道'}</button>`).join('')}</span></div>`}
@@ -4235,7 +4237,7 @@ function drawSheet() {
     <p class="muted small" style="margin:6px 0 0">点はドラッグで動かせます。長押しで消せます</p>`, s => {
     s.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { st.mode = b.dataset.m; try { localStorage.setItem('mp_dm_' + st.kind, st.mode); } catch (e) {} drawUpdate(); });
     { const rd = s.querySelector('[data-rad]'); if (rd) rd.onchange = () => { st.rad = Number(rd.value); try { localStorage.setItem('mp_dr_' + st.kind, String(st.rad)); } catch (e) {} drawUpdate(); }; }
-    s.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { o.dbl = b.dataset.d === '1'; drawUpdate(); });
+    s.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { o.dbl = b.dataset.d !== '0'; o.quad = b.dataset.d === '2'; drawUpdate(); });
     s.querySelectorAll('[data-e]').forEach(b => b.onclick = () => { o.elec = b.dataset.e === '1'; drawUpdate(); });
     s.querySelectorAll('[data-l]').forEach(b => b.onclick = () => { o.lanes = Number(b.dataset.l); drawUpdate(); });
     const cl = s.querySelector('[data-cls]'); if (cl) cl.onchange = () => { o.cls = cl.value; if (o.cls === 'exp' && o.hm === 'auto') o.hm = 'el'; drawUpdate(); };
