@@ -1381,8 +1381,10 @@ function runPos(R, tn, tm, it) {
     const d0 = tm.day0 - off + tn.t0;
     if (runOffK(tn, day, d0)) continue;
     let dly = 0;
-    if (W) { if (unkoCanW(W, d0, tn.id)) continue; dly = unkoDlyW(W, d0, tm.abs); }
+    let ori = null;
+    if (W) { const c = unkoCanW(W, d0, tn.id, tn.t1 - tn.t0); if (c && c.k !== 'ori') continue; ori = c; dly = unkoDlyW(W, d0, tm.abs); }
     const tau = t - dly;
+    if (ori && tau - tn.t0 >= ori.za && tau - tn.t0 < ori.zb) continue;   // 区間折り返し（DB の更新82）：見合わせの区間の手前で折り返した
     if (tau >= tn.t0 && tau <= tn.t1) { tt = tau; dl = dly; rday = day; rd0 = d0; break; }
   }
   if (tt == null) return null;
@@ -1538,7 +1540,7 @@ function showTrain(R, tn) {
       nxt = `<b>${nm(p.nx)}</b> <span>${hms(sc[p.nx][1])}着</span>`;
     }
     const ui = unkoTrain(R2, t2, p);   // 運行の乱れ：遅れ・運休（鉄道・バス・船・飛行機。t108）・工事中・持ち主の運休（DB の更新60）
-    if (!p && ui && ui.can) now_ = `<b class="mp-late">運休</b>（<span>${esc(ui.why)}</span>）`;
+    if (!p && ui && ui.can) now_ = ui.can === 'ori' ? `<b class="mp-late">区間運休（折り返し運転）</b>（<span>${esc(ui.why)}</span>）` : `<b class="mp-late">運休</b>（<span>${esc(ui.why)}</span>）`;
     const a = S.sheet.querySelector('[data-now]'), b = S.sheet.querySelector('[data-next]'); if (a) a.innerHTML = now_; if (b) b.innerHTML = nxt || '—';
     const sh2 = S.sheet.querySelector('[data-subh]'), sb2 = S.sheet.querySelector('[data-sub]');   // 予備編成の代走（DB の更新80）
     if (sh2 && sb2) { const sx = ui && ui.run ? runSubOf(t2, ui.run.day) : null; sh2.hidden = sb2.hidden = !sx;
@@ -1631,7 +1633,12 @@ async function unkoLoad(force) {
     for (const z of UNKO.list.slice().sort((a, b) => a.id - b.id)) {
       const w = (z.wins || []).filter(e => e[1] > e[0] && e[2] < 1).map(e => [e[0], e[1], e[2], e[3] === 1 ? 1 : 0, e[5] === 1 ? 1 : 0]).sort((p, q) => p[0] - q[0] || p[1] - q[1]);
       if (!w.length) continue;
-      for (const r of z.routes || []) { if (!rt.has(r.id)) rt.set(r.id, []); rt.get(r.id).push({ id: z.id, w, zi: Array.isArray(r.zi) ? r.zi : null }); }
+      for (const r of z.routes || []) {
+        // 迂回・区間折り返し（DB の更新82）：区間だけの見合わせ（速さ 0・全線でない）は、迂回できる系統は迂回の速さ、迂回しない系統で折り返しなら6つめ 1
+        const zi = Array.isArray(r.zi) ? r.zi : null, dr = zi && typeof r.det === 'number' ? r.det : null;
+        const wr = w.map(e => e[2] === 0 && e[4] !== 1 ? (dr != null ? [e[0], e[1], dr, e[3], e[4], 0] : [e[0], e[1], 0, e[3], e[4], zi && z.ori ? 1 : 0]) : [e[0], e[1], e[2], e[3], e[4], 0]);
+        if (!rt.has(r.id)) rt.set(r.id, []); rt.get(r.id).push({ id: z.id, w: wr, zi });
+      }
     }
     UNKO.rt = rt;
     // 持ち主の運休：[id, 列車, 日, 編成, はじめ, おわり, 乱れ, 自分の]
@@ -1668,11 +1675,11 @@ function unkoTrW(R, tn) {
   const W = [], lo = Math.min(idx[0], idx[n - 1]), hi = Math.max(idx[0], idx[n - 1]);
   for (const z of L) {
     let cs = null, ce = -Infinity;
-    for (const [a, b, r, th, wide] of z.w) {
+    for (const [a, b, r, th, wide, o] of z.w) {
       let rs = a;
       if (r === 0) { if (cs === null || ce < a - 1) { cs = a; ce = b; } else ce = Math.max(ce, b); rs = cs; }
-      const E = { a, b, r, th: th === 1, rs, id: z.id };
-      if (wide === 1 || !Array.isArray(z.zi) || bad) { W.push(Object.assign({ za: -1e9, zb: 1e9, zc: 0 }, E)); continue; }
+      const E = { a, b, r, th: th === 1, rs, id: z.id, o: o === 1 };   // o：区間折り返し（DB の更新82）
+      if (wide === 1 || !Array.isArray(z.zi) || bad) { W.push(Object.assign({ za: -1e9, zb: 1e9, zc: 0 }, E, { o: false })); continue; }
       for (const [ka, kb] of z.zi) {
         const ea = Math.max(ka, lo), eb = Math.min(kb, hi); if (eb <= ea) continue;
         const za = at(fwd ? ea : eb, true), zb = at(fwd ? eb : ea, false);
@@ -1685,14 +1692,17 @@ function unkoTrW(R, tn) {
 }
 // 運休か：見合わせの窓のあいだに区間に入るはずで、見合わせ（続けて止めているところ）がはじまってから始発駅を出る列車（stop）。
 //   間引き：番号が奇数で、間引きの窓のあいだに区間に入り、窓がはじまってから出る列車（thin）。{k, id（乱れ）} か null
-function unkoCanW(W, d0, tid) {
+function unkoCanW(W, d0, tid, T) {
   if (!W) return null;
+  let ori = null;
   for (const E of W) {
     const ze = d0 + E.zc;
+    if (E.r === 0 && E.o && E.a <= ze && ze < E.b) { if (!ori) ori = E; continue; }   // 区間折り返し（DB の更新82。サーバーの _mp_unko_trn と同じ）
     if (E.r === 0 && E.a <= ze && ze < E.b && d0 >= E.rs) return { k: 'stop', id: E.id };
     if (E.th && tid % 2 === 1 && E.a <= ze && ze < E.b && d0 >= E.a) return { k: 'thin', id: E.id };
   }
-  return null;
+  if (ori && T && 1 - (ori.zb - ori.za) / Math.max(1, T) < 0.05) return { k: 'stop', id: ori.id };   // 区間の外がほとんどない列車は運休
+  return ori ? { k: 'ori', id: ori.id, za: ori.za, zb: ori.zb } : null;
 }
 // d0 に始発駅を出た列車の、時刻 te の遅れ（秒）：区間にいるあいだは窓の速さ（0 なら区間の手前で待つ）、そのほかは 1秒に 0.1秒ずつ取りもどす。
 //   pl：ダイヤの位置（始発駅を出てからの秒）がそこに着いたら やめる（終点に着くときの遅れの見こみ。サーバーにはない）
@@ -1703,11 +1713,11 @@ function unkoDlyW(W, d0, te, pl = Infinity) {
     const p = s - d0 - d; if (p >= pl - 1e-6) break;
     let r = 1, nx = Math.min(te, s + (pl - p) / (d > 0 ? 1.1 : 1));
     for (const E of W) {
-      if (E.a <= s && s < E.b && E.za <= p + 1e-6 && p < E.zb - 1e-6 && E.r < r) r = E.r;
+      if (!E.o && E.a <= s && s < E.b && E.za <= p + 1e-6 && p < E.zb - 1e-6 && E.r < r) r = E.r;   // 折り返しの窓では待たない（DB の更新82）
       if (E.a > s) nx = Math.min(nx, E.a); else if (E.b > s) nx = Math.min(nx, E.b);
     }
     if (r < 1) {
-      if (r > 0) for (const E of W) if (E.a <= s && s < E.b) {
+      if (r > 0) for (const E of W) if (!E.o && E.a <= s && s < E.b) {
         if (p < E.za - 1e-6) nx = Math.min(nx, s + (E.za - p) / r);
         else if (p < E.zb - 1e-6) nx = Math.min(nx, s + (E.zb - p) / r);
       }
@@ -1716,7 +1726,7 @@ function unkoDlyW(W, d0, te, pl = Infinity) {
     } else {
       const pr = d > 0 ? 1.1 : 1;
       if (d > 0) nx = Math.min(nx, s + d / 0.1);
-      for (const E of W) if (E.a <= s && s < E.b && p < E.za - 1e-6) nx = Math.min(nx, s + (E.za - p) / pr);
+      for (const E of W) if (!E.o && E.a <= s && s < E.b && p < E.za - 1e-6) nx = Math.min(nx, s + (E.za - p) / pr);
       d = Math.max(0, d - 0.1 * (nx - s)); s = nx;
     }
   }
@@ -1765,8 +1775,9 @@ function unkoTrain(R, tn, p) {
     const d0 = tm.day0 - off + tn.t0;
     if (!(d0 < tm.abs + 7200 && d0 + (tn.t1 - tn.t0) > tm.abs - 3600)) continue;
     const k = runOffK(tn, day, d0); if (k) { can = k; run = { day, d0 }; break; }
-    const c = unkoCanW(W, d0, tn.id); if (c) { can = c.k; z = UNKO.list.find(q => q.id === c.id) || null; run = { day, d0 }; break; }
+    const c = unkoCanW(W, d0, tn.id, tn.t1 - tn.t0); if (c) { can = c.k; z = UNKO.list.find(q => q.id === c.id) || null; run = { day, d0 }; break; }
   }
+  if (p && W) { const c = unkoCanW(W, p.d0, tn.id, tn.t1 - tn.t0); if (c && c.k === 'ori') { can = 'ori'; z = UNKO.list.find(q => q.id === c.id) || null; } }   // 区間折り返し（DB の更新82）
   if (!run) for (const [day, off] of [[tm.date, 0], [tm.next, -86400]]) {   // つぎに走る1本
     if (tn.day && tn.day !== day) continue;
     const d0 = tm.day0 - off + tn.t0; if (d0 > tm.abs) { run = { day, d0 }; break; }
@@ -1779,7 +1790,8 @@ function unkoTrain(R, tn, p) {
 }
 function unkoTrainHtml(ui) {
   const a = [];
-  if (ui.can) a.push('<b class="mp-late">運休</b>'); else if (ui.stop) a.push('<b class="mp-late">運転見合わせ中</b>');
+  if (ui.can === 'ori') a.push('<b class="mp-late">区間運休（折り返し運転）</b>');   // DB の更新82
+  else if (ui.can) a.push('<b class="mp-late">運休</b>'); else if (ui.stop) a.push('<b class="mp-late">運転見合わせ中</b>');
   if (ui.dl >= 60) a.push(`<b class="mp-late">約${Math.round(ui.dl / 60)}分遅れ</b>`);
   return a.join('・') + (ui.why ? `（<span>${esc(ui.why)}</span>）` : '') + (ui.z && ui.can !== 'shop' && ui.can !== 'cxl' ? ` <a href="#" data-unkoz="${ui.z.id}">運行情報</a>` : '');
 }
@@ -1862,7 +1874,9 @@ async function openUnko(focus) {
     const left = Math.max(0, Math.ceil(((z.until || 0) - (Date.now() / 1000 + UNKO.toff)) / 60));   // のこり時間はサーバーの時計で
     // 範囲（DB の更新60）：乱れの区間だけ（ふだん）・全線
     const zt = [...new Set((z.routes || []).map(r => r.zt).filter(Boolean))].join('・');
-    const scope = UNKO.v3 && z.kind !== 'snowstop' && z.me && s.live ? `<div class="small mp-uk-sc"><span>範囲</span>：<label><input type="radio" name="sc${z.id}" value="0" ${z.wide ? '' : 'checked'}><span><span>乱れの区間だけ</span>${zt ? `（<span translate="no">${esc(zt)}</span>）` : ''}</span></label><label><input type="radio" name="sc${z.id}" value="1" ${z.wide ? 'checked' : ''}><span>全線</span></label></div>` : '';
+    const scope = UNKO.v3 && z.kind !== 'snowstop' && z.me && s.live ? `<div class="small mp-uk-sc"><span>範囲</span>：<label><input type="radio" name="sc${z.id}" value="0" ${z.wide ? '' : 'checked'}><span><span>乱れの区間だけ</span>${zt ? `（<span translate="no">${esc(zt)}</span>）` : ''}</span></label><label><input type="radio" name="sc${z.id}" value="1" ${z.wide ? 'checked' : ''}><span>全線</span></label></div>`
+      + (z.mode === 'rail' && 'ori' in z ? `<div class="small mp-uk-sc"><span>区間だけのとき</span>：<label><input type="checkbox" data-ori="${z.id}" ${z.ori ? 'checked' : ''}><span>区間の外は折り返し運転</span></label><label><input type="checkbox" data-det="${z.id}" ${z.det ? 'checked' : ''}><span>ほかの線路で迂回</span></label>
+          <br><span class="muted">見合わせのあいだ、折り返し：区間に入るはずの列車も、区間の外だけ走ります。迂回：区間の手前と先の駅をつなぐ ほかの自分の線路があれば、その系統の列車は迂回して走ります（遅れます）</span></div>` : '') : '';
     const ask = z.st !== 'ask' ? '' : z.me ? `<div class="mp-uk-ask"><b>対応をえらんでください</b> <small>（あと <span>${left}分</span>。えらばないと「現場の判断」）</small>
         ${scope}<div class="mp-uk-btns">${unkoOpts(z).map(([k, l]) => `<button class="btn" data-pick="${k}" data-z="${z.id}"><b>${k}</b>　<span>${l}</span></button>`).join('')}</div>
         <details class="small"><summary>運転規制の目安</summary>${unkoRule()}</details></div>`
@@ -1871,9 +1885,9 @@ async function openUnko(focus) {
     const stopNow = (z.wins || []).some(w => w[2] === 0 && w[0] <= t + 1 && w[1] > t + 300);
     const furi = (z.routes || []).some(r => r.mine && !r.furi) && stopNow
       ? `<div class="mp-uk-furi"><button class="btn" data-furi="${z.id}">🚌 振替輸送をたのむ</button> <small class="muted">近くのほかの線（鉄道・バス）に、お客をはこんでもらいます（運賃の半分をはらう）。たのまずに合わせて1時間より長く止めると、線の信頼が下がります</small></div>` : '';
-    const res = z.kind !== 'snowstop' && z.st !== 'ask' && z.pick ? `<div>対応：<b>${esc((unkoOpts(z).find(q => q[0] === z.pick) || [0, ''])[1])}</b>${z.wide ? '・<b>全線</b>' : ''}（<span>${z.auto ? (z.by === '国' ? '国' : '現場の判断') : esc(z.by)}</span>）</div>` : '';
+    const res = z.kind !== 'snowstop' && z.st !== 'ask' && z.pick ? `<div>対応：<b>${esc((unkoOpts(z).find(q => q[0] === z.pick) || [0, ''])[1])}</b>${z.wide ? '・<b>全線</b>' : ''}${!z.wide && z.det ? '・<b>迂回</b>' : ''}${!z.wide && z.ori ? '・<b>区間の外は折り返し運転</b>' : ''}（<span>${z.auto ? (z.by === '国' ? '国' : '現場の判断') : esc(z.by)}</span>）</div>` : '';
     // 対応を変える（t108）：乱れがつづいているあいだ、自分の線なら何度でも。範囲だけ変えるのも（DB の更新60）
-    const chg = UNKO.v2 !== false && z.kind !== 'snowstop' && z.st === 'run' && z.me && s.live ? `<details class="small mp-uk-chg" data-k="chg${z.id}"><summary><b>対応を変える</b></summary>${scope}<div class="mp-uk-btns">${[1, 2, 3, 4, 5].filter(k => k !== z.pick).map(k => `<button class="btn" data-pick="${k}" data-z="${z.id}"><b>${k}</b>　<span>${unkoPickT(k, z.mode)}</span></button>`).join('')}${UNKO.v3 && z.pick ? `<button class="btn" data-pick="${z.pick}" data-z="${z.id}" data-wto="${z.wide ? 0 : 1}"><b>${z.pick}</b>　<span>${unkoPickT(z.pick, z.mode)}</span>（<span>${z.wide ? '範囲を乱れの区間だけにする' : '範囲を全線にする'}</span>）</button>` : ''}</div></details>` : '';
+    const chg = UNKO.v2 !== false && z.kind !== 'snowstop' && z.st === 'run' && z.me && s.live ? `<details class="small mp-uk-chg" data-k="chg${z.id}"><summary><b>対応を変える</b></summary>${scope}<div class="mp-uk-btns">${[1, 2, 3, 4, 5].filter(k => k !== z.pick).map(k => `<button class="btn" data-pick="${k}" data-z="${z.id}"><b>${k}</b>　<span>${unkoPickT(k, z.mode)}</span></button>`).join('')}${UNKO.v3 && z.pick ? `<button class="btn" data-pick="${z.pick}" data-z="${z.id}" data-wto="${z.wide ? 0 : 1}"><b>${z.pick}</b>　<span>${unkoPickT(z.pick, z.mode)}</span>（<span>${z.wide ? '範囲を乱れの区間だけにする' : '範囲を全線にする'}</span>）</button>` : ''}${z.mode === 'rail' && 'ori' in z && z.pick && !z.wide ? `<button class="btn" data-pick="${z.pick}" data-z="${z.id}" data-od="1"><b>${z.pick}</b>　<span>${unkoPickT(z.pick, z.mode)}</span>（<span>折り返し・迂回を、えらんだとおりにする</span>）</button>` : ''}</div></details>` : '';
     // 区間（DB の更新60）：そこを通る列車だけ。自分の線なら、列車を1本ずつ・編成ごと運休にできる
     const zone = UNKO.v3 && zt && s.live ? `<div class="small"><span>区間</span>：<span translate="no">${esc(zt)}</span>${z.wide ? '・<b>全線</b>' : '<span class="muted">（ほかの区間の列車は ふだんどおり）</span>'}</div>` : '';
     const cxs = UNKO.v3 && s.live && (z.routes || []).some(r => r.mine) ? `<details class="small mp-uk-cx" data-k="cx${z.id}" data-cxz="${z.id}"><summary><b>🚫 列車を運休にする（1本ずつ・編成ごと）</b></summary><div data-cxl><p class="muted">読みこんでいます…</p></div></details>` : '';
@@ -1902,9 +1916,12 @@ async function openUnko(focus) {
         if (UNKO.v3) {   // 範囲（DB の更新60）：えらんだ丸・「範囲を変える」ボタン
           const card = x.closest('.mp-uk'), rb = card && card.querySelector(`input[name="sc${zid}"]:checked`);
           if (x.dataset.wto != null) arg.p_wide = x.dataset.wto === '1'; else if (rb) arg.p_wide = rb.value === '1';
+          const ob = card && card.querySelector(`[data-ori="${zid}"]`), db = card && card.querySelector(`[data-det="${zid}"]`);   // DB の更新82
+          if (ob && db) { const wide = arg.p_wide != null ? arg.p_wide : !!(UNKO.list.find(q => q.id === zid) || {}).wide; arg.p_ori = !wide && ob.checked; arg.p_det = !wide && db.checked; }
         }
         const r = await api('mp_unko_pick', arg); if (!r) return;
-        const z = UNKO.list.find(q => q.id === zid), o = z && unkoOpts(z).find(q => q[0] === k); toast(T(`対応を決めました：${o ? o[1] : k}`) + (r.wide ? T('（全線）') : ''));
+        const z = UNKO.list.find(q => q.id === zid), o = z && unkoOpts(z).find(q => q[0] === k);
+        toast(T(`対応を決めました：${o ? o[1] : k}`) + (r.wide ? T('（全線）') : '') + (r.det ? T('（迂回）') : '') + (r.ori ? T('（区間の外は折り返し運転）') : ''));
         draw();
       });
       // 列車を運休にする（DB の更新60）：開いたら、これから区間を通る自分の列車
@@ -1960,9 +1977,10 @@ async function cxList(box, zid, redraw) {
   rows.sort((a, b) => a.d0 - b.d0);
   const fdone = new Set();
   const html = rows.slice(0, 40).map(({ R, tn, day, d0, za }) => {
-    const W = unkoTrW(R, tn), k = runOffK(tn, day, d0), c = runCxOf(tn, day, d0), cw = !k && unkoCanW(W, d0, tn.id);
+    const W = unkoTrW(R, tn), k = runOffK(tn, day, d0), c = runCxOf(tn, day, d0), cw = !k && unkoCanW(W, d0, tn.id, tn.t1 - tn.t0);
     const dl = k || cw ? 0 : unkoDlyW(W, d0, Infinity, tn.t1 - tn.t0);   // 終点に着くときの遅れ（見こみ）
-    const st = k === 'shop' ? '<b class="mp-late">運休</b><small>（工事中）</small>' : k === 'cxl' ? '<b class="mp-late">運休</b>' : cw ? `<b class="mp-late">運休</b><small>（${cw.k === 'thin' ? '間引き' : '見合わせ'}）</small>`
+    const st = k === 'shop' ? '<b class="mp-late">運休</b><small>（工事中）</small>' : k === 'cxl' ? '<b class="mp-late">運休</b>' : cw && cw.k === 'ori' ? '<b class="mp-late">区間運休</b><small>（折り返し運転）</small>'
+      : cw ? `<b class="mp-late">運休</b><small>（${cw.k === 'thin' ? '間引き' : '見合わせ'}）</small>`
       : dl >= 60 ? `<span class="mp-late">約${Math.round(dl / 60)}分遅れ</span>` : '<span class="muted">ふだんどおり</span>';
     let bt = '';
     if (c) { if (c[7]) bt = `<button class="btn" data-cxd="${c[0]}">${c[1] != null ? '運休をやめる' : '編成の運休をやめる'}</button>`; }

@@ -20224,6 +20224,76 @@ begin
   end if;
   return _mp_leg_from(out);
 end $$;
+-- 線路の道すじ（_mp_rail_path とおなじ）。ただし excl の線は通らない（迂回。DB の更新82）
+create or replace function public._mp_rail_path_x(pu uuid, pc int, sa bigint, sb bigint, excl bigint[]) returns jsonb
+language plpgsql stable set search_path = public as $$
+declare A mp_stations; B mp_stations; s record; ids bigint[] := '{}'; n0s bigint[] := '{}'; n1s bigint[] := '{}'; lens real[] := '{}'; a0s real[] := '{}'; a1s real[] := '{}';
+        nst int; dist real[]; prev int[]; done boolean[]; stn bigint[]; sseg int[]; i int; j int; k int; best real; cur int; cn bigint; cseg int; din real; dout real;
+        bA int; bB int; cand real; cand_st int := null; cand_cost real := 1e12; cand_dir int; path int[] := '{}'; out jsonb := '[]'::jsonb; pieces jsonb := '[]'::jsonb;
+        sg mp_segs; st int; fromv real; tov real; total real := 0; ell boolean := true; sgl boolean := false; e0 int;
+begin
+  select * into A from mp_stations where id = sa; select * into B from mp_stations where id = sb;
+  if A.id is null or B.id is null then return null; end if;
+  for s in select x.id, x.n0, x.n1, x.len, x.pts from mp_segs x where x.kind = 'rail' and not (x.id = any(coalesce(excl, '{}'::bigint[])))
+             and ((x.own_u is not distinct from pu and x.own_c is not distinct from pc)
+             or exists (select 1 from mp_thru t where t.st = 'ok' and t.gu is not distinct from pu and t.gc is not distinct from pc and t.hu is not distinct from x.own_u and t.hc is not distinct from x.own_c)) order by x.id loop
+    ids := ids || s.id; n0s := n0s || s.n0; n1s := n1s || s.n1; lens := lens || s.len;
+    a0s := a0s || _mp_end_ang(s.pts, 0); a1s := a1s || _mp_end_ang(s.pts, 1);
+  end loop;
+  bA := array_position(ids, A.seg); bB := array_position(ids, B.seg);
+  if bA is null or bB is null then return null; end if;
+  -- 同じ線の上ならそのまま
+  if bA = bB then cand_cost := abs(B.at - A.at); end if;
+  -- 状態：（線 j を通って、はし e に着いた）。番号 = 2*(j-1) + e + 1（e=0 は n0 側、1 は n1 側）
+  nst := 2 * array_length(ids, 1);
+  dist := array_fill(1e12::real, array[nst]); prev := array_fill(0, array[nst]); done := array_fill(false, array[nst]);
+  dist[2 * (bA - 1) + 2] := lens[bA] - A.at;   -- n1 のほうへ
+  dist[2 * (bA - 1) + 1] := A.at;              -- n0 のほうへ
+  loop
+    best := 1e12; cur := 0;
+    for i in 1..nst loop if not done[i] and dist[i] < best then best := dist[i]; cur := i; end if; end loop;
+    exit when cur = 0 or best >= cand_cost;
+    done[cur] := true;
+    j := (cur - 1) / 2 + 1; e0 := (cur - 1) % 2;
+    cn := case when e0 = 0 then n0s[j] else n1s[j] end;
+    if cn is null then continue; end if;
+    -- 着いたときの進む向き（線の外へ）
+    din := case when e0 = 0 then a0s[j] + pi() else a1s[j] + pi() end;
+    for k in 1..array_length(ids, 1) loop
+      if k = j then continue; end if;
+      if n0s[k] = cn then dout := a0s[k];
+        if _mp_angdiff(din, dout) < 0.9 then
+          if k = bB then cand := dist[cur] + B.at; if cand < cand_cost then cand_cost := cand; cand_st := cur; cand_dir := 0; end if; end if;
+          if dist[cur] + lens[k] < dist[2 * (k - 1) + 2] then dist[2 * (k - 1) + 2] := dist[cur] + lens[k]; prev[2 * (k - 1) + 2] := cur; end if;
+        end if;
+      end if;
+      if n1s[k] = cn then dout := a1s[k];
+        if _mp_angdiff(din, dout) < 0.9 then
+          if k = bB then cand := dist[cur] + lens[k] - B.at; if cand < cand_cost then cand_cost := cand; cand_st := cur; cand_dir := 1; end if; end if;
+          if dist[cur] + lens[k] < dist[2 * (k - 1) + 1] then dist[2 * (k - 1) + 1] := dist[cur] + lens[k]; prev[2 * (k - 1) + 1] := cur; end if;
+        end if;
+      end if;
+    end loop;
+  end loop;
+  if cand_cost >= 1e11 then return null; end if;
+  -- 道すじをつくる [[線, 入る位置, 出る位置], …]
+  if cand_st is null then
+    out := jsonb_build_array(jsonb_build_array(A.seg, A.at, B.at));
+  else
+    cur := cand_st;
+    while cur <> 0 loop path := cur || path; cur := prev[cur]; end loop;
+    -- はじめの線：A から、はし（path[1] の e）へ
+    j := (path[1] - 1) / 2 + 1; e0 := (path[1] - 1) % 2;
+    out := jsonb_build_array(jsonb_build_array(ids[j], A.at, case when e0 = 0 then 0 else lens[j] end));
+    for i in 2..coalesce(array_length(path, 1), 1) loop
+      j := (path[i] - 1) / 2 + 1; e0 := (path[i] - 1) % 2;
+      out := out || jsonb_build_array(jsonb_build_array(ids[j], case when e0 = 0 then lens[j] else 0 end, case when e0 = 0 then 0 else lens[j] end));
+    end loop;
+    -- さいごの線：入ったはしから B へ
+    out := out || jsonb_build_array(jsonb_build_array(B.seg, case when cand_dir = 0 then 0 else lens[bB] end, B.at));
+  end if;
+  return _mp_leg_from(out);
+end $$;
 -- 線の点を、線にそって同じ間（step マス）に打ちなおす（はしの点はのこす）
 create or replace function public._mp_resample(p int[], step real) returns int[]
 language plpgsql immutable as $$
@@ -21867,7 +21937,7 @@ declare r mp_routes; hh int := extract(hour from h at time zone 'Asia/Tokyo')::i
         t0 int; tr record; perf jsonb; ntr int; tph1 real; tph2 real; cap1 bigint; cap2 bigint; cf real; ia int; ib int; catch jsonb; pop real; dem real; dem1 real; dem2 real; served bigint; rev bigint;
         km real; trip real; fare real; spd real; q real; share real; comf real; acn real; htn real; toil real; nok int; broke int; o record; amt bigint; rt real;
         lastj jsonb; secs real; d0 date := ((h - interval '1 hour') at time zone 'Asia/Tokyo')::date; ce jsonb; cperf jsonb; crt real; ccap real;
-        upc jsonb; dep_abs float8; ncan int; dsum float8; nd int; lost real; h0 float8 := extract(epoch from h - interval '1 hour'); nwk int; ev jsonb; nrun int; ran jsonb := '{}'::jsonb; rfid bigint; nsub int;
+        upc jsonb; dep_abs float8; ncan int; dsum float8; nd int; lost real; h0 float8 := extract(epoch from h - interval '1 hour'); nwk int; ev jsonb; nrun int; ran jsonb := '{}'::jsonb; rfid bigint; nsub int; orf real; sb2 bigint;
         xg real; xa real; xb real; xrm real; xdin int; xlng int; xbag real; xfee real; xmeal real; xbagr real; xug real; xus real; xua real; xub real; xur real;
         xnight boolean := ((hh + 23) % 24) >= 18 or ((hh + 23) % 24) <= 2;   -- この1時間に始発を出る列車は夜行（18時〜2時台）
 begin
@@ -21911,19 +21981,31 @@ begin
             where l.lo >= least(ia, ib) and l.lo < greatest(ia, ib) and not (l.v ->> 'e')::boolean) then continue; end if;
       if r.kind = 'air' and coalesce((perf ->> 'rwy')::int, 0) > (select min(s.plat) from mp_stations s where s.id = any(r.stops)) then continue; end if;   -- 滑走路（t54p）
       if r.kind = 'air' and tr.noslot is not null then continue; end if;   -- 発着口が足りない便は飛ばない（t57）
-      ev := null;
+      ev := null; orf := null;
       if upc is not null then   -- 乱れの区間を通る列車だけ（DB の更新60）：見合わせ・間引き（番号が奇数）で運休（運賃なし・車両はいたまない）
         begin ev := _mp_unko_trn(upc, r.stops, r.legs, tr.sched, tr.dir, dep_abs, tr.id, dep_abs + rt); exception when others then ev := null; end;
         if ev ->> 'can' is not null then ncan := ncan + 1; continue; end if;
+        if ev ->> 'ori' is not null then orf := (ev ->> 'ori')::real; cf := cf * orf; end if;   -- 区間折り返し（DB の更新82）：乱れの区間の外だけ走る（定員・運賃はその分）
       end if;
       -- 故障（状態が 40 より悪いと、ときどき）
       if (perf ->> 'cond')::real < 40 and random() < (40 - (perf ->> 'cond')::real) / 300 then
-        broke := broke + 1;
-        update mp_trains set warn = concat_ws(' / ', nullif(split_part(coalesce(warn, ''), ' / 故障', 1), ''), format('故障で運休（%s）', to_char(h at time zone 'Asia/Tokyo', 'MM/DD HH24時'))) where id = tr.id;
-        continue;
+        -- 予備編成（DB の更新82）：同じ車庫・同じ形式と両数の予備編成があれば、かわりに走る（代走）
+        sb2 := case when rfid = tr.fid then _mp_subst_pick(tr.fid, to_timestamp(dep_abs), to_timestamp(dep_abs + rt)) end;
+        if sb2 is null then
+          broke := broke + 1;
+          update mp_trains set warn = concat_ws(' / ', nullif(split_part(coalesce(warn, ''), ' / 故障', 1), ''), format('故障で運休（%s）', to_char(h at time zone 'Asia/Tokyo', 'MM/DD HH24時'))) where id = tr.id;
+          continue;
+        end if;
+        insert into mp_subst(train, day, orig, sub, own_u, own_c, t0, t1)
+          select tr.id, d0, tr.fid, sb2, f.own_u, f.own_c, to_timestamp(dep_abs), to_timestamp(dep_abs + rt) from mp_forms f where f.id = tr.fid
+        on conflict (train, day) do update set orig = excluded.orig, sub = excluded.sub, t0 = excluded.t0, t1 = excluded.t1, made_at = now();
+        update mp_trains set warn = concat_ws(' / ', nullif(split_part(coalesce(warn, ''), ' / 故障', 1), ''),
+                                    format('故障のため予備編成「%s」が代走（%s）', (select name from mp_forms where id = sb2), to_char(h at time zone 'Asia/Tokyo', 'MM/DD HH24時'))) where id = tr.id;
+        rfid := sb2; perf := _mp_form_perf(sb2); nsub := nsub + 1;
+        if perf is null then broke := broke + 1; continue; end if;
       end if;
-      -- 走った時間の分、車両がいたむ（寿命をすぎると2倍）
-      rt := coalesce((select max(coalesce((s.v ->> 1)::int, (s.v ->> 2)::int)) - tr.dep from jsonb_array_elements(tr.sched) s(v)), 1800);
+      -- 走った時間の分、車両がいたむ（寿命をすぎると2倍）。区間折り返しは走った分だけ（DB の更新82）
+      rt := coalesce((select max(coalesce((s.v ->> 1)::int, (s.v ->> 2)::int)) - tr.dep from jsonb_array_elements(tr.sched) s(v)), 1800) * coalesce(orf, 1);
       update mp_cars c set cond = greatest(0, cond - 0.035 * rt / 3600.0 * case when now() - born > make_interval(days => (select life from mp_types where code = c.type) * (1 + renewed) / 1) then 2 else 1 end)
        where form = rfid;   -- 代走なら予備編成がいたむ（DB の更新80）
       -- 連結している編成（つなぐ駅から切りはなす駅まで）：その分いたみ、定員は走る時間のわりあいで足す
@@ -28235,7 +28317,8 @@ begin
   ed := greatest(td + case when p_pick >= 4 then 600 else 300 end, te) + case when p_pick = 5 then 600 else 0 end;   -- 見合わせは、あとの点検10分
   if fit = 'over' then ed := ed + 900; end if;
   who := case when p_auto and z.own_u is null and z.own_c is null then '国' when p_auto then '現場の判断' else _mp_pname(z.own_u, z.own_c, false) end;
-  lg := jsonb_build_array(jsonb_build_array(td, format('%s：%s%s（%s）', case when first then '対応' else '対応を変えました' end, _mp_unko_pickt(p_pick, md), case when z.wide then '・全線' else '' end, who)));
+  lg := jsonb_build_array(jsonb_build_array(td, format('%s：%s%s%s%s（%s）', case when first then '対応' else '対応を変えました' end, _mp_unko_pickt(p_pick, md), case when z.wide then '・全線' else '' end,
+                          case when z.det is not null and not z.wide then '・迂回' else '' end, case when z.ori and not z.wide then '・区間の外は折り返し運転' else '' end, who)));   -- DB の更新82
   stopt := case md when 'air' then '欠航しています' when 'ship' then '欠航しています' when 'bus' then '運休しています' else '運転を見合わせています' end;
   if fit = 'under' and td < te then
     f := case when z.kind in ('wind', 'rain', 'snow', 'fog', 'heat', 'hail') then 600 else 360 end;
@@ -28463,10 +28546,11 @@ begin
     'id', z.id, 'kind', z.kind, 'sub', z.sub, 'why', _mp_unko_why(z), 'where', _mp_unko_where(z), 'x', z.x, 'y', z.y,
     'routes', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'name', r.name, 'color', r.color, 'own', _mp_pname(r.own_u, r.own_c, false),
                          'mine', (pu is not null or pc is not null or gv) and r.own_u is not distinct from pu and r.own_c is not distinct from pc, 'furi', r.id = any(z.furi),
-                         'zi', q.zi, 'zt', _mp_unko_zt(r.id, q.zi)) order by r.id), '[]'::jsonb)   -- 乱れがきく区間（駅の何番目〜何番目。null は全線。DB の更新60）
+                         'zi', q.zi, 'zt', _mp_unko_zt(r.id, q.zi),
+                         'det', case when q.zi is not null and z.det is not null then (z.det ->> r.id::text)::float8 end) order by r.id), '[]'::jsonb)   -- 区間（DB の更新60）・迂回の速さ（DB の更新82）
                  from mp_routes r cross join lateral (select _mp_unko_zi(z, r.id) zi) q where r.id = any(z.routes)),
     'mode', z.mode, 'sev', z.sev, 'sevmax', z.sevmax, 't0', extract(epoch from z.t0), 'until', extract(epoch from z.ask_until),
-    'pick', z.pick, 'auto', z.pick_auto, 'wins', z.wins, 'tend', extract(epoch from z.t_end), 'st', z.st, 'wide', z.wide,
+    'pick', z.pick, 'auto', z.pick_auto, 'wins', z.wins, 'tend', extract(epoch from z.t_end), 'st', z.st, 'wide', z.wide, 'ori', z.ori, 'det', z.det is not null,
     'log', (select coalesce(jsonb_agg(l order by (l ->> 0)::float8), '[]'::jsonb) from jsonb_array_elements(z.log) l where (l ->> 0)::float8 <= extract(epoch from now()) + 1),
     'by', _mp_pname(z.own_u, z.own_c, false),
     'me', (pu is not null or pc is not null) and z.own_u is not distinct from pu and z.own_c is not distinct from pc,
@@ -28482,9 +28566,10 @@ end $$;
 
 -- 対応をえらぶ（1 いつもどおり・2 徐行・点検しながら・3 運転見合わせ）
 drop function if exists public.mp_unko_pick(bigint, int, text);   -- 前の形（p_wide なし。DB の更新60）
-create or replace function public.mp_unko_pick(p_id bigint, p_pick int, p_as text, p_wide boolean default null) returns jsonb
+drop function if exists public.mp_unko_pick(bigint, int, text, boolean);   -- 前の形（p_ori・p_det なし。DB の更新82）
+create or replace function public.mp_unko_pick(p_id bigint, p_pick int, p_as text, p_wide boolean default null, p_ori boolean default null, p_det boolean default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); pa record; z mp_unko;
+declare u uuid := _me(); pa record; z mp_unko; dj jsonb;
 begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
@@ -28496,11 +28581,25 @@ begin
     raise exception 'この対応をえらべるのは「%」です（名義を切りかえてください）', _mp_pname(z.own_u, z.own_c, false);
   end if;
   if z.st = 'done' or (z.st = 'run' and coalesce(z.t_end, now()) <= now() and now() >= z.t0 + make_interval(secs => z.dur)) then raise exception 'この乱れは、もうおわっています'; end if;
-  if z.st = 'run' and z.pick = p_pick and (p_wide is null or p_wide = z.wide) then raise exception 'いまと同じ対応です'; end if;
+  if z.st = 'run' and z.pick = p_pick and (p_wide is null or p_wide = z.wide) and (p_ori is null or p_ori = z.ori) and (p_det is null or p_det = (z.det is not null)) then
+    raise exception 'いまと同じ対応です';
+  end if;
   if p_wide is not null and p_wide is distinct from z.wide then update mp_unko set wide = p_wide where id = p_id; end if;   -- 範囲：乱れの区間だけ・全線（DB の更新60）
+  -- 区間折り返し・迂回（DB の更新82。鉄道の、区間だけの乱れ）
+  if (coalesce(p_ori, false) or coalesce(p_det, false)) and (coalesce(z.mode, 'rail') <> 'rail' or coalesce(p_wide, z.wide)) then
+    raise exception '区間折り返し・迂回は、鉄道の「乱れの区間だけ」のときにえらべます';
+  end if;
+  if p_ori is not null and p_ori is distinct from z.ori then update mp_unko set ori = p_ori where id = p_id; end if;
+  if p_det is not null then
+    if p_det then
+      dj := _mp_unko_det(p_id);
+      if dj is null then raise exception '迂回できる線路がありません（区間の手前と先の駅を、区間を通らずにつなぐ自分の線路がいります。電化した区間は、電化した線路で）'; end if;
+    end if;
+    update mp_unko set det = dj where id = p_id;
+  end if;
   perform _mp_unko_apply(z.id, p_pick, false);
   select * into z from mp_unko where id = p_id;
-  return jsonb_build_object('ok', true, 'pick', z.pick, 'tend', extract(epoch from z.t_end), 'wide', z.wide);
+  return jsonb_build_object('ok', true, 'pick', z.pick, 'tend', extract(epoch from z.t_end), 'wide', z.wide, 'ori', z.ori, 'det', z.det);
 end $$;
 
 -- 振替輸送をたのむ（運転見合わせ中・これから見合わせるとき。自分の線だけ）：近く（約750m）のほかの線がお客をはこぶ。
@@ -30396,6 +30495,8 @@ end $$;
 alter table public.mp_cars add column if not exists busy_from timestamptz;    -- 工事・転属・納車のはじまり（null：前からのもの。busy_until までずっと）
 alter table public.mp_unko add column if not exists zs bigint[];              -- 乱れの場所の駅（列車がきくのは、この駅と系統のとなりの駅のあいだ。null は全線：前からのもの）
 alter table public.mp_unko add column if not exists wide boolean not null default false;   -- 対応を「全線」にした（これからの窓は全線。窓の6つめ 1）
+alter table public.mp_unko add column if not exists ori boolean not null default false;   -- 区間折り返し（DB の更新82）：見合わせのあいだ、乱れの区間の外の列車は走る（区間の手前で折り返す）
+alter table public.mp_unko add column if not exists det jsonb;   -- 迂回（DB の更新82）：{系統: 区間を通る速さ（もとの長さ ÷ 迂回の長さ）}。見合わせのあいだ、その系統の列車は ほかの線路で迂回する
 
 -- 持ち主が決めた運休
 create table if not exists public.mp_cxl (
@@ -30729,14 +30830,21 @@ $$;
 -- 系統 rid の乱れ（ta〜tb にかかるもの）：[{id, w: [[はじめ, おわり, 速さ, 間引き, 全線], …]（はじめの順）, zi}, …]。なければ null
 create or replace function public._mp_unko_rt(rid bigint, ta float8, tb float8) returns jsonb
 language plpgsql stable set search_path = public as $$
-declare z mp_unko; out jsonb := '[]'::jsonb; w jsonb;
+declare z mp_unko; out jsonb := '[]'::jsonb; w jsonb; zi jsonb; dr float8;
 begin
   for z in select * from mp_unko x where x.routes @> array[rid] and x.t0 < to_timestamp(tb) and coalesce(x.t_end, now() + interval '1 day') > to_timestamp(ta) order by x.id loop
-    w := (select coalesce(jsonb_agg(jsonb_build_array((e ->> 0)::float8, (e ->> 1)::float8, (e ->> 2)::float8, coalesce((e ->> 3)::int, 0), coalesce((e ->> 5)::int, 0))
+    zi := _mp_unko_zi(z, rid);
+    -- 迂回・区間折り返し（DB の更新82）：区間だけの見合わせ（速さ 0・全線でない）は、迂回できる系統は迂回の速さで走る。
+    --   迂回しない系統は、折り返しにしたら6つめを 1（区間に入るはずの列車は、区間の外だけ走る）
+    dr := case when zi is not null and z.det is not null and z.det ? rid::text then (z.det ->> rid::text)::float8 end;
+    w := (select coalesce(jsonb_agg(jsonb_build_array((e ->> 0)::float8, (e ->> 1)::float8,
+                                    case when dr is not null and (e ->> 2)::float8 = 0 and coalesce((e ->> 5)::int, 0) = 0 then dr else (e ->> 2)::float8 end,
+                                    coalesce((e ->> 3)::int, 0), coalesce((e ->> 5)::int, 0),
+                                    case when dr is null and zi is not null and z.ori and (e ->> 2)::float8 = 0 and coalesce((e ->> 5)::int, 0) = 0 then 1 else 0 end)
                                     order by (e ->> 0)::float8, (e ->> 1)::float8), '[]'::jsonb)
             from jsonb_array_elements(z.wins) e where (e ->> 1)::float8 > (e ->> 0)::float8 and (e ->> 2)::float8 < 1);
     if jsonb_array_length(w) = 0 then continue; end if;
-    out := out || jsonb_build_array(jsonb_build_object('id', z.id, 'w', w, 'zi', _mp_unko_zi(z, rid)));
+    out := out || jsonb_build_array(jsonb_build_object('id', z.id, 'w', w, 'zi', zi));
   end loop;
   return case when jsonb_array_length(out) = 0 then null else out end;
 end $$;
@@ -30770,6 +30878,7 @@ declare n int; ns int := coalesce(array_length(st, 1), 0); idx int[]; cum float8
         ia int[]; ar float8[]; dp float8[];
         xa float8[] := '{}'; xb float8[] := '{}'; xr float8[] := '{}'; xth boolean[] := '{}'; xza float8[] := '{}'; xzb float8[] := '{}'; xzc float8[] := '{}'; xrs float8[] := '{}'; xid bigint[] := '{}';
         zz jsonb; w jsonb; zi jsonb; cs float8; ce float8; rs float8; a float8; b float8; r float8; th boolean; wide boolean;
+        xo boolean[] := '{}'; ori boolean; op float8 := null; oz bigint := null;
         ka int; kb int; k int; lo int; hi int; ea int; eb int; za float8; zb float8; i int; j int; m int;
         s float8; d float8; p float8; nx float8; pr float8; it int := 0; ze float8; can text := null; cz bigint := null;
 begin
@@ -30789,13 +30898,14 @@ begin
     zi := zz -> 'zi'; cs := null; ce := '-infinity';
     for w in select v from jsonb_array_elements(zz -> 'w') with ordinality x(v, o) order by o loop
       a := (w ->> 0)::float8; b := (w ->> 1)::float8; r := (w ->> 2)::float8; th := coalesce((w ->> 3)::int, 0) = 1; wide := coalesce((w ->> 4)::int, 0) = 1;
+      ori := coalesce((w ->> 5)::int, 0) = 1;   -- 区間折り返し（DB の更新82）
       rs := a;
       if r = 0 then
         if cs is null or ce < a - 1 then cs := a; ce := b; else ce := greatest(ce, b); end if;
         rs := cs;
       end if;
       if wide or zi is null or jsonb_typeof(zi) <> 'array' or bad then
-        xa := xa || a; xb := xb || b; xr := xr || r; xth := xth || th; xza := xza || (-1e9)::float8; xzb := xzb || 1e9::float8; xzc := xzc || 0::float8; xrs := xrs || rs; xid := xid || (zz ->> 'id')::bigint;
+        xa := xa || a; xb := xb || b; xr := xr || r; xth := xth || th; xza := xza || (-1e9)::float8; xzb := xzb || 1e9::float8; xzc := xzc || 0::float8; xrs := xrs || rs; xid := xid || (zz ->> 'id')::bigint; xo := xo || false;
         continue;
       end if;
       for m in 0..jsonb_array_length(zi) - 1 loop
@@ -30821,7 +30931,7 @@ begin
           end loop;
         end loop;
         if za is null or zb is null or zb <= za then continue; end if;
-        xa := xa || a; xb := xb || b; xr := xr || r; xth := xth || th; xza := xza || (za - t0); xzb := xzb || (zb - t0); xzc := xzc || (za - t0); xrs := xrs || rs; xid := xid || (zz ->> 'id')::bigint;
+        xa := xa || a; xb := xb || b; xr := xr || r; xth := xth || th; xza := xza || (za - t0); xzb := xzb || (zb - t0); xzc := xzc || (za - t0); xrs := xrs || rs; xid := xid || (zz ->> 'id')::bigint; xo := xo || ori;
       end loop;
     end loop;
   end loop;
@@ -30830,9 +30940,15 @@ begin
   -- 運休（見合わせ・間引き）
   for i in 1..m loop
     ze := d0 + xzc[i];
+    -- 区間折り返し（DB の更新82）：見合わせの窓に区間に入るはずの列車は、区間の外だけ走る（op：走るわりあい。始発駅を出てから終点に着くまでの時間で）
+    if xr[i] = 0 and xo[i] and xa[i] <= ze and ze < xb[i] then
+      if op is null then op := greatest(0, 1 - (xzb[i] - xza[i]) / greatest(1, ar[n] - t0)); oz := xid[i]; end if;
+      continue;
+    end if;
     if xr[i] = 0 and xa[i] <= ze and ze < xb[i] and d0 >= xrs[i] then can := 'stop'; cz := xid[i]; exit; end if;
     if xth[i] and tid % 2 = 1 and xa[i] <= ze and ze < xb[i] and d0 >= xa[i] then can := 'thin'; cz := xid[i]; exit; end if;
   end loop;
+  if can is null and op is not null and op < 0.05 then can := 'stop'; cz := oz; end if;   -- 区間の外がほとんどない列車は運休
   if can is not null then return jsonb_build_object('can', can, 'dly', 0, 'z', cz); end if;
   -- 遅れ：区間にいるあいだは窓の速さ、そのほかは 1秒に 0.1秒ずつ取りもどす
   s := d0; d := 0;
@@ -30840,13 +30956,13 @@ begin
     it := it + 1;
     p := s - d0 - d; r := 1; nx := te;
     for i in 1..m loop
-      if xa[i] <= s and s < xb[i] and xza[i] <= p + 1e-6 and p < xzb[i] - 1e-6 then r := least(r, xr[i]); end if;
+      if not xo[i] and xa[i] <= s and s < xb[i] and xza[i] <= p + 1e-6 and p < xzb[i] - 1e-6 then r := least(r, xr[i]); end if;   -- 折り返しの窓では待たない（DB の更新82）
       if xa[i] > s then nx := least(nx, xa[i]); elsif xb[i] > s then nx := least(nx, xb[i]); end if;
     end loop;
     if r < 1 then
       if r > 0 then
         for i in 1..m loop
-          if xa[i] <= s and s < xb[i] then
+          if not xo[i] and xa[i] <= s and s < xb[i] then
             if p < xza[i] - 1e-6 then nx := least(nx, s + (xza[i] - p) / r);
             elsif p < xzb[i] - 1e-6 then nx := least(nx, s + (xzb[i] - p) / r); end if;
           end if;
@@ -30857,12 +30973,47 @@ begin
       pr := case when d > 0 then 1.1 else 1 end;
       if d > 0 then nx := least(nx, s + d / 0.1); end if;
       for i in 1..m loop
-        if xa[i] <= s and s < xb[i] and p < xza[i] - 1e-6 then nx := least(nx, s + (xza[i] - p) / pr); end if;
+        if not xo[i] and xa[i] <= s and s < xb[i] and p < xza[i] - 1e-6 then nx := least(nx, s + (xza[i] - p) / pr); end if;
       end loop;
       d := greatest(0, d - 0.1 * (nx - s)); s := nx;
     end if;
   end loop;
-  return jsonb_build_object('can', null, 'dly', d, 'z', null);
+  return jsonb_build_object('can', null, 'dly', d, 'z', null) || case when op is not null then jsonb_build_object('ori', op, 'oz', oz) else '{}'::jsonb end;
+end $$;
+-- 迂回（DB の更新82）：乱れの区間（_mp_unko_zi）を通らずに、区間の手前の駅と先の駅をつなぐ線路（系統の持ち主の線路と乗り入れ）があるか。
+--   区間の中の駅が、はしの駅とおなじ線にあるとき・区間の中に駅がないとき（はしの駅で起きた）は迂回できない。
+--   電化した区間を、電化していない線路で迂回はしない。系統ごとに、区間を通る速さ（もとの長さ ÷ 迂回の長さ。0.15〜0.9）：{系統: 速さ}。どこもなければ null
+create or replace function public._mp_unko_det(p_id bigint) returns jsonb
+language plpgsql stable set search_path = public as $$
+declare z mp_unko; ro mp_routes; zi jsonb; e jsonb; ka int; kb int; sa mp_stations; sb mp_stations; excl bigint[]; pth jsonb; d0 float8; rr float8; v_ok boolean; el boolean;
+        out jsonb := '{}'::jsonb;
+begin
+  select * into z from mp_unko where id = p_id;
+  if not found or coalesce(z.mode, 'rail') <> 'rail' or z.wide then return null; end if;
+  for ro in select * from mp_routes where id = any(z.routes) and kind = 'rail' and ok order by id loop
+    zi := _mp_unko_zi(z, ro.id);
+    if zi is null or jsonb_typeof(zi) <> 'array' or jsonb_array_length(zi) = 0 then continue; end if;
+    v_ok := true; rr := 1;
+    for e in select v from jsonb_array_elements(zi) v loop
+      ka := (e ->> 0)::int; kb := (e ->> 1)::int;
+      select * into sa from mp_stations where id = ro.stops[ka + 1];
+      select * into sb from mp_stations where id = ro.stops[kb + 1];
+      if sa.id is null or sb.id is null or sa.id = sb.id or kb - ka < 2 then v_ok := false; exit; end if;
+      if exists (select 1 from unnest(ro.stops[ka + 2:kb]) q(sid) join mp_stations s on s.id = q.sid where s.seg in (sa.seg, sb.seg)) then v_ok := false; exit; end if;
+      -- 区間の線路（駅と駅のあいだに通る線。はしの駅の線はのぞく）と、区間の中の駅の線
+      excl := array(select distinct (g ->> 0)::bigint from jsonb_array_elements(ro.legs) with ordinality l(v, o), jsonb_array_elements(l.v -> 'g') g
+                     where l.o - 1 >= ka and l.o - 1 < kb and (g ->> 0)::bigint not in (sa.seg, sb.seg))
+              || array(select s.seg from unnest(ro.stops[ka + 2:kb]) q(sid) join mp_stations s on s.id = q.sid where s.seg is not null);
+      pth := _mp_rail_path_x(ro.own_u, ro.own_c, sa.id, sb.id, excl);
+      if pth is null then v_ok := false; exit; end if;
+      d0 := coalesce((select sum((l.v ->> 'd')::float8) from jsonb_array_elements(ro.legs) with ordinality l(v, o) where l.o - 1 >= ka and l.o - 1 < kb), 0);
+      el := coalesce((select bool_and(coalesce((l.v ->> 'e')::boolean, false)) from jsonb_array_elements(ro.legs) with ordinality l(v, o) where l.o - 1 >= ka and l.o - 1 < kb), false);
+      if el and not coalesce((pth ->> 'e')::boolean, false) then v_ok := false; exit; end if;
+      rr := least(rr, greatest(0.15, least(0.9, d0 / greatest((pth ->> 'd')::float8, 1))));
+    end loop;
+    if v_ok then out := out || jsonb_build_object(ro.id::text, round(rr::numeric, 3)); end if;
+  end loop;
+  return case when out = '{}'::jsonb then null else out end;
 end $$;
 
 -- 列車を運休にする（系統・編成の持ち主）：p_train と p_day で1本（その日）。p_form で編成ごと（p_hours 時間、または p_unko の乱れがおわるまで）
@@ -31237,7 +31388,7 @@ begin
             'mp_thru_req','mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market',
             'mp_unit_mine','mp_unit_own','mp_unit_set','mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer','mp_unko_list','mp_unko_pick','mp_unko_furi','mp_unko_make','mp_jam_now','mp_jam_list','mp_er_now','mp_er_list','mp_er_bld','mp_lic_find','mp_lic_at','mp_lic_apply','_mp_lic_pfee_of','_mp_lic_pfee','_mp_lic_have','_mp_lic_mfee','mp_lic_mine','mp_lic_cancel','mp_lic_review','mp_lic_decide',
             'mp_sta_melt','mp_seg_snow','mp_dep_plow','mp_snow_mine','mp_seg_height',
-            '_mp_form_busy','_mp_form_runs','_mp_cxl_on','_mp_unko_zone','_mp_unko_zi','_mp_unko_zt','_mp_unko_rt','_mp_sched_idx','_mp_unko_trn','mp_cxl_add','mp_cxl_del','_mp_form_key','_mp_train_runs','_mp_subst_can','_mp_subst_pick','_mp_subst_has','_mp_subst_ok','_mp_subst_plan','_mp_subst_plan_all','_mp_tmp_back','mp_form_spare','mp_form_add','mp_car_tmp') loop
+            '_mp_form_busy','_mp_form_runs','_mp_cxl_on','_mp_unko_zone','_mp_unko_zi','_mp_unko_zt','_mp_unko_rt','_mp_sched_idx','_mp_unko_trn','_mp_rail_path_x','_mp_unko_det','mp_cxl_add','mp_cxl_del','_mp_form_key','_mp_train_runs','_mp_subst_can','_mp_subst_pick','_mp_subst_has','_mp_subst_ok','_mp_subst_plan','_mp_subst_plan_all','_mp_tmp_back','mp_form_spare','mp_form_add','mp_car_tmp') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
       execute format('revoke all on function %s from authenticated', f.sig);
@@ -31280,3 +31431,5 @@ alter function public.mp_route_branch(bigint, bigint, text) set statement_timeou
 alter function public.mp_dia_import(bigint, jsonb, boolean, boolean, text) set statement_timeout = '60s';
 -- 給水・給炭（DB の更新78）も、通る系統の時刻を見なおすので60秒まで
 alter function public.mp_sta_sup(bigint, text, boolean, boolean) set statement_timeout = '60s';
+-- 運行の乱れの対応で迂回をえらぶと、線路の道すじをさがすので20秒まで（DB の更新82）
+alter function public.mp_unko_pick(bigint, int, text, boolean, boolean, boolean) set statement_timeout = '20s';
