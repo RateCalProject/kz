@@ -1069,6 +1069,15 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 .id-row:first-child{border-top:0}
 .id-row b{flex:1;min-width:0;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .id-row small{color:var(--muted);font-size:12px;white-space:nowrap}
+/* 意見箱の優先度（▶︎1〜▶︎5・却下） */
+.ipr{flex:none;display:inline-block;font-size:12px;font-weight:700;line-height:1.5;padding:0 7px;margin-left:6px;border-radius:999px;border:1px solid currentColor;white-space:nowrap;color:var(--muted);vertical-align:1px}
+.ipr.p1{color:var(--down)}.ipr.p2{color:var(--noon)}.ipr.p3{color:var(--accent)}.ipr.no{border-style:dashed}
+.id-row .ipr{margin-left:0}
+.id-row .id-t{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.id-row .id-t b{flex:none}
+.id-row select{flex:none;width:auto;margin:0;padding:4px 6px;font-size:13px}
+.ipr-set{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0 2px}
+.ipr-set .btn.s{min-width:38px;margin:0;padding-left:10px;padding-right:10px}
 /* 統計・ランキング（情報・t62） */
 .st-wrap{overflow-x:auto;margin:8px -4px 0;-webkit-overflow-scrolling:touch}
 .st-tb{border-collapse:separate;border-spacing:0;font-size:13px;min-width:100%}
@@ -1881,13 +1890,19 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   <div class="ad-slot" data-sub="help" id="adHelp"></div>
   <div class="card" data-sub="idea">
     <h3 style="margin-top:0">📮 意見箱</h3>
-    <p class="muted small" style="margin:0 0 8px">「こうなったらいいな」「ここが使いにくい」「不具合を見つけた」など、なんでも送ってください。運営（管理者）が読みます。</p>
+    <p class="muted small" style="margin:0 0 8px">「こうなったらいいな」「ここが使いにくい」「不具合を見つけた」など、なんでも送ってください。運営（管理者・副管理者）が読みます。</p>
     <div class="seg sm" id="idK" style="display:flex;flex-wrap:wrap"><button data-k="提案" class="on">💡 提案</button><button data-k="使いにくい">🤔 使いにくい</button><button data-k="不具合">🐛 不具合</button><button data-k="その他">💬 その他</button></div>
     <input class="inp" id="idSub" maxlength="28" placeholder="ひとことで（例：天気図に雷のマークがほしい）" style="margin-top:8px">
     <textarea class="inp" id="idBody" rows="5" maxlength="2000" placeholder="くわしく（なくてもよい）"></textarea>
     <button class="btn main wide" id="idGo">意見を送る</button>
     <p class="muted small" style="margin:8px 0 0">ひとことだけ・くわしくだけでも送れます。返事は メイン → 連絡 の「運営への問い合わせ」に届きます（🔔でも知らせます）。1日10件まで（ゲストは3件まで）。</p>
-    <h4 style="margin:14px 0 4px">送った意見</h4><div id="idList"></div>
+    <h4 style="margin:14px 0 4px">送った意見</h4><div id="idMine"></div>
+    <div id="idStaff" class="hidden">
+      <h4 style="margin:18px 0 4px">みんなの意見（管理者・副管理者）</h4>
+      <p class="muted small" style="margin:0 0 6px">優先度は 1〜5（1がいちばん先）か「却下」。送った人の「送った意見」にも「▶︎1」「▶︎副官による却下」のように出ます。<span id="idSubNote"></span></p>
+      <div class="seg sm" id="idSF" style="display:flex;flex-wrap:wrap"><button data-f="open" class="on">受付中</button><button data-f="none">まだ</button><button data-f="no">却下</button><button data-f="closed">解決済み</button></div>
+      <div id="idAll" style="margin-top:6px"></div>
+    </div>
   </div>
   <div data-sub="kokko" class="card" id="txTreasury"></div>
   <div data-sub="kokko" class="card" id="txTop"></div>
@@ -5166,7 +5181,7 @@ function stCmpDraw() {
    役所 → ヘルプ（t62）：遊び方・やり方（help/help.json。README からつくる）。さがせる（題・中身・ことば。ひらがな・カタカナ・全角半角は同じに）
    役所 → 意見箱（t62）：運営への問い合わせ（support_open）に「【意見箱】」の件名で送る
    ================================================================= */
-const HELP_V = 'bcd827a3';
+const HELP_V = '919da4cc';
 const HP = { d: null, cat: 'start', q: '' };
 const hpNorm = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
 async function helpLoad() {
@@ -5240,12 +5255,55 @@ async function ideaLoad() {
   };
   ideaList();
 }
+// 意見箱の優先度（DB の更新79）：1〜5 は「▶︎1」（1がいちばん先）、0 は「▶︎管理者による却下」「▶︎副官による却下」（副官＝副管理者）
+function ideaPrio(t) {
+  if (!t || t.prio == null) return '';
+  if (t.prio === 0) return `<span class="ipr no">▶︎${t.prio_by === 'sub' ? '副官' : '管理者'}による却下</span>`;
+  return `<span class="ipr p${t.prio}">▶︎${t.prio}</span>`;
+}
 async function ideaList() {
-  let d; try { d = await call('support_list'); } catch (e) { $('#idList').innerHTML = `<p class="muted small" style="margin:0">${esc(e.message)}</p>`; return; }
+  if (ME.role) ideaStaff(); else $('#idStaff').classList.add('hidden');
+  let d; try { d = await call('support_list'); } catch (e) { $('#idMine').innerHTML = `<p class="muted small" style="margin:0">${esc(e.message)}</p>`; return; }
   const ts = (d.threads || []).filter(t => String(t.subject || '').startsWith(IDEA_PRE));
-  $('#idList').innerHTML = ts.length ? ts.map(t => `<div class="id-row" data-spt="${t.id}"><b>${esc(String(t.subject).slice(IDEA_PRE.length))}${t.unread ? '<span class="dm-n">!</span>' : ''}</b><small>${t.status === 'open' ? '受付中' : '解決済み'}・${t.at} ${t.time}</small></div>`).join('')
+  $('#idMine').innerHTML = ts.length ? ts.map(t => `<div class="id-row" data-spt="${t.id}"><span class="id-t"><b>${esc(String(t.subject).slice(IDEA_PRE.length))}${t.unread ? '<span class="dm-n">!</span>' : ''}</b><small>${t.status === 'open' ? '受付中' : '解決済み'}・${t.at} ${t.time}</small></span>${ideaPrio(t)}</div>`).join('')
     : '<p class="muted small" style="margin:0">まだありません</p>';
-  $$('#idList [data-spt]').forEach(el => el.onclick = () => spOpen(Number(el.dataset.spt)));
+  $$('#idMine [data-spt]').forEach(el => el.onclick = () => spOpen(Number(el.dataset.spt)));
+}
+// みんなの意見（管理者・副管理者）：優先度をつける。副管理者には送った人が出ない（DB の更新79。更新の前は出さない）
+const IDS = { f: 'open', d: null };
+async function ideaStaff() {
+  const box = $('#idStaff');
+  let d; try { d = await call('idea_inbox'); } catch (e) { box.classList.add('hidden'); return; }
+  IDS.d = d; box.classList.remove('hidden');
+  $('#idSubNote').textContent = d.role === 'sub' ? '副管理者には送った人は出ません。返事と解決済みは管理者がします。管理者がつけた優先度は変えられません。' : '';
+  $$('#idSF button').forEach(b => b.onclick = () => { IDS.f = b.dataset.f; ideaStaffDraw(); });
+  ideaStaffDraw();
+}
+function ideaStaffDraw() {
+  const d = IDS.d; if (!d) return;
+  const all = d.ideas || [], rank = t => t.prio == null ? 6 : t.prio === 0 ? 7 : t.prio;
+  const F = {
+    open: all.filter(t => t.status === 'open').sort((a, b) => rank(a) - rank(b)),   // 1→5→まだ→却下（同じなら新しい順）
+    none: all.filter(t => t.status === 'open' && t.prio == null),
+    no: all.filter(t => t.prio === 0),
+    closed: all.filter(t => t.status !== 'open')
+  };
+  const NM = { open: '受付中', none: 'まだ', no: '却下', closed: '解決済み' };
+  $$('#idSF button').forEach(b => { b.classList.toggle('on', b.dataset.f === IDS.f); b.textContent = `${NM[b.dataset.f]} ${F[b.dataset.f].length}`; });
+  const L = F[IDS.f] || [];
+  const opt = t => `<select class="inp" data-ip="${t.id}" aria-label="優先度"><option value="">—</option>${[1, 2, 3, 4, 5].map(n => `<option value="${n}"${t.prio === n ? ' selected' : ''}>▶︎${n}</option>`).join('')}<option value="0"${t.prio === 0 ? ' selected' : ''}>却下</option></select>`;
+  $('#idAll').innerHTML = L.length ? L.map(t => `<div class="id-row" data-spt="${t.id}"><span class="id-t"><b>${esc(String(t.subject).slice(IDEA_PRE.length))}</b>
+      <small>${t.mine ? 'あなた・' : t.user ? esc(t.user.nickname) + '・' : ''}${t.at} ${t.time}</small></span>${ideaPrio(t)}${t.can_prio ? opt(t) : ''}</div>`).join('')
+    : `<p class="muted small" style="margin:0">${IDS.f === 'none' ? '優先度がまだの意見はありません' : 'ありません'}</p>`;
+  $$('#idAll [data-spt]').forEach(el => el.onclick = ev => { if (!ev.target.closest('select')) spOpen(Number(el.dataset.spt)); });
+  $$('#idAll [data-ip]').forEach(s => s.onchange = async () => {
+    const v = s.value === '' ? null : Number(s.value); s.disabled = true;
+    try {
+      await call('idea_prio', { p_id: Number(s.dataset.ip), p_prio: v });
+      toast(v == null ? '優先度をなしにしました' : v === 0 ? '却下にしました' : `優先度を ${v} にしました`);
+    } catch (e) { toast(e.message); }
+    ideaStaff();
+  });
 }
 
 async function infoLoad() {
@@ -6606,7 +6664,7 @@ async function adStaffLoad() {
   const row = (k, title, desc, L) => `<div class="ad-staff" data-kind="${k}"><b>${title}</b><p class="muted small" style="margin:2px 0 6px">${desc}</p>
     <div class="ad-people">${L.map(x => `<span class="ad-pp">${esc(x.nickname)}<small>ID ${esc(x.id)}</small></span>`).join('') || '<span class="muted small">いません</span>'}</div>
     <div class="row" style="margin-top:6px"><input class="inp grow" data-ids value="${esc(L.map(x => x.id).join(' '))}" placeholder="ユーザーのID（空白かカンマで区切る）" style="margin:0"><button class="btn s" data-save>保存</button></div></div>`;
-  box.innerHTML = row('sub', '副管理者', '企業・上場の審査、訴えの審理、交換の申請の処理ができます（国のお金・介入・手数料・役割の設定はできません）。', st.sub)
+  box.innerHTML = row('sub', '副管理者', '企業・上場の審査、訴えの審理、交換の申請の処理、意見箱の優先度つけができます（国のお金・介入・手数料・役割の設定はできません）。', st.sub)
     + row('event', 'イベント製作者', '臨時のレース（オッズの倍率は20倍まで）とお知らせバナーをつくれます。取り消す・消すのは自分がつくったものだけで、自分がつくったレースの馬券は買えません。', st.event)
     + (st.lic ? row('lic', '鉄道の審査', '鉄道の免許の申請を審査します（国土 → ≡ → 🚃 鉄道の免許 →「審査」）。許可・却下だけで、ほかの管理はできません。', st.lic) : '')
     + '<p class="muted small" style="margin:8px 0 0">IDは、プロフィールや「人をさがす」で見られます。なった人・はずれた人には通知が届きます。</p>';
@@ -7292,7 +7350,7 @@ async function dmListLoad() {
 }
 async function spListLoad() {
   let d; try { d = await call('support_list'); } catch (e) { return toast(e.message); }
-  const row = (t, staff) => `<div class="co-row" data-spt="${t.id}"><span class="nm"><b>${esc(t.subject)}${t.unread ? '<span class="dm-n">!</span>' : ''}</b>
+  const row = (t, staff) => `<div class="co-row" data-spt="${t.id}"><span class="nm"><b>${esc(t.subject)}${t.unread ? '<span class="dm-n">!</span>' : ''}${ideaPrio(t)}</b>
       <small>${staff ? `${nameB(t.user.nickname, t.user.badge)}（ID ${t.user.uid}）・` : ''}${esc(t.last || '')}</small>
       <small>${t.status === 'open' ? '受付中' : '解決済み'}・${t.at} ${t.time}・${t.n}通</small></span><span style="color:var(--muted);font-size:20px">›</span></div>`;
   $('#spList').innerHTML = d.threads.length ? d.threads.map(t => row(t, false)).join('') : '<p class="muted small" style="margin:0">まだ問い合わせはありません</p>';
@@ -7368,14 +7426,22 @@ $('#spNew').onclick = () => {
 };
 async function spOpen(id) { try { spShow(await call('support_thread', { p_id: id })); } catch (e) { toast(e.message); } }
 function spShow(t, draft) {
-  const staff = t.side === 'staff';
-  const who = x => x.staff ? '運営' + (staff && x.who ? `（${esc(x.who)}）` : '') : staff ? esc(t.user.nickname) : 'あなた';
-  const msgs = t => t.msgs.map(x => `<div class="dk-m ${x.staff === staff ? 'me' : ''}">${esc(x.body)}<small>${who(x)}・${x.at} ${x.time}</small></div>`).join('');
+  // side：user（本人）・staff（管理者）・sub（副管理者。意見箱の意見を読むだけ・送った人は出ない。DB の更新79）
+  const staff = t.side === 'staff', sub = t.side === 'sub', idea = String(t.subject || '').startsWith(IDEA_PRE);
+  const who = x => x.staff ? '運営' + (staff && x.who ? `（${esc(x.who)}）` : '') : staff ? esc(t.user.nickname) : sub ? '送った人' : 'あなた';
+  const msgs = t => t.msgs.map(x => `<div class="dk-m ${x.staff === (staff || sub) ? 'me' : ''}">${esc(x.body)}<small>${who(x)}・${x.at} ${x.time}</small></div>`).join('');
+  // 優先度をつける（管理者・副管理者。自分が送った意見と、副管理者から見た管理者がつけたものは変えられない）
+  const prioBox = (staff || sub) && idea && 'prio' in t ? `<div class="ipr-set"><span class="small muted">優先度</span>${t.can_prio
+      ? [1, 2, 3, 4, 5].map(n => `<button class="btn s ${t.prio === n ? 'main' : ''}" data-ipv="${n}">${n}</button>`).join('')
+        + `<button class="btn s ${t.prio === 0 ? 'main' : ''}" data-ipv="0">却下</button>${t.prio != null ? '<button class="btn s" data-ipv="">なし</button>' : ''}`
+      : '<span class="small muted">管理者がつけた優先度です（副管理者は変えられません）</span>'}
+      ${staff && t.prio != null && t.prio_who ? `<small class="muted">${t.prio_by === 'sub' ? '副官' : '管理者'}の ${esc(t.prio_who)} がつけました</small>` : ''}</div>` : '';
   const m = mgSheet(`<div class="row"><b style="font-size:18px;word-break:break-word" class="grow">${esc(t.subject)}</b><button class="btn s" data-x>とじる</button></div>
-    <p class="small muted" style="margin:4px 0">${staff ? `${nameB(t.user.nickname, t.user.badge)}（ID ${t.user.uid}）からの問い合わせ` : '運営への問い合わせ'}
-      <span class="tag ${t.status === 'open' ? 'good' : ''}">${t.status === 'open' ? '受付中' : '解決済み'}</span></p>
+    <p class="small muted" style="margin:4px 0">${staff ? `${nameB(t.user.nickname, t.user.badge)}（ID ${t.user.uid}）からの${idea ? '意見' : '問い合わせ'}` : sub ? '意見箱の意見（送った人は管理者だけが見られます）' : idea ? '意見箱に送った意見' : '運営への問い合わせ'}
+      <span class="tag ${t.status === 'open' ? 'good' : ''}">${t.status === 'open' ? '受付中' : '解決済み'}</span>${ideaPrio(t)}</p>
+    ${prioBox}
     <div class="dk-msgs">${msgs(t)}</div>
-    ${t.can_send ? `<textarea class="inp" id="spMsg" rows="3" maxlength="2000" placeholder="${staff ? '運営として返事を書く' : 'つづきを書く'}"></textarea>
+    ${sub ? '<p class="muted small" style="margin:6px 0 0">副管理者は読むだけです（返事と解決済みは管理者がします）。</p>' : t.can_send ? `<textarea class="inp" id="spMsg" rows="3" maxlength="2000" placeholder="${staff ? '運営として返事を書く' : 'つづきを書く'}"></textarea>
       <div class="row"><button class="btn main" id="spSend">送る</button><button class="btn s" id="spClose" style="margin-left:auto">解決済みにする</button></div>
       ${staff ? '<p class="muted small" style="margin:6px 0 0">返事は「運営」の名前で届きます（あなたの名前は出ません）。</p>' : ''}`
       : `<p class="muted small" style="margin:6px 0 0">この問い合わせは${t.closed_by === 'staff' ? (staff ? '運営が' : '運営が') : t.closed_by === 'user' ? (staff ? '本人が' : 'あなたが') : ''}解決済みにしました。${staff ? '' : 'つづきは、新しく問い合わせてください。'}</p>`}`);
@@ -7393,6 +7459,15 @@ function spShow(t, draft) {
     if (!confirm('この問い合わせを「解決済み」にしますか？（そのあとは読むだけになります）')) return;
     try { spShow(await call('support_close', { p_id: t.id })); toast('解決済みにしました'); } catch (e) { toast(e.message); }
   };
+  m.querySelectorAll('[data-ipv]').forEach(b => b.onclick = async () => {
+    const v = b.dataset.ipv === '' ? null : Number(b.dataset.ipv);
+    if (v === t.prio) return;
+    b.disabled = true;
+    try {
+      spShow(await call('idea_prio', { p_id: t.id, p_prio: v }), tx ? tx.value : '');
+      toast(v == null ? '優先度をなしにしました' : v === 0 ? '却下にしました' : `優先度を ${v} にしました`);
+    } catch (e) { toast(e.message); b.disabled = false; }
+  });
   mgPoll(m, 'sp:' + t.id, () => call('support_thread', { p_id: t.id }), n => n.msgs.length === t.msgs.length && n.status === t.status,
     n => { if (n.status !== t.status) return spShow(n, tx ? tx.value : ''); t = n; box.innerHTML = msgs(n); box.lastElementChild && box.lastElementChild.scrollIntoView({ block: 'nearest' }); });
 }
