@@ -18168,36 +18168,102 @@ insert into public.mp_types(code, series, label, role, face, num_from, num_to, l
 on conflict (code) do nothing;
 
 /* ---------- 設定（管理者が app_settings の mp_rates で変えられる） ---------- */
+-- ふだんの値（運営が app_settings 'mp_rates' で変えていないとき）。DB の更新81：毎回 jsonb をつくらない（CASE。immutable なので式の中で前もって計算される）
+create or replace function public._mp_rate_def(k text) returns numeric
+language sql immutable as $$
+  select (case k
+    when 'land_P' then 200000
+    when 'land_F' then 120000
+    when 'land_B' then 150000
+    when 'land_H' then 90000
+    when 'land_M' then 25000
+    when 'land_K' then 7000
+    when 'dens_k' then 0.2
+    when 'road_mul' then 1.25
+    when 'sta_mul' then 0.9
+    when 'sta_r' then 15
+    when 'lease' then 0.001
+    when 'lease_gov' then 0.0005
+    when 'prop_tax' then 0.0001
+    when 'rail' then 300000
+    when 'road' then 150000
+    when 'dbl_mul' then 1.7
+    when 'elec' then 100000
+    when 'sta_base' then 20000000
+    when 'sta_m' then 100000
+    when 'stop' then 500000
+    when 'dep_S' then 100000000
+    when 'dep_M' then 300000000
+    when 'dep_L' then 700000000
+    when 'dep_base' then 20000000
+    when 'dep_car' then 5500000
+    when 'bdep_S' then 20000000
+    when 'bdep_M' then 50000000
+    when 'up_rail' then 1500
+    when 'up_road' then 300
+    when 'up_sta' then 50000
+    when 'up_stop' then 500
+    when 'up_dep' then 60000
+    when 'up_bdep' then 20000
+    when 'g_rail' then 0.55
+    when 'g_bus' then 0.12
+    when 'fare_base' then 150
+    when 'fare_km' then 20
+    when 'bus_fare' then 220
+    when 'bus_km' then 15
+    when 'catch_rail' then 20
+    when 'catch_bus' then 6
+    when 'max_tiles' then 600
+    when 'grow' then 0.0002
+    when 'grow_sta' then 0.0006
+    when 'urb_k' then 0.03
+    when 'urb_sta' then 0.02
+    when 'p_wheat' then 40000
+    when 'p_flour' then 70000
+    when 'p_food' then 200000
+    when 'p_ore' then 25000
+    when 'p_steel' then 90000
+    when 'p_car' then 1500000
+    when 'p_crude' then 60000
+    when 'p_chem' then 120000
+    when 'p_elec' then 1000000
+    when 'truck_base' then 500
+    when 'truck_km' then 60
+    when 'sc_imp' then 1.2
+    when 'sc_mkt' then 0.85
+    when 'sc_shop' then 0.3
+    when 'sc_food' then 0.0002
+    when 'sc_food_km' then 30
+    when 'sc_keep' then 0.25
+    when 'rc_parts' then 0.45
+    when 'rc_m2' then 5000
+    when 'rd_m2' then 3000
+    when 'trk_tkm' then 300
+    when 'g_ship' then 0.15
+    when 'catch_ship' then 40
+    when 'ship_fare' then 300
+    when 'ship_km' then 25
+    when 'ferry_t' then 400
+    when 'ferry_tkm' then 30
+    when 'up_port' then 50000
+    when 'ship_dock' then 600
+    when 'sy_tpd' then 0.02
+    when 'sy_steel' then 0.3
+    when 'g_air' then 0.01
+    when 'catch_air' then 200
+    when 'air_fare' then 8000
+    when 'air_km' then 60
+    when 'up_air' then 200000
+    when 'air_ovh' then 1500
+    when 'rwy_m2' then 20000
+    when 'slot_days' then 30
+    when 'slot_hours' then 24
+    when 'slot_inc' then 0.05
+  end)::numeric
+$$;
 create or replace function public._mp_rate(k text) returns numeric
-language sql stable set search_path = public as $$
-  select coalesce((select (value::jsonb ->> k)::numeric from app_settings where key = 'mp_rates' and value::jsonb ? k),
-    ((jsonb_build_object(
-      'land_P', 200000, 'land_F', 120000, 'land_B', 150000, 'land_H', 90000, 'land_M', 25000, 'land_K', 7000,
-      'dens_k', 0.2, 'road_mul', 1.25, 'sta_mul', 0.9, 'sta_r', 15,
-      'lease', 0.001, 'lease_gov', 0.0005, 'prop_tax', 0.0001,
-      'rail', 300000, 'road', 150000, 'dbl_mul', 1.7, 'elec', 100000,
-      'sta_base', 20000000, 'sta_m', 100000, 'stop', 500000,
-      'dep_S', 100000000, 'dep_M', 300000000, 'dep_L', 700000000, 'dep_base', 20000000, 'dep_car', 5500000, 'bdep_S', 20000000, 'bdep_M', 50000000,
-      'up_rail', 1500, 'up_road', 300, 'up_sta', 50000, 'up_stop', 500, 'up_dep', 60000, 'up_bdep', 20000,
-      'g_rail', 0.55, 'g_bus', 0.12, 'fare_base', 150, 'fare_km', 20, 'bus_fare', 220, 'bus_km', 15,
-      'catch_rail', 20, 'catch_bus', 6, 'max_tiles', 600, 'grow', 0.0002, 'grow_sta', 0.0006, 'urb_k', 0.03, 'urb_sta', 0.02
-    ) || jsonb_build_object(
-      -- t54k：品目の値段（1t・1kL・1台）・トラック（1t あたり：積みおろし＋1km）・輸入（値段の何倍）・市場に売る（何倍）・お店の食品・鉄道車両工場
-      'p_wheat', 40000, 'p_flour', 70000, 'p_food', 200000, 'p_ore', 25000, 'p_steel', 90000, 'p_car', 1500000, 'p_crude', 60000, 'p_chem', 120000, 'p_elec', 1000000,
-      'truck_base', 500, 'truck_km', 60, 'sc_imp', 1.2, 'sc_mkt', 0.85, 'sc_shop', 0.3, 'sc_food', 0.0002, 'sc_food_km', 30, 'sc_keep', 0.25, 'rc_parts', 0.45, 'rc_m2', 5000,
-      'rd_m2', 3000, 'trk_tkm', 300
-    ) || jsonb_build_object(
-      -- t54o：フェリー（乗る人のわりあい・港のまわり（マス）・運賃（はじめ＋1km）・トラックをのせる運賃（1t：はじめ＋1km）・港の維持費（1日）・
-      --   港に着く・出るのにかかる時間（秒）・造船所（延床1㎡で1日につくれる船の重さ t・鉄鋼は船の重さの何倍））
-      'g_ship', 0.15, 'catch_ship', 40, 'ship_fare', 300, 'ship_km', 25, 'ferry_t', 400, 'ferry_tkm', 30, 'up_port', 50000, 'ship_dock', 600,
-      'sy_tpd', 0.02, 'sy_steel', 0.3
-    ) || jsonb_build_object(
-      -- t54p：航空（乗る人のわりあい・空港のまわり（マス）・運賃（はじめ＋1km）・空港の維持費（ゲート2つ・1日）・離着陸・地上走行の時間（秒））
-      'g_air', 0.01, 'catch_air', 200, 'air_fare', 8000, 'air_km', 60, 'up_air', 200000, 'air_ovh', 1500
-    ) || jsonb_build_object(
-      -- t57：滑走路の工事費（1㎡）・発着口の権利（日）・入札の時間（時間）・上げ幅（いまの値段の何倍か。いちばん小さくて 1,000 X）
-      'rwy_m2', 20000, 'slot_days', 30, 'slot_hours', 24, 'slot_inc', 0.05
-    )) ->> k)::numeric)
+language sql stable as $$
+  select coalesce((select (s.value::jsonb ->> k)::numeric from public.app_settings s where s.key = 'mp_rates'), public._mp_rate_def(k))
 $$;
 create or replace function public._mp_ok(u uuid) returns void
 language plpgsql stable set search_path = public as $$
@@ -18986,7 +19052,7 @@ begin
   cells := _mp_seg_cells_arr(p_pts, p_kind, sw, dbl);
   -- 高さ（t108）：縦断を決める。交差する線（線路どうしは 10m 上か下。道路とは、どちらも地面なら踏切・交差点）・建物（屋根＋5m より上か、地面−15m より下）・
   --   駅のホーム・車庫・バス停（±10m）・滑走路（下だけ）は、上か下を通る（つなぐはしの 20m はのぞく）。はしの高さは、つなぐ先と同じ
-  if md not in ('auto', 'el', 'ug') then md := 'auto'; end if;
+  if md not in ('auto', 'el', 'ug', 'tn') then md := 'auto'; end if;   -- tn：トンネル優先（DB の更新81）
   if p_kind <> 'rail' then rk := false; end if;
   if jsonb_typeof(p_opts -> 'prof') = 'array' then upf := array(select v::real from jsonb_array_elements_text(p_opts -> 'prof') v); end if;
   nhm := case when upf is not null then 'man' else md end;
@@ -19025,7 +19091,14 @@ begin
   update mp_nodes set z = pf[array_length(pf, 1)] where id = n1 and z is null;
   perform _mp_occ_set(sid, p_kind, tiles);
   perform _mp_lease_set('seg', sid, pa.pu, pa.pc, pa.gv);
-  if p_kind = 'rail' then perform _mp_renet(pa.pu, pa.pc); perform _mp_routes_fix(pa.pu, pa.pc); end if;
+  -- 系統の道すじは、行きどまりの線（はしの1つしか ほかの線とつながらない・線のとちゅうにつないでいない）では変わらないので、見なおさない（DB の更新81）
+  if p_kind = 'rail' then
+    perform _mp_renet(pa.pu, pa.pc);
+    if coalesce(p_from ? 'seg', false) or coalesce(p_to ? 'seg', false)
+       or (select count(*) from unnest(array[n0, n1]) e(nd) where exists (select 1 from mp_segs s where s.id <> sid and (s.n0 = e.nd or s.n1 = e.nd))) >= 2 then
+      perform _mp_routes_fix(pa.pu, pa.pc);
+    end if;
+  end if;
   perform _mp_chg('seg', sid, 'set', _mp_bb(p_pts));
   return jsonb_build_object('id', sid, 'cost', cost, 'lease', round(lq.fee));
 end $$;
@@ -19065,7 +19138,7 @@ begin
   if 'D' = any(ters) then raise exception '深い海には作れません'; end if;
   ncells := _mp_seg_cells_arr(p_pts, sg.kind, sg.w, sg.dbl);
   -- 高さ（t108）：縦断を決めなおす。交差する線・建物・駅のホーム・車庫・バス停・滑走路は、上か下を通る（はしの 20m はのぞく）
-  md := case when sg.hm in ('el', 'ug') then sg.hm else 'auto' end;
+  md := case when sg.hm in ('el', 'ug', 'tn') then sg.hm else 'auto' end;
   z0 := _mp_end_z(sg.n0, p_id); z1 := _mp_end_z(sg.n1, p_id);
   pr := _mp_prof_make(p_pts, sg.kind, sg.cls, z0, z1, md, sg.rack, null::real[], ncells, tiles, least(0.4, ln / 3)::real, (ln - least(0.4, ln / 3))::real, array[p_id], false, null::real[]);
   if not (pr ->> 'ok')::boolean then raise exception '%', pr ->> 'err'; end if;
@@ -22333,8 +22406,11 @@ language sql immutable as $$ select greatest(0.5, case when kind = 'rail' then c
 create or replace function public._mp_line_cells(p int[], r real) returns table (x int, y int)
 language sql immutable as $$
   select distinct q.x, q.y from (
-      select p[2 * i - 1] / 20.0 ax, p[2 * i] / 20.0 ay, p[2 * i + 1] / 20.0 bx, p[2 * i + 2] / 20.0 bby
-        from generate_series(1, coalesce(array_length(p, 1), 0) / 2 - 1) i) s,
+      select z.ax / 20.0 ax, z.ay / 20.0 ay, z.bx / 20.0 bx, z.by_ / 20.0 bby
+        from (select v.px ax, v.py ay, lead(v.px) over (order by v.k) bx, lead(v.py) over (order by v.k) by_
+                from (select (u.o + 1) / 2 k, max(u.v) filter (where u.o % 2 = 1) px, max(u.v) filter (where u.o % 2 = 0) py
+                        from unnest(p) with ordinality u(v, o) group by (u.o + 1) / 2) v) z
+       where z.bx is not null) s,
     lateral generate_series(floor(least(s.ax, s.bx) - r)::int, floor(greatest(s.ax, s.bx) + r)::int) gx(v),
     lateral generate_series(floor(least(s.ay, s.bby) - r)::int, floor(greatest(s.ay, s.bby) + r)::int) gy(v),
     lateral (select gx.v x, gy.v y, least(1.0, greatest(0.0, ((gx.v + 0.5 - s.ax) * (s.bx - s.ax) + (gy.v + 0.5 - s.ay) * (s.bby - s.ay))
@@ -22409,9 +22485,19 @@ $$;
 create or replace function public._mp_pub_of(cells int[]) returns table (x int, y int)
 language sql stable set search_path = public as $$
   with c as materialized (select distinct cells[2 * i - 1] x, cells[2 * i] y from generate_series(1, coalesce(array_length(cells, 1), 0) / 2) i),
-       t as (select distinct _mp_t5(c.x) + d.dx tx, _mp_t5(c.y) + d.dy ty from c cross join (select a dx, b dy from generate_series(-1, 1) a, generate_series(-1, 1) b) d),
+       t as materialized (select distinct _mp_t5(c.x) + d.dx tx, _mp_t5(c.y) + d.dy ty from c cross join (select a dx, b dy from generate_series(-1, 1) a, generate_series(-1, 1) b) d),
        sg as materialized (select distinct o.what, o.ref from mp_occ o join t on o.x = t.tx and o.y = t.ty where o.what in ('road', 'rail', 'rwy')),
-       lc as materialized (select q.x, q.y from sg join mp_segs s on sg.what in ('road', 'rail') and s.id = sg.ref and s.gov cross join lateral _mp_line_cells(s.pts, _mp_seg_r(s.kind, s.w, s.dbl)) q
+       -- 国の線の点（DB の更新81：点の列は1回だけひらく。長い国道の pts を点ごとに読みなおさない）
+       v as materialized (select s.id, u.o, u.v from sg join mp_segs s on sg.what in ('road', 'rail') and s.id = sg.ref and s.gov cross join lateral unnest(s.pts) with ordinality u(v, o)),
+       pt as materialized (select v.id, (v.o + 1) / 2 k, max(v.v) filter (where v.o % 2 = 1) px, max(v.v) filter (where v.o % 2 = 0) py from v group by v.id, (v.o + 1) / 2),
+       -- 点と点のあいだ（とそのマスの範囲）
+       pc as materialized (select z.*, floor(least(z.ax, z.bx) / 100.0)::int x0, floor(greatest(z.ax, z.bx) / 100.0)::int x1, floor(least(z.ay, z.by_) / 100.0)::int y0, floor(greatest(z.ay, z.by_) / 100.0)::int y1
+                             from (select pt.id, pt.k, pt.px ax, pt.py ay, lead(pt.px) over w bx, lead(pt.py) over w by_ from pt window w as (partition by pt.id order by pt.k)) z where z.bx is not null),
+       -- こちらの区画のまわり（1マス）にかかる部分だけ区画にする（長い国道をまるごと区画にしない。とても長い部分は、そのまま）
+       near as materialized (select distinct pc.id, pc.k, pc.ax, pc.ay, pc.bx, pc.by_ from pc cross join lateral generate_series(pc.x0, pc.x1) gx cross join lateral generate_series(pc.y0, pc.y1) gy
+                               join t on t.tx = gx and t.ty = gy where (pc.x1 - pc.x0 + 1) * (pc.y1 - pc.y0 + 1) <= 64
+                             union select pc.id, pc.k, pc.ax, pc.ay, pc.bx, pc.by_ from pc where (pc.x1 - pc.x0 + 1) * (pc.y1 - pc.y0 + 1) > 64),
+       lc as materialized (select q.x, q.y from near join mp_segs s on s.id = near.id cross join lateral _mp_line_cells(array[near.ax, near.ay, near.bx, near.by_], _mp_seg_r(s.kind, s.w, s.dbl)) q
                            union all   -- 滑走路（t57）
                            select q.x, q.y from sg join mp_rwys r on sg.what = 'rwy' and r.id = sg.ref cross join lateral _mp_rwy_cells(r.x0, r.y0, r.x1, r.y1, r.w) q)
   select distinct lc.x, lc.y from lc join c on c.x = lc.x and c.y = lc.y
@@ -29711,6 +29797,20 @@ begin
   end loop;
   return z;
 end $$;
+-- 縦断を決める（DB の更新81）：_mp_prof_solve と同じで、下から包む線（U）と上から包む線（L）のあいだの どこにするか（al：0 は下・0.5 はまん中）
+--   トンネル優先（tn）は 0：目標（地面）より上には出ない（できないところだけ）。ほかは 0.5（まん中。_mp_prof_solve と同じ）
+create or replace function public._mp_prof_solve_al(tg real[], lo real[], hi real[], d real[], al real) returns real[]
+language plpgsql immutable as $$
+declare n int := array_length(tg, 1); k int; a real[] := lo; b real[] := hi; L real[] := tg; U real[] := tg; z real[] := tg;
+begin
+  for k in 2..n loop a[k] := greatest(a[k], a[k - 1] - d[k - 1]); b[k] := least(b[k], b[k - 1] + d[k - 1]); L[k] := greatest(L[k], L[k - 1] - d[k - 1]); U[k] := least(U[k], U[k - 1] + d[k - 1]); end loop;
+  for k in reverse n - 1..1 loop a[k] := greatest(a[k], a[k + 1] - d[k]); b[k] := least(b[k], b[k + 1] + d[k]); L[k] := greatest(L[k], L[k + 1] - d[k]); U[k] := least(U[k], U[k + 1] + d[k]); end loop;
+  for k in 1..n loop
+    if a[k] > b[k] + 0.01 then return null; end if;
+    z[k] := least(b[k], greatest(a[k], case when al = 0.5 then (L[k] + U[k]) / 2 else U[k] + al * (L[k] - U[k]) end));
+  end loop;
+  return z;
+end $$;
 
 -- 線 p が、ほかの線路・道路と交わるところ：s（p のはじめからの長さ）・相手・相手の高さ oz・地面 og・相手に縦断があるか ohp（はしで つながるところ・excl の線はのぞく）
 create or replace function public._mp_xing(p int[], excl bigint[]) returns table (s real, oid bigint, okind text, ocls text, oname text, oz real, og real, ohp boolean)
@@ -29819,6 +29919,7 @@ declare sm record; ss real[] := '{}'; gg real[] := '{}'; tt text[] := '{}'; S re
         o_ka int[] := '{}'; o_kb int[] := '{}'; ord int[]; no int := 0; fi int;
         za real; zb_ real; zm real; ka int; kb int; side text; sides text[]; z2 real[]; lo2 real[]; hi2 real[]; mg real := 0; st text := ''; zz real; lx int := 0; xs jsonb := '[]'::jsonb;
         tun int := 0; via int := 0; brg int := 0; acc real; cnt int; G real; off real; wr real[] := '{}'; w0 real; nu int;
+        gb real[]; ge real[]; tw int := 20; wv real; jj int;
 begin
   -- 1マスごとの地面
   for sm in select * from _mp_gsamp(p) loop ss := ss || sm.s; gg := gg || sm.g; tt := tt || sm.t; end loop;
@@ -29855,9 +29956,25 @@ begin
     end loop;
     cs[1] := 0; cs[array_length(cs, 1)] := S; n := array_length(cs, 1);
     off := case mode when 'el' then 10 when 'ug' then -20 else 0 end;
+    -- トンネル優先（DB の更新81）：目標にする地面は、まわり ±tw マスより細い出っぱり（丘・尾根）をけずったもの
+    --   （オープニング：いちばん低いところ → いちばん高いところ。はしの外は、はしの地面がつづくとみる。坂・谷・ふつうの上り下りはそのまま）
+    gb := gg;
+    if mode = 'tn' then
+      ge := array_fill(0::real, array[ns + 2 * tw]);
+      for jj in 1 - tw..ns + tw loop
+        wv := 1e9;
+        for i in jj - tw..jj + tw loop wv := least(wv, gg[least(ns, greatest(1, i))]); end loop;
+        ge[jj + tw] := wv;
+      end loop;
+      for j in 1..ns loop
+        wv := -1e9;
+        for i in j - tw..j + tw loop wv := greatest(wv, ge[i + tw]); end loop;
+        gb[j] := least(gg[j], wv);
+      end loop;
+    end if;
     for k in 1..n loop
       acc := 0; cnt := 0;
-      for j in greatest(1, ceil(cs[k] - 1.5)::int + 1)..least(ns, floor(cs[k] + 1.5)::int + 2) loop if abs(ss[j] - cs[k]) <= 1.5 then acc := acc + gg[j]; cnt := cnt + 1; end if; end loop;
+      for j in greatest(1, ceil(cs[k] - 1.5)::int + 1)..least(ns, floor(cs[k] + 1.5)::int + 2) loop if abs(ss[j] - cs[k]) <= 1.5 then acc := acc + gb[j]; cnt := cnt + 1; end if; end loop;
       tg := tg || (round((acc / greatest(cnt, 1) + off)::numeric, 1))::real;
     end loop;
     lo := array_fill(-1e9::real, array[n]); hi := array_fill(1e9::real, array[n]);
@@ -29895,7 +30012,7 @@ begin
     end loop;
     ord := array(select gi from generate_series(1, no) gi order by o_lv[gi], o_s0[gi]);
     -- 解く。通るものにかかるところは、1つずつ上か下（か踏切）に決めて解きなおす（だめなら ほかの側。線路・建物などが先、踏切にできる道路はあと）
-    z := _mp_prof_solve(tg, lo, hi, d);
+    z := _mp_prof_solve_al(tg, lo, hi, d, case when mode = 'tn' then 0 else 0.5 end::real);   -- トンネル優先は、目標より下で いちばん近い線（DB の更新81）
     if z is null then
       return jsonb_build_object('ok', false, 'err', case when z0 is not null and z1 is not null and abs(z1 - z0) > G * S * 50 then
         format('勾配がきつすぎて、はしの高さどうしをつなげません（%s は %s‰ まで。高さの差 %sm・長さ %sm）', case when kind = 'road' then '道路' when rack then 'アプト式' else '線路' end,
@@ -29914,10 +30031,11 @@ begin
       end loop;
       exit when fi is null;
       zm := (za + zb_) / 2;
-      -- ためす順：滑走路は下だけ。地下・高架をえらんだら その側から。踏切にできて地面に近ければ踏切。高い建物（25m より上）は下から。ほかは近い側から
+      -- ためす順：滑走路は下だけ。地下・高架をえらんだら その側から。踏切にできて地面に近ければ踏切。トンネル優先は下から（DB の更新81）。高い建物（25m より上）は下から。ほかは近い側から
       sides := case when o_zt[fi] > 1e8 then array['under']
                     when mode = 'ug' then array['under', 'over'] when mode = 'el' then array['over', 'under']
-                    when o_lv[fi] and abs(zm - o_g[fi]) <= 7.5 then case when zm >= o_g[fi] then array['level', 'over', 'under'] else array['level', 'under', 'over'] end
+                    when o_lv[fi] and abs(zm - o_g[fi]) <= 7.5 then case when zm >= o_g[fi] and mode <> 'tn' then array['level', 'over', 'under'] else array['level', 'under', 'over'] end
+                    when mode = 'tn' then array['under', 'over']
                     when o_k[fi] = 'b' and o_zt[fi] - o_g[fi] > 25 then array['under', 'over']
                     when o_zt[fi] - zm <= zm - o_zb[fi] then array['over', 'under'] else array['under', 'over'] end
                || case when o_lv[fi] and not abs(zm - o_g[fi]) <= 7.5 then array['level'] else '{}'::text[] end;
@@ -29929,7 +30047,7 @@ begin
           elsif side = 'under' then hi2[j] := least(hi2[j], o_zb[fi]);
           else lo2[j] := greatest(lo2[j], o_g[fi] - 2.5); hi2[j] := least(hi2[j], o_g[fi] + 2.5); end if;
         end loop;
-        z2 := _mp_prof_solve(tg, lo2, hi2, d);
+        z2 := _mp_prof_solve_al(tg, lo2, hi2, d, case when mode = 'tn' then 0 else 0.5 end::real);
         exit when z2 is not null;
       end loop;
       if z2 is null then return jsonb_build_object('ok', false, 'err', '上下をよける高さがとれません（勾配がきつすぎます' || case when upf is not null then '。手で決めた高さも見なおしてください' else '' end || '）：' || o_nm[fi]); end if;
@@ -30107,7 +30225,7 @@ begin
   me_cs := array(select id from companies where owner = u);
   if not coalesce(sg.own_u = u or sg.own_c = any(me_cs) or (sg.gov and _is_admin(u)), false) then raise exception 'あなたの線ではありません'; end if;
   rk := sg.kind = 'rail' and coalesce(p_rack, sg.rack);
-  md := case when p_mode in ('auto', 'el', 'ug') then p_mode else 'auto' end;
+  md := case when p_mode in ('auto', 'el', 'ug', 'tn') then p_mode else 'auto' end;   -- tn：トンネル優先（DB の更新81）
   nhm := case when p_prof is not null then 'man' else md end;
   if not p_dry then perform _mp_lock(sg.own_u, sg.own_c); end if;
   tiles := _mp_tiles(sg.pts);

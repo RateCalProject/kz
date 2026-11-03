@@ -3059,7 +3059,7 @@ const HOME = [-3.1, 2.9];
 const prefRoad = pref => /府$/.test(pref || '') ? '府道' : /都$/.test(pref || '') ? '都道' : /道$/.test(pref || '') ? '道道' : '県道';
 // 線の制限速度のグラフ（よこ：線にそった長さ・たて：速さ。カーブがきついところほど低い）。at：タップしたところ（m）
 /* ---------- 高さ（t108）：縦断の図・線の高さを変える。サーバーの更新（DB の更新59）の前は出さない（mp_area の hgt。S.hgtOK） ---------- */
-const HGT_MODE = { auto: '地形に合わせる', el: '高架', ug: '地下', man: '手で決めた高さ' };
+const HGT_MODE = { auto: '地形に合わせる', tn: 'トンネル優先', el: '高架', ug: '地下', man: '手で決めた高さ' };   // tn：出っぱった地形に上下を合わせず、トンネルでぬける（DB の更新81）
 // 縦断 pf（[s, z, …]）の s マスのところの高さ（m）
 function pfZ(pf, s) {
   const n = (pf || []).length / 2; if (!n) return 0;
@@ -3155,6 +3155,7 @@ function profSum(q) {
 }
 // 地下・高架をえらんだのに とどかないとき（はしが地面で、線が短い）
 function hgtShort(hm, q) {
+  if (hm === 'tn' && q.hm && q.hm !== 'tn' && q.hm !== 'man') return '<p class="muted small" style="margin:2px 0">トンネル優先は、サーバーの更新（DB の更新81）のあとで使えます（いまは「地形に合わせる」で見つもりました）</p>';
   if (hm === 'ug' && !q.tun) return '<p class="mp-warn small" style="margin:2px 0">はしが地面の高さなので、この長さでは地下にとどきません（はしの線も地下にするか、長く引いてください）</p>';
   if (hm === 'el' && !q.via && !q.brg) return '<p class="mp-warn small" style="margin:2px 0">はしが地面の高さなので、この長さでは高架にとどきません（はしの線も高架にするか、長く引いてください）</p>';
   return '';
@@ -3191,7 +3192,7 @@ function segHeight(s) {
     const q = st.q, cur = segProf(s);
     sheet(`<h4>${s.k === 'rail' ? '線路' : '道路'}の高さ</h4>
       <p class="small muted" style="margin:0 0 4px">いま：${esc(HGT_MODE[s.hm] || '地面どおり')}${s.rk ? '・アプト式' : ''}。はしの高さは、つながっている線と同じです</p>
-      <div class="mp-row"><span class="mp-seg">${['auto', 'el', 'ug'].map(m => `<button data-hm="${m}" class="${st.hm === m ? 'on' : ''}">${HGT_MODE[m]}</button>`).join('')}</span>
+      <div class="mp-row"><span class="mp-seg">${['auto', 'tn', 'el', 'ug'].map(m => `<button data-hm="${m}" class="${st.hm === m ? 'on' : ''}">${HGT_MODE[m]}</button>`).join('')}</span>
         ${s.k === 'rail' ? `<label class="small"><input type="checkbox" data-rack ${st.rack ? 'checked' : ''}> アプト式（急な坂 70‰ まで・30km/h まで）</label>` : ''}</div>
       <canvas class="mp-prof" data-prof></canvas>
       ${q ? `<p class="small" style="margin:2px 0">${profSum(q)}</p>${hgtShort(st.hm, q)}${pinRow(q.prof, st.sel, st.pins)}
@@ -4032,7 +4033,7 @@ function drawSheet() {
         <span class="mp-seg"><button data-e="0" class="${!o.elec ? 'on' : ''}">非電化</button><button data-e="1" class="${o.elec ? 'on' : ''}">電化</button></span></div>`
       : `<div class="mp-row">${gov ? `<select class="mp-inp" style="width:auto" data-cls>${[['exp', '高速道路'], ['nat', '国道'], ['pref', '府県道'], ['city', '市道'], ['lane', '細い道']].map(c => `<option value="${c[0]}" ${o.cls === c[0] ? 'selected' : ''}>${c[1]}</option>`).join('')}</select>` : ''}
         片側 <span class="mp-seg">${(gov ? [0, 1, 2, 3] : [0, 1, 2]).map(n => `<button data-l="${n}" class="${o.lanes === n ? 'on' : ''}">${n ? n + '車線' : '細い道'}</button>`).join('')}</span></div>`}
-    ${S.hgtOK && !st.edit ? `<div class="mp-row"><span>高さ</span> <span class="mp-seg">${['auto', 'el', 'ug'].map(m => `<button data-hm="${m}" class="${(o.hm || 'auto') === m ? 'on' : ''}">${HGT_MODE[m]}</button>`).join('')}</span>${rail ? `<label class="small"><input type="checkbox" data-rack ${o.rack ? 'checked' : ''}> アプト式</label>` : ''}</div>` : ''}
+    ${S.hgtOK && !st.edit ? `<div class="mp-row"><span>高さ</span> <span class="mp-seg">${['auto', 'tn', 'el', 'ug'].map(m => `<button data-hm="${m}" class="${(o.hm || 'auto') === m ? 'on' : ''}">${HGT_MODE[m]}</button>`).join('')}</span>${rail ? `<label class="small"><input type="checkbox" data-rack ${o.rack ? 'checked' : ''}> アプト式</label>` : ''}</div>` : ''}
     ${st.edit ? '' : `<div class="mp-row"><input class="mp-inp" data-nm placeholder="${rail ? '路線名（なくてもよい）' : '道路の名前（なくてもよい）'}" value="${esc(o.name)}"></div>`}
     <div class="mp-row">${q ? `${q.cost > 0 || S.as !== 'gov' ? `<span class="mp-cost">工事費 ${X(q.cost)}</span>` : '<span>工事費なし（国の工事は無料）</span>'}<span class="small"><span>使用料 1日 ${X(q.lease || 0)}</span>${q.tunnel ? `<span>・トンネル ${q.tunnel}マス</span>` : ''}${q.bridge ? `<span>・橋 ${q.bridge}マス</span>` : ''}${q.vtop != null && q.vtop !== q.vlim ? `<span>・制限速度 ${q.vlim}〜${q.vtop} km/h</span>` : `<span>・制限速度 ${q.vlim} km/h</span>`}</span>`
       : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>'
