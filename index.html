@@ -1570,6 +1570,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
   <p class="notice small hidden" id="mailSent"></p>
   <p class="notice small"><b>AiliNaX は現金・物・電子マネーなどと交換できません。</b>現金での売買や、その持ちかけも禁止です。ゲーム内アイテム（マイクラのブロックなど）との取引はOKです。</p>
   <p class="links small"><a href="battle/">付属ゲーム：市区町村バトル（ログインなしで遊べます）</a></p>
+  <p class="muted small" id="verLogin" translate="no" style="text-align:center;margin:6px 0 0"></p>
   <p class="links small lg-links"><a href="guide/">遊び方（ヘルプ）</a> <a href="guide/#terms">利用規約</a> <a href="privacy.html">プライバシーポリシー</a></p>
 </section>
 
@@ -2015,6 +2016,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <p class="small muted" style="margin:10px 0 0">制作：<a href="https://x.com/Airln_7" target="_blank" rel="noopener">@Airln_7</a></p>
   </div>
   <button class="btn wide" id="logout" data-sub="prof">ログアウト</button>
+  <p class="muted small" data-sub="prof" id="verLine" translate="no" style="text-align:center;margin:12px 0 0"></p>
   <div data-sub="admin" id="adminBox"></div>
   <div class="card" data-sub="users">
     <h3 style="margin-top:0">登録した人</h3>
@@ -5184,7 +5186,7 @@ function stCmpDraw() {
    役所 → ヘルプ（t62）：遊び方・やり方（help/help.json。README からつくる）。さがせる（題・中身・ことば。ひらがな・カタカナ・全角半角は同じに）
    役所 → 意見箱（t62）：運営への問い合わせ（support_open）に「【意見箱】」の件名で送る
    ================================================================= */
-const HELP_V = '3222b86a';
+const HELP_V = '58981db8';
 const HP = { d: null, cat: 'start', q: '' };
 const hpNorm = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
 async function helpLoad() {
@@ -5873,7 +5875,17 @@ const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
 // 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
-const MAPV = '147';
+const MAPV = '148';
+const DBV = 90;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）
+{ const e = document.getElementById('verLogin'); if (e) e.textContent = 'v' + MAPV; }   // バージョン表記（ログインの画面）
+// バージョン表記（設定 → プロフィール）：画面の版・サーバーに入っている DB の更新の番号。管理者には、サーバーの更新がまだのとき知らせる
+async function verShow() {
+  const el = $('#verLine'); if (!el) return;
+  el.textContent = 'バージョン：画面 v' + MAPV;
+  let v = null; try { v = await call('app_ver'); } catch (e) { v = null; }
+  const db = v && v.db;
+  el.innerHTML = `バージョン：画面 v${MAPV}${db ? `・サーバー ${db}` : ''}${db && db < DBV && ME.role === 'admin' ? '<br><b style="color:var(--lose)">サーバーに まだ入っていない更新があります（update.sh）</b>' : ''}`;
+}
 let mapLoading = null;
 function mapScripts() {
   if (window.MapApp) return Promise.resolve();
@@ -6431,10 +6443,47 @@ async function myWorkLoad() {
    ================================================================= */
 // 管理の画面：タブ（審査・会社と株・お金・イベント・人）。タブを開いたときに、そこの中身を読みこむ
 const AD = { tab: sessionStorageGet('adTab') || '', d: null, loaded: {} };
-const AD_TABS = [['review', '審査'], ['corp', '会社・株'], ['money', 'お金'], ['event', 'イベント'], ['staff', '人']];
+const AD_TABS = [['review', '審査'], ['corp', '会社・株'], ['money', 'お金'], ['event', 'イベント'], ['staff', '人'], ['sec', 'セキュリティ']];
 const adTabsFor = (role, ev) => AD_TABS.filter(([k]) => k === 'event' ? ev : k === 'review' || k === 'corp' ? !!role : role === 'admin');
 const adEventCards = () => `<div class="card" data-adtab="event"><h3 style="margin-top:0">臨時のレース</h3><div id="adKb"><p class="muted small" style="margin:0">読みこみ中…</p></div></div>
   <div class="card" data-adtab="event"><h3 style="margin-top:0">お知らせバナー</h3><div id="adBn"><p class="muted small" style="margin:0">読みこみ中…</p></div></div>`;
+// セキュリティ（DB の更新90）：見はりのようす・ぜんぶ止める（メンテナンス）・人や回線を止める・止めているもの・この10分で多い人と回線・記録
+async function adSecLoad() {
+  const box = $('#adSec'); if (!box) return;
+  let d;
+  try { d = await call('sec_admin_list'); }
+  catch (e) { box.innerHTML = `<p class="muted small" style="margin:0">${/sec_admin_list|schema cache|function/i.test(e.message) ? 'サーバーの更新（DB の更新90）のあとで使えます（update.sh）' : esc(e.message)}</p>`; return; }
+  const maint = d.blocks.some(b => b.k === '*'), EV = { auto: '自動で止めた', block: '止めた', unblock: '解除した' };
+  box.innerHTML = `<p class="small" style="margin:0 0 6px">見はり：${d.set && d.on ? '<b style="color:var(--win)">動いています</b>' : d.set ? '<b>つないであります</b>（まだ記録がありません）' : '<b style="color:var(--lose)">まだ動いていません</b>（サーバーの PostgREST につながっていません）'}</p>
+    <p class="muted small" style="margin:0 0 8px">1分に 人 ${fmt(d.lim.u)}回・回線 ${fmt(d.lim.ip)}回・重い操作（時刻の組みなおしなど）${fmt(d.lim.h)}回 をこえると、自動で止めます（10分・2回目 1時間・3回目から 24時間）。止めたら 🔔 で知らせます</p>
+    <div class="row">${maint ? '<button class="btn main" data-secun="*">ぜんぶ止めるのをやめる（再開する）</button>' : '<button class="btn" data-secall>ぜんぶ止める（メンテナンス）</button>'}</div>
+    <h4 class="small" style="margin:12px 0 4px">止める</h4>
+    <div class="row"><input class="inp grow" id="secWho" placeholder="人の ID か、回線の IP" autocomplete="off" style="margin:0"><select class="inp" id="secMin" style="margin:0;width:auto"><option value="10">10分</option><option value="60" selected>1時間</option><option value="1440">1日</option><option value="10080">7日</option><option value="0">ずっと</option></select></div>
+    <div class="row"><input class="inp grow" id="secWhy" placeholder="理由（管理者のメモ）" maxlength="80" autocomplete="off" style="margin:0"><button class="btn main" id="secBlock">止める</button></div>
+    <h4 class="small" style="margin:12px 0 4px">止めているもの</h4>
+    ${d.blocks.length ? d.blocks.map(b => `<div class="item"><div class="row"><b>${esc(b.who)}</b>${b.auto ? ' <span class="admtag sub">自動</span>' : ''}<span class="muted small" style="margin-left:auto">${b.forever ? 'ずっと' : esc(b.until) + ' まで'}</span></div>
+        ${b.reason ? `<div class="small muted">${esc(b.reason)}</div>` : ''}<div class="row"><button class="btn s" data-secun="${esc(b.k)}">解除する</button></div></div>`).join('') : '<p class="muted small" style="margin:0">ありません</p>'}
+    <h4 class="small" style="margin:12px 0 4px">この10分で多い人・回線</h4>
+    ${d.top.length ? d.top.map(t => `<div class="small row"><span class="grow" style="min-width:0;word-break:break-all">${esc(t.who)}</span><span>${fmt(t.n)}回${t.h ? `（重い ${fmt(t.h)}）` : ''}</span></div>`).join('') : '<p class="muted small" style="margin:0">記録がありません</p>'}
+    <h4 class="small" style="margin:12px 0 4px">記録</h4>
+    ${d.log.length ? d.log.map(l => `<div class="small"><span class="muted">${esc(l.at)}</span> ${EV[l.ev] || esc(l.ev)}：<span>${esc(l.who)}</span>${l.note ? `（${esc(l.note)}）` : ''}</div>`).join('') : '<p class="muted small" style="margin:0">ありません</p>'}
+    <p class="muted small" style="margin:8px 0 0">管理者は止められません（自動でも止まりません）。ぜんぶ止めているあいだも、管理者は使えます。</p>`;
+  const b1 = box.querySelector('[data-secall]');
+  if (b1) b1.onclick = async () => {
+    if (!confirm('管理者のほかは、すぐ使えなくなります。ぜんぶ止めますか？')) return;
+    try { await call('sec_admin_block', { p_who: '*', p_min: 0, p_reason: 'メンテナンス' }); toast('ぜんぶ止めました'); } catch (e) { return toast(e.message); }
+    adSecLoad();
+  };
+  box.querySelectorAll('[data-secun]').forEach(b => b.onclick = async () => {
+    try { await call('sec_admin_unblock', { p_k: b.dataset.secun }); toast(b.dataset.secun === '*' ? '再開しました' : '解除しました'); } catch (e) { return toast(e.message); }
+    adSecLoad();
+  });
+  $('#secBlock').onclick = async () => {
+    const who = $('#secWho').value.trim(); if (!who) return toast('人の ID か、回線の IP を入れてください');
+    try { const r = await call('sec_admin_block', { p_who: who, p_min: Number($('#secMin').value), p_reason: $('#secWhy').value }); toast(`${r.who} を止めました`); } catch (e) { return toast(e.message); }
+    adSecLoad();
+  };
+}
 function adShow(tab) {
   AD.tab = tab; try { sessionStorage.setItem('adTab', tab); } catch (e) {}
   $$('#adTabs button').forEach(b => b.classList.toggle('on', b.dataset.k === tab));
@@ -6445,6 +6494,7 @@ function adShow(tab) {
   if (tab === 'money') adIvLoad(null, AD.d ? AD.d.listed : []);
   if (tab === 'event') { adKbLoad(); adBnLoad(); }
   if (tab === 'staff') adStaffLoad();
+  if (tab === 'sec') adSecLoad();   // DB の更新90
 }
 async function adminLoad() {
   AD.loaded = {};
@@ -6531,7 +6581,8 @@ async function adminLoad() {
       <p class="muted small" style="margin:4px 0 0">国庫の外にあるお金＝ユーザー・会社・銀行預金・注文で預かっている X の合計。あわない分＝発行 − 国庫 − 国庫の外（＋は記録の外で消えたお金、−は記録の外でふえたお金）</p>
 `) + card('money', 'adGrant', '国庫から渡す', adGrantBody()) + card('money', 'adAds', '広告と抽選', '<div id="adAdsBox"><p class="muted small" style="margin:0">読みこみ中…</p></div>') + card('money', '', '介入', '<div id="adIv"><p class="muted small" style="margin:0">読みこみ中…</p></div>') : '')
       + (ME.event ? adEventCards() : '')
-      + (adm ? card('staff', '', '副管理者・イベント製作者・鉄道の審査', '<div id="adStaff"><p class="muted small" style="margin:0">読みこみ中…</p></div>') : '');
+      + (adm ? card('staff', '', '副管理者・イベント製作者・鉄道の審査', '<div id="adStaff"><p class="muted small" style="margin:0">読みこみ中…</p></div>') : '')
+      + (adm ? card('sec', '', '🛡 セキュリティ（すぐ止める）', '<div id="adSec"><p class="muted small" style="margin:0">読みこみ中…</p></div>') : '');
     $$('#adminBox [data-fxok], #adminBox [data-fxng]').forEach(b => b.onclick = async () => {
       const ok = !!b.dataset.fxok, note = prompt(ok ? 'メモ（なくてもOK）' : '断る理由（申請者に届きます）', ''); if (note === null) return;
       try { await call('admin_fx_decide', { p_id: Number(b.dataset.fxok || b.dataset.fxng), p_ok: ok, p_note: note }); toast(ok ? '処理しました' : '断りました'); adminLoad(); } catch (e) { toast(e.message); }
@@ -9048,6 +9099,7 @@ function noticeGo(n) {
     if (fn) { let n = 0; const w = () => { if (window.MapApp && MapApp.state && MapApp.state.open && MapApp[fn]) MapApp[fn]({ ...L, body: b }); else if (n++ < 40) setTimeout(w, 250); }; w(); }
     return;
   }
+  if (L.go === 'sec') { AD.tab = 'sec'; return go('vMore', 'admin'); }   // セキュリティ（DB の更新90）
   if (L.go === 'tl') { tlScope = 'mention'; $$('#tlScope button').forEach(x => x.classList.toggle('on', x.dataset.k === 'mention')); return go('vInfo', 'tl'); }
   if (tag === '注文') return go(/渡してください/.test(b) ? 'vWork' : 'vCorp', /渡してください/.test(b) ? 'corp' : 'order');
   const g = NT_GO[tag] || (/税|給付金|滞納|差し押さえ/.test(b) ? ['vTax', 'tax'] : null);
@@ -9393,7 +9445,7 @@ $('#histCsv').onclick = async () => {
   b.disabled = false;
 };
 async function moreLoad() {
-  idLoad();
+  idLoad(); verShow();
   try {
     const [hs, me] = await Promise.all([call('money_history', { p_limit: 100 }), call('my_profile')]);
     setBal(me.balance);
