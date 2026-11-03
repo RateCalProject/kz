@@ -20557,9 +20557,30 @@ end $$;
 
 -- 系統の線路が切れていないか（線路を直したり、こわしたあと）。だめなら ok = false
 --   その持ち主の系統と、その持ち主の線路に乗り入れている（いた）名義の系統（t54j）
+-- 系統の駅と駅のあいだごとの 複々線・電化方式・デッドセクション を、時刻を組みなおすあいだ 1回だけ計算しておく（DB の更新88。前は列車ごとに計算していた）。
+--   _mp_train_times は、mp.li_r が その系統のときだけ これを使う（組みなおしがおわると mp.li_r を空にする）
+create or replace function public._mp_li_put(rid bigint) returns void
+language plpgsql set search_path = public as $$
+declare r mp_routes;
+begin
+  select * into r from mp_routes where id = rid;
+  if not found or r.kind <> 'rail' then perform set_config('mp.li_r', '', true); return; end if;
+  perform set_config('mp.li_q', coalesce(_mp_leg_quad(r.legs)::text, ''), true);
+  perform set_config('mp.li_pm', coalesce(_mp_leg_pm(r.legs)::text, ''), true);
+  perform set_config('mp.li_dz', coalesce(_mp_leg_dz(r.legs)::text, ''), true);
+  perform set_config('mp.li_r', rid::text, true);
+end $$;
+-- 系統の列車の 時刻・待避・注意・走れるか・連結 の指紋（組みなおす前とあとを くらべる用。DB の更新88）
+create or replace function public._mp_routes_fp(ids bigint[]) returns text
+language sql stable set search_path = public as $$
+  select md5(coalesce(string_agg(concat_ws('|', t.id, coalesce(t.sched::text, '-'), coalesce(t.hold::text, '-'), coalesce(t.tai::text, '-'), coalesce(t.warn, '-'), t.bad::text,
+                                           coalesce(t.cplx::text, '-')), ',' order by t.id), ''))
+    from mp_trains t where t.route = any(ids)
+$$;
 create or replace function public._mp_routes_fix(pu uuid, pc int) returns void
 language plpgsql set search_path = public as $$
 declare r mp_routes; i int; leg jsonb; lg jsonb; bad text; ids bigint[] := '{}'; lgs jsonb[] := '{}'; bads text[] := '{}'; same boolean[] := '{}'; k int;
+        fp0 text;   -- DB の更新88
 begin
   -- 1. 系統ごとに、線路の道すじを出しなおす
   for r in select * from mp_routes x where x.kind = 'rail' and ((x.own_u is not distinct from pu and x.own_c is not distinct from pc)
@@ -20575,13 +20596,21 @@ begin
   end loop;
   -- 2.（2026-10-28）どの系統も前とまったく同じなら、何もしない（時刻も前のまま）。前は線路を1本つくるたびに、ぜんぶの系統の時刻を組みなおしていて、8秒の制限をこえていた
   if coalesce(array_length(ids, 1), 0) = 0 or true = all(same) then return; end if;
-  -- 3. どれか変わったら、前と同じ順に：書きかえて、つながっている系統の時刻を組みなおす
+  -- 3. 道すじが変わった系統だけ、書きかえて時刻を組みなおす（DB の更新88）。
+  --    前は どれか1つ変わると、ぜんぶの系統（乗り入れもふくむ）を組みなおしていて、大きい路線網のまん中で線を分けると（分かれ道をつくると）20秒の制限をこえていた
+  fp0 := _mp_routes_fp(ids);   -- 組みなおす前の、列車の時刻・待避・注意・走れるか
   for k in 1..array_length(ids, 1) loop
     if not same[k] then
       update mp_routes set legs = case when bads[k] is null then lgs[k] else mp_routes.legs end, ok = bads[k] is null, why = bads[k], runt = '{}'::jsonb where id = ids[k];
+      if bads[k] is null then perform _mp_resched(ids[k]); end if;
     end if;
-    if bads[k] is null then perform _mp_resched(ids[k]); end if;
   end loop;
+  -- 4. 組みなおした結果が前とまったく同じなら、ほかの系統はそのまま。変わったら、前と同じように ほかの系統も組みなおす（待避・番線のかさなりが変わるので）
+  if _mp_routes_fp(ids) is distinct from fp0 then
+    for k in 1..array_length(ids, 1) loop
+      if same[k] and bads[k] is null then perform _mp_resched(ids[k]); end if;
+    end loop;
+  end if;
 end $$;
 
 -- 系統をつくる・直す。p_paths はバスだけ（[[線, 線, …], …] バス停と次のバス停のあいだ）
@@ -20790,7 +20819,8 @@ begin
   n := array_length(r.stops, 1);
   ord := case when tr.dir = 1 then array(select generate_series(1, n)) else array(select generate_series(n, 1, -1)) end;
   dw := r.dwell;
-  lq := case when r.kind = 'rail' then _mp_leg_quad(r.legs) end; qx := r.kind = 'rail' and _mp_kprio(r.own_u, r.own_c, tr.kind) <= 3;   -- 急行線を走る列車（優先番号 3 まで。DB の更新86）
+  lq := case when r.kind = 'rail' then case when current_setting('mp.li_r', true) = r.id::text then nullif(current_setting('mp.li_q', true), '')::boolean[] else _mp_leg_quad(r.legs) end end;   -- 組みなおしのあいだは1回だけ計算したもの（DB の更新88）
+  qx := r.kind = 'rail' and _mp_kprio(r.own_u, r.own_c, tr.kind) <= 3;   -- 急行線を走る列車（優先番号 3 まで。DB の更新86）
   -- 走る区間（途中始発・途中止まり。2026-10-28）：走る順の k0 番目から k1 番目まで
   k0 := coalesce(_mp_kpos(r.stops, tr.dir, tr.sa, false), 1); k1 := coalesce(_mp_kpos(r.stops, tr.dir, tr.sb, true), n);   -- 環状線：始発は走る順で前の、終着はうしろのほう
   if k0 >= k1 then ws := ws || '始発駅と終着駅の順がちがいます（系統の端から端まで走ります）'::text; k0 := 1; k1 := n; end if;
@@ -20801,7 +20831,10 @@ begin
   end if;
   -- 電化方式（DB の更新87）：走る区間の方式を、編成が ぜんぶ走れるか
   if perf is not null and r.kind = 'rail' and (perf ->> 'elec')::boolean then
-    lpm := _mp_leg_pm(r.legs); ldz := _mp_leg_dz(r.legs); pm := coalesce((perf ->> 'ps')::int, 1);
+    if current_setting('mp.li_r', true) = r.id::text then   -- 組みなおしのあいだは1回だけ計算したもの（DB の更新88）
+      lpm := nullif(current_setting('mp.li_pm', true), '')::int[]; ldz := nullif(current_setting('mp.li_dz', true), '')::int[];
+    else lpm := _mp_leg_pm(r.legs); ldz := _mp_leg_dz(r.legs); end if;
+    pm := coalesce((perf ->> 'ps')::int, 1);
     pneed := (select coalesce(bit_or(lpm[lo]), 0) from generate_series(least(ord[k0], ord[k1]), greatest(ord[k0], ord[k1]) - 1) lo);
     if pneed & ~pm <> 0 then
       ws := ws || format('%s の区間があります（この編成は %s だけ。走れません）', _mp_ps_names(pneed & ~pm), _mp_ps_names(pm));
@@ -21221,26 +21254,36 @@ language plpgsql set search_path = public as $$
 declare tr mp_trains; a record; b record; r mp_routes; w text; fid bigint; lsta bigint; lt int; lnum text; dd date; ldated bigint; ldci int; pass int;
         sk jsonb; wl real; cl real; sr jsonb; stw boolean;   -- 蒸気機関車の補給（DB の更新78）
 begin
+  perform _mp_li_put(rid);   -- 駅と駅のあいだごとの 複々線・電化方式・デッドセクション を1回だけ（DB の更新88）
   perform _mp_dispatch(rid);   -- 時刻（待避・続行もふくめて）
+  perform set_config('mp.li_r', '', true);
   select * into r from mp_routes where id = rid;
   -- 番線：同じ駅・同じ番線に、重なる（t62：自動閉塞。前の列車が出て、長さ＋30m はなれるまで。前は前後30秒ずつ。駅の線の信号が強ければ 20m・10m。DB の更新85）
   --   （2026-10-28）前は列車の組ごとに sched をひらいていて「本数の2乗×駅数の2乗」かかり、列車をまとめて足すと8秒の制限をこえていた。
   --   いまは駅ごとの発着を1回だけ表にして、駅・番線でつなぐ。注意書きも、列車ごとにまとめて1回で書く（中身は前と同じ）
   --   さらに10分ごとの枠（bk）でもつなぐ：重なる2つは、両方の最初の枠のおそいほう（greatest(p)）で1回だけ出会う
-  with pf as materialized (   -- 編成ごとの長さ・加速（「出てから はなれるまで」の秒は、駅の信号の段で）
+  --   （DB の更新88）この系統の列車が使う 駅・番線 の発着だけを見る（かさなるのは 同じ駅・同じ番線だけなので、中身は前と同じ）
+  with rk as materialized (
+    select distinct s.v ->> 0 sta, s.v ->> 3 trk from mp_trains t cross join lateral jsonb_array_elements(t.sched) s(v)
+     where t.route = rid and s.v ->> 0 is not null and s.v ->> 3 is not null),
+  ev as materialized (
+    select t.id, t.route, t.num, t.day, t.form, s.v ->> 0 sta, s.v ->> 3 trk,
+           coalesce((s.v ->> 1)::int, (s.v ->> 2)::int) ta, coalesce((s.v ->> 2)::int, (s.v ->> 1)::int) td
+      from mp_trains t cross join lateral jsonb_array_elements(t.sched) s(v)
+     where t.route in (select id from mp_routes where stops && r.stops) and s.v ->> 0 is not null and s.v ->> 3 is not null
+       and (s.v ->> 0, s.v ->> 3) in (select rk.sta, rk.trk from rk)),
+  pf as materialized (   -- 編成ごとの長さ・加速（「出てから はなれるまで」の秒は、駅の信号の段で）
     select f.form, (q.p ->> 'len')::real len, (q.p ->> 'acc')::real acc
-      from (select distinct t.form from mp_trains t where t.route in (select id from mp_routes where stops && r.stops) and t.form is not null) f,
+      from (select distinct ev.form from ev where ev.form is not null) f,
            lateral (select _mp_form_perf(f.form) p) q),
   sl as materialized (   -- 駅の線の信号の段（DB の更新85）
     select s2.id, coalesce(sg.sig, 0)::int lv from mp_stations s2 left join mp_segs sg on sg.id = s2.seg
-     where s2.id in (select unnest(ro.stops) from mp_routes ro where ro.stops && r.stops)),
+     where s2.id in (select unnest(ro.stops) from mp_routes ro where ro.stops && r.stops) and s2.id in (select distinct ev.sta::bigint from ev)),
   st as materialized (
     select z.*, floor(least(z.ta, z.td + z.clr) / 600.0)::int p, floor(greatest(z.ta, z.td + z.clr) / 600.0)::int q from (
-      select t.id, t.route, t.num, t.day, s.v ->> 0 sta, s.v ->> 3 trk,
-             coalesce((s.v ->> 1)::int, (s.v ->> 2)::int) ta, coalesce((s.v ->> 2)::int, (s.v ->> 1)::int) td,
-             _mp_clr_stop2((select pf.len from pf where pf.form = t.form), (select pf.acc from pf where pf.form = t.form), coalesce((select sl.lv from sl where sl.id = (s.v ->> 0)::bigint), 0)) clr
-        from mp_trains t cross join lateral jsonb_array_elements(t.sched) s(v)
-       where t.route in (select id from mp_routes where stops && r.stops) and s.v ->> 0 is not null and s.v ->> 3 is not null) z),
+      select ev.id, ev.route, ev.num, ev.day, ev.sta, ev.trk, ev.ta, ev.td,
+             _mp_clr_stop2((select pf.len from pf where pf.form = ev.form), (select pf.acc from pf where pf.form = ev.form), coalesce((select sl.lv from sl where sl.id = ev.sta::bigint), 0)) clr
+        from ev) z),
   sb as materialized (select st.*, w10.bk from st cross join lateral generate_series(st.p, st.q) w10(bk)),
   c as materialized (
     select t1.id i1, t2.id i2, t1.num n1, t2.num n2, t1.trk, (select name from mp_stations where id = t1.sta::bigint) sn
@@ -31871,7 +31914,7 @@ begin
             'mp_sta_build','mp_sta_edit','mp_sta_resize','mp_sta_trk','mp_sta_trk_set','mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list',
             'mp_thru_req','mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market',
             'mp_unit_mine','mp_unit_own','mp_unit_set','mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer','mp_unko_list','mp_unko_pick','mp_unko_furi','mp_unko_make','mp_jam_now','mp_jam_list','mp_er_now','mp_er_list','mp_er_bld','mp_lic_find','mp_lic_at','mp_lic_apply','_mp_lic_pfee_of','_mp_lic_pfee','_mp_lic_have','_mp_lic_mfee','mp_lic_mine','mp_lic_cancel','mp_lic_review','mp_lic_decide',
-            'mp_sta_melt','mp_seg_snow','mp_dep_plow','mp_snow_mine','mp_seg_height','_mp_taut','_mp_prof_flat','_mp_prof_simp','_mp_hopt','_mp_prof_make2','mp_sta_height','_mp_clr_stop2','_mp_clr_pass2','_mp_leg_sig','mp_seg_sig','_mp_trmul','_mp_leg_quad','_mp_ps_names','_mp_leg_pm','_mp_leg_dz',
+            'mp_sta_melt','mp_seg_snow','mp_dep_plow','mp_snow_mine','mp_seg_height','_mp_taut','_mp_prof_flat','_mp_prof_simp','_mp_hopt','_mp_prof_make2','mp_sta_height','_mp_clr_stop2','_mp_clr_pass2','_mp_leg_sig','mp_seg_sig','_mp_trmul','_mp_leg_quad','_mp_ps_names','_mp_leg_pm','_mp_leg_dz','_mp_li_put','_mp_routes_fp',
             '_mp_form_busy','_mp_form_runs','_mp_cxl_on','_mp_unko_zone','_mp_unko_zi','_mp_unko_zt','_mp_unko_rt','_mp_sched_idx','_mp_unko_trn','_mp_rail_path_x','_mp_unko_det','mp_cxl_add','mp_cxl_del','_mp_form_key','_mp_train_runs','_mp_subst_can','_mp_subst_pick','_mp_subst_has','_mp_subst_ok','_mp_subst_plan','_mp_subst_plan_all','_mp_tmp_back','mp_form_spare','mp_form_add','mp_car_tmp') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
@@ -31921,3 +31964,12 @@ alter function public.mp_unko_pick(bigint, int, text, boolean, boolean, boolean)
 alter function public.mp_sta_height(bigint, text, boolean) set statement_timeout = '60s';
 -- 信号を変える（DB の更新85）は、通る系統の時刻を計算しなおすので60秒まで
 alter function public.mp_seg_sig(bigint, int, boolean, boolean) set statement_timeout = '60s';
+-- 線路をつくる・直す・つなぐ・こわす・設定を変える（系統の時刻を組みなおすことがある）は 60秒まで（DB の更新88。前は20秒）
+do $$
+declare f record;
+begin
+  for f in select p.oid::regprocedure sig from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'public' and p.proname in ('mp_seg_build', 'mp_seg_edit', 'mp_seg_join', 'mp_seg_del', 'mp_seg_opts') loop
+    execute format('alter function %s set statement_timeout = %L', f.sig, '60s');
+  end loop;
+end $$;
