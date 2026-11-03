@@ -5184,7 +5184,7 @@ function stCmpDraw() {
    役所 → ヘルプ（t62）：遊び方・やり方（help/help.json。README からつくる）。さがせる（題・中身・ことば。ひらがな・カタカナ・全角半角は同じに）
    役所 → 意見箱（t62）：運営への問い合わせ（support_open）に「【意見箱】」の件名で送る
    ================================================================= */
-const HELP_V = '141752c3';
+const HELP_V = '3222b86a';
 const HP = { d: null, cat: 'start', q: '' };
 const hpNorm = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
 async function helpLoad() {
@@ -5873,7 +5873,7 @@ const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
 // 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
-const MAPV = '146';
+const MAPV = '147';
 let mapLoading = null;
 function mapScripts() {
   if (window.MapApp) return Promise.resolve();
@@ -7249,7 +7249,7 @@ function mapDo(fn, L) { go('vCorp', 'map'); let n = 0; const w = () => { if (win
 const UK = { t: 0 };
 const UK_K = { wind: '強風', rain: '大雨', snow: '大雪', person: '人と接触', sick: '急病のお客さまの救護', car: '車両・機材の点検', signal: '信号の確認', track: '線路内の点検',
   bird: 'バードストライク', rwy: '滑走路の点検', atc: '管制の混雑', wave: '高波・うねり', accident: '交通事故', traffic: '渋滞', snowstop: '冬の運休', stuck: '大雪で立ち往生',
-  fog: '濃霧', heat: '高温（レール）', hail: 'ひょう' };   // 濃霧・高温・ひょう（DB の更新66）
+  fog: '濃霧', heat: '高温（レール）', hail: 'ひょう', volt: '電圧の低下', power: '変電所の停止' };   // 濃霧・高温・ひょう（DB の更新66）・変電所（DB の更新89）
 // いまのようす：[2 止まっている・1 遅れ・0 おわり, ことば]（地図の unkoState と同じ考え）
 function ukState(z, t) {
   const md = z.mode || 'rail', stopW = md === 'air' || md === 'ship' ? '欠航' : md === 'bus' ? '運休' : '運転見合わせ';

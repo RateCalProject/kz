@@ -455,7 +455,7 @@ function drawElevFar(g, z) {
 // ズームで細かさ（lod）とセルの大きさを決める
 //   lod 3（t108）：Z_FAR より引いたとき。4096 マスのます目で、線路・高速・駅と空港・県の名前だけ（サーバーの更新53 の前は lod 2 と同じものが来る）
 function lodOf(z) { const e = MQ.d2 === 0 && S.tool === 'look' && !S.v3; return z < Z_FAR && !S.v3 ? [3, 4096] : z < (e ? 2.5 : 2) ? [2, 1024] : z < (e ? 9 : 7) ? [1, 384] : [0, 96]; }   // 省エネ（t63）：見るだけのときは、土地・建物を もっと近くから
-const CELL0 = { segs: [], stas: [], deps: [], nodes: [], parcels: [], blds: [], places: [], chos: [], lanes: [], rwys: [], names: {} };   // 国土の外のセル（読まない）
+const CELL0 = { segs: [], stas: [], deps: [], subs: [], nodes: [], parcels: [], blds: [], places: [], chos: [], lanes: [], rwys: [], names: {} };   // 国土の外のセル（読まない）
 function needCells() {
   const [lod, cs] = lodOf(S.cam.z), v = view(), w = S.boot && S.boot.world;
   const i0 = Math.floor(v.x0 / cs), j0 = Math.floor(v.y0 / cs), i1 = Math.floor(v.x1 / cs), j1 = Math.floor(v.y1 / cs);
@@ -516,6 +516,8 @@ function prepArea(d) {
   if (d.sig) S.sigOK = true;     // 信号の段（DB の更新85）のあるサーバー
   if (d.quad) S.quadOK = true;   // 複々線（DB の更新86）のあるサーバー
   if (d.pw) S.pwOK = true;       // 電化方式（DB の更新87）のあるサーバー
+  if (d.subs2) { S.subsOK = true; for (const s of d.segs) s.pw2 = true; }   // 変電所（DB の更新89）のあるサーバー（pw2：fd がないのは 電気が来ていない線）
+  d.subs = d.subs || []; for (const v of d.subs) { v.fx = v.x / 100; v.fy = v.y / 100; }
   for (const s of d.segs) prepSeg(s);
   for (const s of d.stas) { s.fx = s.x / 100; s.fy = s.y / 100; }
   for (const s of d.deps) { s.fx = s.x / 100; s.fy = s.y / 100; }
@@ -565,11 +567,12 @@ function prepParcel(a) {
 function visibleItems() {
   const [lod, cs] = lodOf(S.cam.z), v = view();
   const i0 = Math.floor(v.x0 / cs), j0 = Math.floor(v.y0 / cs), i1 = Math.floor(v.x1 / cs), j1 = Math.floor(v.y1 / cs);
-  const segs = new Map(), stas = new Map(), deps = new Map(), nodes = new Map(), parcels = new Map(), places = new Map(), chos = new Map(), blds = new Map(), lanes = new Map(), rwys = new Map(), names = {};
+  const segs = new Map(), stas = new Map(), deps = new Map(), subs = new Map(), nodes = new Map(), parcels = new Map(), places = new Map(), chos = new Map(), blds = new Map(), lanes = new Map(), rwys = new Map(), names = {};
   const take = d => {
     for (const s of d.segs) segs.set(s.id, s);
     for (const s of d.stas) stas.set(s.id, s);
     for (const s of d.deps) deps.set(s.id, s);
+    for (const v of (d.subs || [])) subs.set(v.id, v);   // 変電所（DB の更新89）
     for (const n of d.nodes) nodes.set(n.id, n);
     for (const p of d.parcels) parcels.set(p.id, p);
     for (const b of (d.blds || [])) blds.set(b.id, b);
@@ -591,7 +594,7 @@ function visibleItems() {
       if (any) break;
     }
   }
-  return { segs, stas, deps, nodes, parcels, places, chos, blds, lanes, rwys, names };
+  return { segs, stas, deps, subs, nodes, parcels, places, chos, blds, lanes, rwys, names };
 }
 // 変わったもの（ほかの人の工事など）。15秒ごと
 async function poll() {
@@ -821,6 +824,7 @@ function render() {
     else { roadPass(s, 'VB'); if (asph && s.l) segParts(s, 'VB', () => laneMarks(g, s, z)); }
   }
   if (S.pwOK && z >= 2) drawDeadSecs(g, rails, z);   // デッドセクション（DB の更新87）
+  if (S.subsOK && z >= 2) drawPower(g, rails, z);    // エアセクション・電気の来ていない線（DB の更新89）
   // 航路（海の上の点線。t54o）
   drawLanes(g, it, z);
   // 高速（高架なので上に。高さを決めた高速は、トンネルのところをのぞく）
@@ -837,6 +841,7 @@ function render() {
   const bs = z >= 4 ? bldsIn(it, v) : [];
   if (bs.length) drawBlds(g, bs, z, 0);
   for (const d of it.deps.values()) if (d.k !== 'ship' && d.k !== 'air') drawDepot(g, d, z);
+  if (S.subsOK && z >= 2) for (const v of it.subs.values()) drawSub(g, v, z);   // 変電所（DB の更新89）
   if (S.routeHi) drawRouteHi(g, z, it);
   if (!far) for (const s of it.stas.values()) if (s.k === 'rail') drawStation(g, s, z);   // とても遠いときは駅の四角を出さない（線路だけ）
   if (bs.length) drawBlds(g, bs, z, 1);
@@ -891,6 +896,7 @@ function drawLabels(g, it, z, v, bs) {
   if (bs.length) bldMarks(g, bs, z);
   if (S.layer.label) drawSpots(g, it, z);
   if (z >= 4) for (const d of it.deps.values()) if (d.k !== 'ship' && d.k !== 'air') depLabel(g, d, z);
+  if (S.subsOK && z >= 8) for (const v of it.subs.values()) subLabel(g, v, z);   // 変電所の名前（DB の更新89）
   if (z >= 9) for (const s of it.stas.values()) if (s.k === 'bus') { const x = sx(s.fx), y = sy(s.fy), r = Math.max(3.5, 0.18 * z); if (x > -80 && y > -40 && x < S.W + 80 && y < S.H + 40) label(g, s.n, x, y - r - 8, { size: 11, color: '#164f99', bg: 'rgba(255,255,255,.85)' }); }
   if (bs.length) bldNames(g, bs, z);
   if (S.layer.label) drawPlaces(g, it, z);
@@ -1021,6 +1027,169 @@ function drawDeadSecs(g, rails, z) {
     if (z >= 12) { g.font = 'bold 11px system-ui, sans-serif'; g.textAlign = 'center'; g.fillStyle = '#111'; g.strokeStyle = 'rgba(255,255,255,.9)'; g.lineWidth = 3;
       g.strokeText(T('デッドセクション'), sx(e.x), sy(e.y) - r - 6); g.fillText(T('デッドセクション'), sx(e.x), sy(e.y) - r - 6); }
   }
+}
+/* ---------- 変電所（DB の更新89）：電化した線路に電気をとどける（同じ持ち主・同じ方式。直流 10km・交流 40km まで） ---------- */
+const SUB_SZ = ['小', '中', '大'];
+const subKm = ps => ps ? 40 : 10;   // とどく遠さ（km）
+const subCaps = ps => ps ? '小 10,000・中 20,000・大 40,000 kW' : '小 3,000・中 6,000・大 12,000 kW';
+// エアセクション（同じ方式で、電気をとどける変電所がかわる点）に青のしるし。自分の電化した線で、電気が来ていない線は赤の点線
+function drawPower(g, rails, z) {
+  const at = new Map();
+  for (const s of rails) {
+    if (!s.el || !s.P || s.np < 2) continue;
+    if (s.mine && s.pw2 && s.fd == null) {   // 変電所から遠い（電気が来ていない。電車は走れない）
+      g.save(); g.strokeStyle = 'rgba(214,30,30,.9)'; g.lineWidth = Math.max(2, 0.14 * z); g.lineCap = 'butt'; g.setLineDash([7, 5]); pathSeg(g, s); g.stroke(); g.restore();
+    }
+    if (z < 6 || s.fd == null) continue;
+    const ends = [[s.n0, s.P[0], s.P[1], s.P[2], s.P[3]], [s.n1, s.P[2 * s.np - 2], s.P[2 * s.np - 1], s.P[2 * s.np - 4], s.P[2 * s.np - 3]]];
+    for (const [n, x, y, x2, y2] of ends) {
+      if (n == null) continue;
+      let e = at.get(n); if (!e) at.set(n, e = { x, y, a: Math.atan2(y2 - y, x2 - x), fd: new Set(), ps: new Set() });
+      e.fd.add(s.fd); e.ps.add(s.ps || 0);
+    }
+  }
+  const r = Math.max(6, 0.45 * z);
+  for (const e of at.values()) {
+    if (e.fd.size < 2 || e.ps.size > 1) continue;   // 方式がちがう点は デッドセクション
+    g.save(); g.translate(sx(e.x), sy(e.y)); g.rotate(e.a + Math.PI / 2);
+    g.strokeStyle = '#fff'; g.lineWidth = 4; g.lineCap = 'butt';
+    for (const k of [-1, 1]) { g.beginPath(); g.moveTo(-r, k * r * 0.28); g.lineTo(r, k * r * 0.28); g.stroke(); }
+    g.strokeStyle = '#1f5fbf'; g.lineWidth = 2;
+    for (const k of [-1, 1]) { g.beginPath(); g.moveTo(-r, k * r * 0.28); g.lineTo(r, k * r * 0.28); g.stroke(); }
+    g.restore();
+    if (z >= 12) { g.font = 'bold 11px system-ui, sans-serif'; g.textAlign = 'center'; g.fillStyle = '#1f5fbf'; g.strokeStyle = 'rgba(255,255,255,.9)'; g.lineWidth = 3;
+      g.strokeText(T('エアセクション'), sx(e.x), sy(e.y) - r - 6); g.fillText(T('エアセクション'), sx(e.x), sy(e.y) - r - 6); }
+  }
+}
+const subR = z => Math.max(6, Math.min(13, 0.3 * z));
+// 変電所のしるし：紺の四角に黄の ⚡（容量をこえている：オレンジ・止まっている：赤）
+function drawSub(g, v, z) {
+  const x = sx(v.fx), y = sy(v.fy), r = subR(z);
+  if (x < -20 || y < -20 || x > S.W + 20 || y > S.H + 20) return;
+  const over = v.ld != null && v.ld > v.cap;
+  g.save();
+  if (S.sel && S.sel.kind === 'sub' && S.sel.id === v.id) { g.strokeStyle = 'rgba(220,40,60,.8)'; g.lineWidth = 3; g.beginPath(); g.arc(x, y, r * 1.7, 0, 6.3); g.stroke(); }
+  g.fillStyle = v.tr ? '#c62828' : over ? '#e67e00' : '#1f3f73'; g.strokeStyle = '#fff'; g.lineWidth = 1.5;
+  g.beginPath(); if (g.roundRect) g.roundRect(x - r, y - r, 2 * r, 2 * r, r * 0.3); else g.rect(x - r, y - r, 2 * r, 2 * r); g.fill(); g.stroke();
+  g.fillStyle = '#ffd400'; g.beginPath();
+  g.moveTo(x + 0.18 * r, y - 0.8 * r); g.lineTo(x - 0.48 * r, y + 0.12 * r); g.lineTo(x - 0.04 * r, y + 0.12 * r);
+  g.lineTo(x - 0.22 * r, y + 0.8 * r); g.lineTo(x + 0.48 * r, y - 0.14 * r); g.lineTo(x + 0.04 * r, y - 0.14 * r); g.closePath(); g.fill();
+  g.restore();
+}
+function subLabel(g, v, z) {
+  const x = sx(v.fx), y = sy(v.fy); if (x < -80 || y < -40 || x > S.W + 80 || y > S.H + 40) return;
+  label(g, v.n, x, y + subR(z) + 9, { size: 10, color: '#1f3f73', bg: 'rgba(255,255,255,.85)' });
+}
+function nearSub(x, y, rpx) {
+  const it = S.vis; if (!it || !it.subs) return null; let best = null;
+  for (const v of it.subs.values()) { const d = Math.hypot(v.fx - x, v.fy - y) * S.cam.z; if (d < Math.max(rpx, subR(S.cam.z) + 4) && (!best || d < best.d)) best = { v, d }; }
+  return best;
+}
+function showSub(v) {
+  S.sel = { kind: 'sub', id: v.id }; S.dirty = true;
+  const own = v.o === 'gov' ? '国' : (S.vis.names[v.o] || ''), pct = v.ld != null && v.cap > 0 ? Math.round(100 * v.ld / v.cap) : null;
+  sheet(`<h4>⚡ <span>${esc(v.n)}</span></h4>
+    <div class="mp-kv"><b>持ち主</b><span><span>${esc(own)}</span>${v.mine && v.o !== 'gov' ? '<small>（あなた）</small>' : ''}</span>
+      <b>方式</b><span>${PS_N[v.ps || 0]}</span>
+      <b>大きさ</b><span><span>${SUB_SZ[v.sz] || ''}</span>（容量 <span>${fmt(v.cap)}</span> kW）</span>
+      <b>負荷</b><span>${pct == null ? 'まだ計算していません（1時間ごと）' : `いちばん多いとき 約 <span>${fmt(v.ld)}</span> kW（<span class="${pct > 100 ? 'mp-warn' : ''}">${pct}%</span>）`}</span>
+      <b>とどく遠さ</b><span>${subKm(v.ps)} km</span>
+      ${v.tr ? '<b>いま</b><span class="mp-warn">止まっています（電気の使いすぎ）</span>' : ''}</div>
+    <p class="small muted" style="margin:4px 0">同じ持ち主・同じ方式の電化した線路に、電気をとどけます。1時間の負荷が容量をこえると電圧が下がって遅れ、1.5倍をこえると止まります（運転見合わせ）</p>
+    ${v.mine ? '<div class="mp-row"><button class="btn" data-size>大きさ・名前</button><button class="btn" data-del>こわす</button></div>' : ''}`, sh => {
+    const b1 = sh.querySelector('[data-size]'); if (b1) b1.onclick = () => subSize(v);
+    const b2 = sh.querySelector('[data-del]'); if (b2) b2.onclick = () => subDel(v);
+  });
+}
+// 大きさ・名前を変える（大きくするのは差の工事費。小さくするのは無料）
+function subSize(v) {
+  const st = { sz: v.sz, name: v.n, q: null, err: null, quoting: false, seq: 0 };
+  const quote = async () => {
+    const my = ++st.seq; st.quoting = true; st.err = null; draw();
+    let q = null, err = null;
+    try { q = await call('mp_sub_set', { p_id: v.id, p_sz: st.sz, p_name: st.name, p_dry: true }); } catch (e) { err = errJa(e.message); }
+    if (st.seq !== my) return;
+    st.quoting = false; st.q = q; st.err = err; draw();
+  };
+  const draw = () => {
+    const q = st.q;
+    sheet(`<h4>⚡ 変電所の大きさ・名前</h4>
+      <div class="mp-row small" style="align-items:center"><span>大きさ</span><span class="mp-seg">${SUB_SZ.map((n, k) => `<button data-sz="${k}" class="${st.sz === k ? 'on' : ''}">${n}</button>`).join('')}</span></div>
+      <p class="small muted" style="margin:0 0 4px">容量：<span>${subCaps(v.ps)}</span></p>
+      <div class="mp-row small" style="align-items:center"><span>名前</span><input class="mp-inp" data-name maxlength="30" value="${esc(st.name)}"></div>
+      <div class="mp-row">${q ? `<span class="mp-cost">${q.cost > 0 ? '工事費 ' + X(q.cost) : '工事費なし'}</span><span class="small muted"><span>容量 ${fmt(q.cap)} kW</span>・<span>維持費 1日 ${X(q.upk)}</span></span>`
+        : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button>'}</div>
+      <div class="mp-row"><button class="btn main" data-ok ${q ? '' : 'disabled'}>変える</button><button class="btn" data-back>もどる</button></div>
+      <p class="muted small" style="margin:4px 0 0">大きくするのは差の工事費。小さくするのは無料（返金なし）</p>`, sh => {
+      sh.querySelectorAll('[data-sz]').forEach(b => b.onclick = () => { st.sz = Number(b.dataset.sz); st.seq++; st.quoting = false; st.q = null; st.err = null; draw(); });
+      const nm = sh.querySelector('[data-name]'); nm.oninput = () => { st.name = nm.value; };
+      { const e = sh.querySelector('[data-est]'); if (e) e.onclick = () => quote(); }
+      sh.querySelector('[data-back]').onclick = () => showSub(v);
+      sh.querySelector('[data-ok]').onclick = async () => {
+        const r = await api('mp_sub_set', { p_id: v.id, p_sz: st.sz, p_name: st.name, p_dry: false });
+        if (!r) return;
+        toast(r.cost > 0 ? `変えました（${fmt(r.cost)} X）` : '変えました');
+        refreshBox(v.fx - 3, v.fy - 3, v.fx + 3, v.fy + 3); S.sel = null; sheet(null);
+      };
+    });
+  };
+  draw();
+}
+// こわす（返金なし）：電気が来なくなる線・通る系統の数を見せてから
+async function subDel(v) {
+  const q = await api('mp_sub_del', { p_id: v.id, p_dry: true }); if (!q) return;
+  sheet(`<h4>⚡ <span>${esc(v.n)}</span>をこわす</h4>
+    ${q.lost ? `<p class="mp-warn">電気が来なくなる線路が <span>${q.lost}</span>本あります（通る系統 <span>${q.routes}</span>。その区間の電車は走れなくなります）</p>` : '<p class="small">ほかの変電所から電気がとどくので、電車はそのまま走れます</p>'}
+    <p class="muted small">こわしても お金はもどりません</p>
+    <div class="mp-row"><button class="btn main" data-ok>こわす</button><button class="btn" data-back>もどる</button></div>`, sh => {
+    sh.querySelector('[data-back]').onclick = () => showSub(v);
+    sh.querySelector('[data-ok]').onclick = async () => {
+      const r = await api('mp_sub_del', { p_id: v.id, p_dry: false }, '変電所をこわしました'); if (!r) return;
+      const k = subKm(v.ps) * 20 + 2; refreshBox(v.fx - k, v.fy - k, v.fx + k, v.fy + k); S.sel = null; sheet(null);
+    };
+  });
+}
+// 線のシートの「電気」の行：どの変電所から来ているか・来ていないか
+function subFeedRow(s) {
+  if (s.k !== 'rail' || !s.el || !S.subsOK || !s.pw2) return '';
+  const v = s.fd != null && S.vis.subs ? S.vis.subs.get(s.fd) : null;
+  return `<b>電気</b><span>${s.fd != null ? (v ? `<span>${esc(v.n)}</span>から` : '変電所から') : '<span class="mp-warn">変電所から遠く、電気が来ていません（電車は走れません）</span>'}</span>`;
+}
+// 変電所をつくる（自分の電化した線路の上の、タップしたところ）
+function subBuild(s, hit) {
+  const st = { sz: 1, name: '', q: null, err: null, quoting: false, seq: 0 };
+  const args = dry => ({ p_seg: s.id, p_x: hit.x, p_y: hit.y, p_sz: st.sz, p_name: st.name.trim() || null, p_dry: dry });
+  const quote = async () => {
+    const my = ++st.seq; st.quoting = true; st.err = null; draw();
+    let q = null, err = null;
+    try { q = await call('mp_sub_build', args(true)); } catch (e) { err = errJa(e.message); }
+    if (st.seq !== my) return;
+    st.quoting = false; st.q = q; st.err = err; draw();
+  };
+  const draw = () => {
+    const q = st.q;
+    sheet(`<h4>⚡ 変電所をつくる</h4>
+      <p class="small muted" style="margin:0 0 4px">この線路の上（タップしたところ）に。同じ持ち主・同じ方式（<span>${PS_N[s.ps || 0]}</span>）の電化した線路に、<span>${subKm(s.ps)}</span> km まで電気をとどけます</p>
+      <div class="mp-row small" style="align-items:center"><span>大きさ</span><span class="mp-seg">${SUB_SZ.map((n, k) => `<button data-sz="${k}" class="${st.sz === k ? 'on' : ''}">${n}</button>`).join('')}</span></div>
+      <p class="small muted" style="margin:0 0 4px">容量：<span>${subCaps(s.ps)}</span></p>
+      <div class="mp-row small" style="align-items:center"><span>名前</span><input class="mp-inp" data-name maxlength="30" value="${esc(st.name)}" placeholder="${esc(q && q.name ? q.name : '近い駅の名前＋変電所')}"></div>
+      <div class="mp-row">${q ? `<span class="mp-cost">${q.cost > 0 ? '工事費 ' + X(q.cost) : '工事費なし'}</span><span class="small muted"><span>容量 ${fmt(q.cap)} kW</span>・<span>維持費 1日 ${X(q.upk)}</span>${q.newfed ? `<br><span>電気が来るようになる線路 ${q.newfed}本</span>` : ''}</span>`
+        : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button>'}</div>
+      <div class="mp-row"><button class="btn main" data-ok ${q ? '' : 'disabled'}>つくる</button><button class="btn" data-back>もどる</button></div>
+      <p class="muted small" style="margin:4px 0 0">1時間の負荷が容量をこえると電圧が下がって遅れ、1.5倍をこえると止まります。列車の多い線は大きく、長い線は とちゅうにもう1つ</p>`, sh => {
+      sh.querySelectorAll('[data-sz]').forEach(b => b.onclick = () => { st.sz = Number(b.dataset.sz); st.seq++; st.quoting = false; st.q = null; st.err = null; draw(); });
+      const nm = sh.querySelector('[data-name]'); nm.oninput = () => { st.name = nm.value; };
+      { const e = sh.querySelector('[data-est]'); if (e) e.onclick = () => quote(); }
+      sh.querySelector('[data-back]').onclick = () => showSeg(s, hit);
+      sh.querySelector('[data-ok]').onclick = async () => {
+        const r = await api('mp_sub_build', args(false));
+        if (!r) return;
+        toast(r.cost > 0 ? `変電所「${r.name}」をつくりました（${fmt(r.cost)} X）` : `変電所「${r.name}」をつくりました`);
+        const k = subKm(s.ps) * 20 + 2; refreshBox(hit.x - k, hit.y - k, hit.x + k, hit.y + k); S.sel = null; sheet(null);
+      };
+    });
+  };
+  draw();
 }
 function drawRail(g, s, z) {
   const mine = s.mine, col = s.col && /^#[0-9a-f]{6}$/i.test(s.col) ? s.col : null;   // 路線カラー（2026-10-29）
@@ -1675,7 +1844,8 @@ function runBar() {
 const UNKO = { list: [], rt: new Map(), cx: [], cxT: new Map(), cxF: new Map(), ver: 0, v3: false, at: -1e9, busy: false, off: false, toff: 0 };   // at：前に読んだ時刻（performance.now）。rt：系統ごとの乱れ・cx：持ち主の運休（DB の更新60）
 const UNKO_K = { wind: '強風', rain: '大雨', snow: '大雪', person: '人と接触', sick: '急病のお客さまの救護', car: '車両・機材の点検', signal: '信号の確認', track: '線路内の点検',
                  bird: 'バードストライク', rwy: '滑走路の点検', atc: '管制の混雑', wave: '高波・うねり', accident: '交通事故', traffic: '渋滞',
-                 snowstop: '冬の運休', stuck: '大雪で立ち往生', fog: '濃霧', heat: '高温（レール）', hail: 'ひょう' };   // 冬の運休・立ち往生（t108。DB の更新57）・濃霧・高温・ひょう（DB の更新66）
+                 snowstop: '冬の運休', stuck: '大雪で立ち往生', fog: '濃霧', heat: '高温（レール）', hail: 'ひょう',
+                 volt: '電圧の低下', power: '変電所の停止' };   // 冬の運休・立ち往生（t108。DB の更新57）・濃霧・高温・ひょう（DB の更新66）・変電所（DB の更新89）
 // 対応（t108。5つ・乗りものごと。サーバーの _mp_unko_pickt と同じ）。どれがよいかは出さない
 const unkoPickT = (p, md) => md === 'air' || md === 'ship' ? ({ 1: '定刻どおり運航する', 2: '点検してから運航する', 3: '出発を見合わせて待つ', 4: '一部の便を欠航する', 5: '全便を欠航する' })[p]
   : md === 'bus' ? ({ 1: 'いつもどおり運行する', 2: '安全を確認しながら運行する', 3: '徐行・迂回して運行する', 4: '一部の便を運休する', 5: '運休する' })[p]
@@ -1969,7 +2139,7 @@ async function openUnko(focus) {
     const log = (z.log || []).filter(l => l[0] <= t + 1).map(l => `<div><small class="muted">${hmA(l[0])}</small> <span>${esc(l[1])}</span></div>`).join('');
     return `<div class="mp-uk mp-uk-${s.k}" data-uz="${z.id}"><div class="mp-uk-rs">${rs}</div>
       <div><b>🚦 <span>${esc(UNKO_K[z.kind] || '')}</span></b>・<span>${esc(z.where || '')}</span> <small class="muted">${hmA(z.t0)}〜</small></div>
-      <div class="mp-uk-st">${esc(s.txt)}</div>${zone}${z.kind === 'snowstop' || z.kind === 'stuck' ? `<div class="small">${esc(z.why || '')}</div>` : ''}
+      <div class="mp-uk-st">${esc(s.txt)}</div>${zone}${['snowstop', 'stuck', 'volt', 'power'].includes(z.kind) ? `<div class="small">${esc(z.why || '')}</div>` : ''}
       ${z.kind === 'snowstop' && z.me && s.live ? '<div class="mp-uk-ask"><b>雪の対策が足りないため、運休しています</b> <small>（車両の雪の対策・融雪器。対策がすむと、15分ほどで再開します）</small><div class="mp-row" style="margin-top:4px"><button class="btn main" data-snow>❄ 雪の対策</button></div></div>' : ''}${ask}${chg}${furi}${cxs}
       <details class="small"><summary>くわしく</summary>${log}${res}</details>
       <div class="mp-row" style="margin-top:4px"><button class="btn" data-go="${z.id}">🗺 地図で見る</button></div></div>`;
@@ -3137,6 +3307,8 @@ async function lookAt(x, y, px, py) {
   if (st) return showSta(st.s);
   const dp = nearDep(x, y);
   if (dp) return showDep(dp);
+  const sb = S.subsOK && S.cam.z >= 2 ? nearSub(x, y, 12) : null;   // 変電所（DB の更新89）
+  if (sb) return showSub(sb.v);
   const hb = hitBld(x, y);
   if (hb) { const [bx, by] = hb.cell.split(',').map(Number); return showSpot(bx, by); }
   const rw = nearRwy(x, y, 6);
@@ -3463,17 +3635,18 @@ function showSeg(s, hit) {
       ${s.k === 'road' ? `<b>車線</b><span>${s.l ? '片側' + s.l + '車線' : '中央線なし'}</span>` : `<b>線路</b><span>${s.q ? '複々線' : s.dbl ? '複線' : '単線'}・${s.el ? (S.pwOK ? `電化（${PS_N[s.ps || 0]}）` : '電化') : '非電化'}</span>`}
       ${s.k === 'rail' && s.col ? `<b>路線カラー</b><span><span style="display:inline-block;width:2.2em;height:.8em;border-radius:3px;vertical-align:middle;background:${esc(s.col)}"></span></span>` : ''}
       <b>制限速度</b><span data-spd><span>${s.v} km/h</span></span>${segSnowRow(s)}
-      ${s.k === 'rail' && S.sigOK ? `<b>信号</b><span>${SIG_N[s.sg || 0]}</span>` : ''}
+      ${s.k === 'rail' && S.sigOK ? `<b>信号</b><span>${SIG_N[s.sg || 0]}</span>` : ''}${subFeedRow(s)}
       ${s.k === 'rail' && s.o !== 'gov' ? thruRow(s.o) : ''}</div>
     ${s.k === 'rail' ? '<canvas class="mp-spd" data-spdc hidden></canvas>' : ''}
     ${S.hgtOK && (s.pf || s.k === 'rail') ? `<canvas class="mp-prof" data-profc></canvas><p class="small muted" style="margin:0 0 4px">${hgtLine(s)}</p>` : ''}
-    ${s.mine ? `<div class="mp-row"><button class="btn" data-edit>形を直す</button><button class="btn" data-split>ここで分ける</button><button class="btn" data-opt>${s.k === 'rail' ? '複線・電化・名前・色' : '車線・名前'}</button>${S.hgtOK ? '<button class="btn" data-hgt>⛰ 高さ</button>' : ''}${s.k === 'rail' && S.sigOK ? '<button class="btn" data-sig>🚦 信号</button>' : ''}${s.k === 'rail' && S.snowOK && (s.sp || segSnowZone(s) > 0) ? '<button class="btn" data-snowp>❄ 雪よけ</button>' : ''}<button class="btn" data-del>こわす</button></div>` : ''}`, sh => {
+    ${s.mine ? `<div class="mp-row"><button class="btn" data-edit>形を直す</button><button class="btn" data-split>ここで分ける</button><button class="btn" data-opt>${s.k === 'rail' ? '複線・電化・名前・色' : '車線・名前'}</button>${S.hgtOK ? '<button class="btn" data-hgt>⛰ 高さ</button>' : ''}${s.k === 'rail' && S.sigOK ? '<button class="btn" data-sig>🚦 信号</button>' : ''}${s.k === 'rail' && s.el && S.subsOK ? '<button class="btn" data-sub>⚡ 変電所</button>' : ''}${s.k === 'rail' && S.snowOK && (s.sp || segSnowZone(s) > 0) ? '<button class="btn" data-snowp>❄ 雪よけ</button>' : ''}<button class="btn" data-del>こわす</button></div>` : ''}`, sh => {
     const q = k => sh.querySelector(k);
     if (q('[data-edit]')) q('[data-edit]').onclick = () => startEdit(s);
     if (q('[data-split]')) q('[data-split]').onclick = async () => { if (await api('mp_seg_split', { p_id: s.id, p_x: hit.x, p_y: hit.y }, '分けました')) { refreshBox(...s.bb); sheet(null); } };
     if (q('[data-opt]')) q('[data-opt]').onclick = () => segOpts(s);
     if (q('[data-hgt]')) q('[data-hgt]').onclick = () => segHeight(s);   // 高さ（t108）
     if (q('[data-sig]')) q('[data-sig]').onclick = () => segSig(s, hit);   // 信号（DB の更新85）
+    if (q('[data-sub]')) q('[data-sub]').onclick = () => subBuild(s, hit);   // 変電所（DB の更新89）
     if (q('[data-profc]')) profChart(q('[data-profc]'), segProf(s));
     if (q('[data-snowp]')) q('[data-snowp]').onclick = () => segSnow(s, () => { if (S.sel && S.sel.kind === 'seg' && S.sel.id === s.id) showSeg(s, hit); });   // 雪よけ（t108）
     if (q('[data-del]')) q('[data-del]').onclick = () => segDel(s);
