@@ -1553,6 +1553,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <input type="password" id="pass" autocomplete="current-password" placeholder="パスワード（ゲストは数字4けた）">
     <button class="btn main big" id="mailBtn" type="submit">ログイン</button>
     <button class="btn" id="signupBtn" type="button">はじめての人：このメールとパスワードで登録する</button>
+    <p class="small" style="margin:0;color:var(--lose)">パスワードは、ほかのサイト・アプリで使ったことのないものにして、強いパスワード（12文字以上で、英字の大文字・小文字・数字・記号をまぜる）にしてください。</p>
   </form>
   <div class="mailform" id="guestBox">
     <div class="oauth-or">または</div>
@@ -1561,6 +1562,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
       <input type="email" id="gMail" autocomplete="email" placeholder="メールアドレス（確認なし）">
       <input type="password" id="gPin" inputmode="numeric" maxlength="4" autocomplete="new-password" placeholder="パスワード（数字4けた）">
       <button class="btn main big" id="gStart" type="submit">ゲストではじめる</button>
+      <p class="muted small" style="margin:0">数字4けたは、ほかで使っている暗証番号（カード・スマホなど）にしないでください。</p>
     </form>
     <p class="muted small" style="margin:0">メールアドレスと数字4けたのパスワードを決めるだけで、すぐ遊べます（5,000 X つき。本登録すると さらに 105,000 X）。次からは、上の「ログイン」にそのメールと数字4けたを入れて入れます。</p>
     <p class="muted small" style="margin:0">ゲストは31日で消えます（5日間ログインしないと、その前に消えます）。消える前に本登録（メールの確認）をすると、そのまま続けられます。確定申告をしたゲストは、申告した月ごとに1回、消える日を31日のばせます。ゲストのあいだは、所持金は40,000 Xまで・賭け金は1回100 Xまで・送金は5日間で2,000 Xまでです（はじめて7日は送金できません）。</p>
@@ -1982,6 +1984,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <h3 style="margin-top:0">パスワード</h3>
     <div class="row"><input id="newPass" type="password" autocomplete="new-password" minlength="6" placeholder="新しいパスワード（6文字以上）" class="grow" style="padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg)"><button class="btn main" id="passSave">決める</button></div>
     <p class="muted small" style="margin:6px 0 0">パスワードを決めると、次からはメールを待たずにログインできます。</p>
+    <p class="small" style="margin:4px 0 0;color:var(--lose)">パスワードは、ほかのサイト・アプリで使ったことのないものにして、強いパスワード（12文字以上で、英字の大文字・小文字・数字・記号をまぜる）にしてください。</p>
   </div>
   <div class="card" data-sub="hist"><h3 style="margin-top:0">収支グラフ</h3>
     <p class="muted small" style="margin:-4px 0 6px">所持金の出入りを1日ごとに（上が入ったお金、下が出たお金、線は差し引き）。グラフをさわると、その日の数字が出ます。</p>
@@ -2409,7 +2412,7 @@ async function enter() {
     ME = p; ME.prefs = p.prefs || {}; guestUI(); lookFromServer(); setBal(p.balance); $('#nick').value = p.nickname; setTaxDot(p.tax);
     if ((p.role || p.event) && !MENU_OF.vMore[3].some(x => x[0] === 'admin')) MENU_OF.vMore[3].push(['admin', '管理']);
     if (p.role === 'admin' && !MENU_OF.vMore[3].some(x => x[0] === 'users')) MENU_OF.vMore[3].push(['users', '登録者']);   // 登録者の情報は管理者だけ
-    if (p.role === 'admin') $('#auQ').placeholder = 'ID・ニックネーム・メールで検索'; else { const db = $('#auF [data-k="debt"]'); if (db) db.remove(); }
+    if (p.role === 'admin') $('#auQ').placeholder = 'ID・ニックネームで検索（メールはアドレスまるごと）'; else { const db = $('#auF [data-k="debt"]'); if (db) db.remove(); }
   } catch (e) {
     if (/もうありません/.test(e.message) && sb) { try { sessionStorage.setItem('gone', '1'); } catch (x) {} await sb.auth.signOut({ scope: 'local' }); location.reload(); return; }
     toast(e.message); show('vLogin'); entered = false; return;
@@ -5181,7 +5184,7 @@ function stCmpDraw() {
    役所 → ヘルプ（t62）：遊び方・やり方（help/help.json。README からつくる）。さがせる（題・中身・ことば。ひらがな・カタカナ・全角半角は同じに）
    役所 → 意見箱（t62）：運営への問い合わせ（support_open）に「【意見箱】」の件名で送る
    ================================================================= */
-const HELP_V = '239549bc';
+const HELP_V = 'a36ea0d6';
 const HP = { d: null, cat: 'start', q: '' };
 const hpNorm = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
 async function helpLoad() {
@@ -8922,7 +8925,7 @@ async function auOpen(uid) {
       ${d.guest ? `<span>ゲスト</span><b>${d.guest}に消える</b>` : ''}
       <span>登録</span><b>${d.joined}</b>
       <span>最後にサイトを開いた</span><b>${d.seen || '—'}</b>
-      ${adm ? `<span>メール</span><b style="user-select:all;word-break:break-all">${esc(d.email || '—')}</b><span>最後のログイン</span><b>${d.last_sign_in || '—'}</b>
+      ${adm ? `<span>メール</span><b style="word-break:break-all"><span data-mailv>${esc(d.email || '—')}</span>${'mail_views' in d && d.email ? ' <button class="btn s" data-mailshow style="margin-left:4px">表示</button>' : ''}</b><span>最後のログイン</span><b>${d.last_sign_in || '—'}</b>
         <span>ログインのしかた</span><b>${(d.providers || []).map(x => ({ email: 'メール', google: 'Google', discord: 'Discord' }[x] || esc(x))).join('・') || '—'}</b>` : ''}
       <span>メールの認証</span><b>${d.mail_at ? d.mail_at + (d.mail_ok ? '' : '（期限切れ）') : 'まだ'}</b>
       <span>オレンジのチェック</span><b>${d.badge && d.badge.ok ? 'あり' : 'なし'}</b>
@@ -8942,10 +8945,17 @@ async function auOpen(uid) {
     <h4 style="margin:14px 0 4px">勤め先</h4>
     ${d.jobs.map(j => `<div class="line"><span class="grow">${esc(j.name)}・${esc(j.role)}${j.desk ? '（窓口担当）' : ''}</span></div>`).join('') || '<p class="muted small" style="margin:0">なし</p>'}
     <div class="row" style="margin-top:12px"><button class="btn s" data-person="${d.uid}">この人のページ</button></div>
-    <p class="muted small" style="margin:8px 0 0">所持金は出しません${adm ? '' : '。メールアドレスと税のことは管理者だけに見えます'}。</p></div>`;
+    ${adm && (d.mail_views || []).length ? `<h4 style="margin:14px 0 4px">メールアドレスを表示した記録</h4>${d.mail_views.map(v => `<div class="line"><span class="grow small">${esc(v[0])}・${esc(v[1])}<br><span class="muted">${esc(v[2])}</span></span></div>`).join('')}` : ''}
+    <p class="muted small" style="margin:8px 0 0">所持金は出しません${adm ? '。メールアドレスは伏せ字です（「表示」は理由を書くと見られます。記録にのこります）' : '。メールアドレスと税のことは管理者だけに見えます'}。</p></div>`;
   m.onclick = ev => { if (ev.target === m || ev.target.hasAttribute('data-x')) m.remove(); };
   document.body.appendChild(m);
   m.querySelectorAll('[data-cid3]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid3));
+  const ms = m.querySelector('[data-mailshow]');   // メールを表示（DB の更新83）：理由を書く・記録にのこる
+  if (ms) ms.onclick = async () => {
+    const why = prompt('メールアドレスを表示する理由（記録にのこります）', ''); if (why == null) return;
+    try { const r = await call('admin_user_email', { p_uid: d.uid, p_why: why }); m.querySelector('[data-mailv]').textContent = r.email || '—'; ms.remove(); toast('表示しました（記録にのこります）'); }
+    catch (e) { toast(e.message); }
+  };
 }
 
 /* =================================================================

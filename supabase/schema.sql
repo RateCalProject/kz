@@ -10477,8 +10477,43 @@ end $$;
 
 -- ---------------------------------------------------------------------
 -- 管理：登録した人の一覧（管理者・副管理者）
---   所持金は出さない。メールアドレス・税の滞納・脱税は管理者だけ
+--   所持金は出さない。メールアドレス（伏せ字。DB の更新83）・税の滞納・脱税は管理者だけ
 -- ---------------------------------------------------------------------
+
+create table if not exists public.admin_mail_views (   -- 管理者が登録者のメールアドレスを表示した記録（DB の更新83）
+  id     bigserial primary key,
+  admin  uuid references public.profiles(id) on delete set null,
+  target uuid references public.profiles(id) on delete cascade,
+  why    text not null,
+  at     timestamptz not null default now()
+);
+create index if not exists admin_mail_views_target on public.admin_mail_views (target, at desc);
+alter table public.admin_mail_views enable row level security;
+revoke all on public.admin_mail_views from public, anon, authenticated;
+revoke all on sequence public.admin_mail_views_id_seq from public, anon, authenticated;
+
+-- メールアドレスの伏せ字（DB の更新83）：はじめの2文字（短ければ1文字）と、ドメインのはじめの1文字・さいごの「.○○」だけ（例 ab•••@g•••.com）
+create or replace function public._mail_mask(e text) returns text
+language sql immutable as $$
+  select case when e is null or e = '' then e
+              when position('@' in e) = 0 then left(e, 1) || '•••'
+              else left(split_part(e, '@', 1), case when length(split_part(e, '@', 1)) <= 2 then 1 else 2 end) || '•••@'
+                   || left(split_part(e, '@', 2), 1) || '•••'
+                   || case when position('.' in split_part(e, '@', 2)) > 0 then '.' || reverse(split_part(reverse(split_part(e, '@', 2)), '.', 1)) else '' end end
+$$;
+-- 登録者のメールアドレスを表示する（管理者だけ。DB の更新83）：理由（4〜200文字）を書くと表示して、記録にのこす
+create or replace function public.admin_user_email(p_uid text, p_why text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); p profiles; w text := btrim(coalesce(p_why, '')); e text;
+begin
+  if _role(u) is distinct from 'admin' then raise exception 'メールアドレスを見られるのは管理者だけです'; end if;
+  if char_length(w) < 4 or char_length(w) > 200 then raise exception '表示する理由を書いてください（4〜200文字。記録にのこります）'; end if;
+  select * into p from profiles where account_no = btrim(coalesce(p_uid, ''));
+  if not found then raise exception 'その人は見つかりません'; end if;
+  select to_jsonb(a) ->> 'email' into e from auth.users a where a.id = p.id;
+  insert into admin_mail_views(admin, target, why) values (u, p.id, w);
+  return jsonb_build_object('email', e);
+end $$;
 
 create or replace function public._user_row(p public.profiles, adm boolean) returns jsonb
 language sql stable set search_path = public as $$
@@ -10486,7 +10521,7 @@ language sql stable set search_path = public as $$
     'joined', to_char(p.created_at at time zone 'Asia/Tokyo', 'YYYY/MM/DD HH24:MI'),
     'seen', case when p.last_seen_at is null then null else to_char(p.last_seen_at at time zone 'Asia/Tokyo', 'YYYY/MM/DD HH24:MI') end,
     'mail_at', case when p.mail_verified_at is null then null else to_char(p.mail_verified_at at time zone 'Asia/Tokyo', 'YYYY/MM/DD') end,
-    'email', case when adm then (select to_jsonb(a)->>'email' from auth.users a where a.id = p.id) end,
+    'email', case when adm then _mail_mask((select to_jsonb(a)->>'email' from auth.users a where a.id = p.id)) end,   -- 管理者にも伏せ字（DB の更新83。見るときは admin_user_email）
     'banned_until', case when p.banned_until > _now() then to_char(p.banned_until at time zone 'Asia/Tokyo', 'YYYY/MM/DD HH24:MI') end,
     'debt', case when adm then _debt(p.id) > 0 end,
     'new', _now() < p.created_at + interval '7 days',
@@ -10505,7 +10540,7 @@ begin
   select array_agg(z.id order by z.created_at desc, z.id), count(*) into ids, n from (
     select p.id, p.created_at from profiles p
      where p.ai is null and (q = '' or p.account_no = q or p.nickname ilike '%' || q || '%'
-            or (adm and q like '%@%' and exists (select 1 from auth.users a where a.id = p.id and to_jsonb(a)->>'email' ilike '%' || q || '%')))
+            or (adm and q like '%@%' and exists (select 1 from auth.users a where a.id = p.id and lower(to_jsonb(a)->>'email') = lower(q))))   -- メールは、まるごと同じときだけ（DB の更新83）
        and case f when 'new' then p.created_at > _now() - interval '7 days'
                   when 'banned' then coalesce(p.banned_until > _now(), false)
                   when 'debt' then _debt(p.id) > 0
@@ -10549,7 +10584,10 @@ begin
     'posts', (select count(*) from posts where user_id = p.id),
     'pubs', (select count(*) from pubs where author = p.id and status <> 'deleted'),
     'desk', (select count(*) from desk_threads where user_id = p.id),
-    'last_play', (select to_char(max(created_at) at time zone 'Asia/Tokyo', 'YYYY/MM/DD HH24:MI') from tx_log where user_id = p.id));
+    'last_play', (select to_char(max(created_at) at time zone 'Asia/Tokyo', 'YYYY/MM/DD HH24:MI') from tx_log where user_id = p.id),
+    -- メールアドレスを表示した記録（新しい10こ。DB の更新83）：[日時, 表示した管理者, 理由]
+    'mail_views', case when adm then (select coalesce(jsonb_agg(jsonb_build_array(to_char(v.at at time zone 'Asia/Tokyo', 'YYYY/MM/DD HH24:MI'), coalesce(q.nickname, '—'), v.why) order by v.at desc), '[]'::jsonb)
+                                       from (select * from admin_mail_views x where x.target = p.id order by x.at desc limit 10) v left join profiles q on q.id = v.admin) end);
 end $$;
 
 -- ---------------------------------------------------------------------
@@ -31312,7 +31350,7 @@ begin
             '_kb_hit','_kb_settle','_kb_month','_kb_seed','_kb_tick','_kb_status','_kb_scratch','_kb_margin',
             '_ind_norm','corp_set_industries','_srv_norm','corp_set_servers','admin_corp_servers_clear',
             '_desk_staff','_desk_json','_desk_people','_desk_unread','desk_thread','desk_open','desk_send','desk_close','desk_list',
-            'desk_settings','corp_member_desk','_user_row','admin_users','admin_user',
+            'desk_settings','corp_member_desk','_user_row','admin_users','admin_user','_mail_mask','admin_user_email',
             '_holdings','_stock_exch','_stock_market','_stock_list','_stock_cancel_order','_stock_delist','stock_list','stock_state',
             '_stock_width','_jday_start','_stock_base','_stock_band','_stock_day','_tnow','info_today','_stock_exec','stock_chart','home_widgets',
             '_ai_uid','_randn','_ai_name','_ai_account','_ai_fund','_ai_hire','_ai_ceo','_ai_stock_value','_ai_fair','_ai_article','_ai_event',
