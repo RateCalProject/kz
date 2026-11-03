@@ -18188,6 +18188,29 @@ insert into public.mp_types(code, series, label, role, face, num_from, num_to, l
   ('TENP-Suro56', 'TENP', 'スロ56', 'P', '', 1, 999, 20.0, 48, 48, 37.0, 0, 0, false, 95, null, 3.0, false, true, false, true, 45000000, 10000, 365, '特別2等車（1950年代）。リクライニングシート。18系の急行にもよくつないだ', 3870, 'スロ56', 'G', 0, '{}', 1),
   ('TENP-Suro58', 'TENP', 'スロ58', 'P', '', 1, 999, 20.0, 44, 44, 37.0, 0, 0, false, 95, null, 3.0, false, true, false, true, 42000000, 10000, 365, '特別2等車（1950年）。リクライニングシートの客車', 3880, 'スロ58', 'G', 0, '{}', 1)
 on conflict (code) do nothing;
+-- 車両の電化方式（DB の更新87）：走れる方式のしるし（1 直流・2 交流50Hz・4 交流60Hz を足したもの）。電化のいらない車は見ない
+alter table public.mp_types add column if not exists ps smallint not null default 1;
+update public.mp_types set ps = 7 where series in ('E178', 'E378') and ps = 1;   -- 178系・378系は交直流（直流・交流50Hz・60Hz）
+-- 交流・交直流の車両（DB の更新87。名前とコードは架空）
+insert into public.mp_series(code, name, kind, note, ord, grp, yr, sets) values
+  ('E772', '772系', 'emu', '交流近郊形電車（2000年代・VVVF）。交流 50Hz・60Hz のどちらの線も走れる（直流の線は走れない）。最高120km/h・セミクロスシート・冷房。Mpc77200（運転台・パンタグラフ）が先頭', 25, null, 2004,
+   '[{"n":"2両","t":["E772-Mpc77200","E772-Tc77200"]},{"n":"4両","t":["E772-Mpc77200","E772-T77200","E772-Mp77200","E772-Tc77200"]}]'::jsonb),
+  ('E462', '462系', 'emu', '交直流近郊形電車（1980年代）。直流・交流50Hz・交流60Hz のどの線も走れる。最高100km/h・セミクロスシート・冷房・トイレ。Mp46200（パンタグラフ・変圧器）と M46200 で1組', 26, null, 1986,
+   '[{"n":"4両","t":["E462-Tc46200","E462-Mp46200","E462-M46200","E462-Tc46200"]},{"n":"8両","t":["E462-Tc46200","E462-Mp46200","E462-M46200","E462-Tc46200","E462-Tc46200","E462-Mp46200","E462-M46200","E462-Tc46200"]}]'::jsonb),
+  ('LED96', 'ED96形', 'loco', '交流電気機関車（1,900kW）。交流 50Hz・60Hz の電化した線だけ（直流の線は走れない）。最高100km/h', 52, null, 1968, '[]'::jsonb),
+  ('LEF88', 'EF88形', 'loco', '交直流電気機関車（2,550kW）。直流・交流50Hz・交流60Hz のどの電化した線も走れる。最高110km/h', 53, null, 1978, '[]'::jsonb)
+on conflict (code) do nothing;
+insert into public.mp_types(code, series, label, role, face, num_from, num_to, len, cap, seats, mass, power, panto, cab, vmax, acc, dec, elec, heat, ac, toilet, price, upkeep, life, note, ord, nbase, cls, rooms, fn, npad, ps) values
+  ('E772-Mpc77200', 'E772', 'Mpc77200', 'Mp', '', 1, 999, 20.0, 130, 50, 40.0, 920, 1, true, 120, 2.2, 4.2, true, true, true, false, 125000000, 23000, 365, '制御電動車（運転台・パンタグラフ・変圧器・VVVF 230kW×4）。0001〜', 3500, '772', '', 0, '{}', 4, 6),
+  ('E772-Mp77200', 'E772', 'Mp77200', 'Mp', '', 2001, 2999, 20.0, 140, 54, 39.0, 920, 1, false, 120, 2.2, 4.2, true, true, true, false, 115000000, 22000, 365, '電動車（パンタグラフ・変圧器・VVVF 230kW×4）。2001〜', 3510, '772', '', 0, '{}', 4, 6),
+  ('E772-T77200', 'E772', 'T77200', 'T', '', 8001, 8999, 20.0, 140, 54, 31.0, 0, 0, false, 120, 2.2, 4.2, true, true, true, false, 85000000, 17000, 365, '付随車。8001〜', 3520, '772', '', 0, '{}', 4, 6),
+  ('E772-Tc77200', 'E772', 'Tc77200', 'Tc', '', 5001, 5999, 20.0, 120, 46, 33.0, 0, 0, true, 120, 2.2, 4.2, true, true, true, true, 95000000, 18000, 365, '制御車（運転台・トイレ）。5001〜', 3530, '772', '', 0, '{}', 4, 6),
+  ('E462-Tc46200', 'E462', 'Tc46200', 'Tc', '', 1, 1999, 20.0, 120, 60, 34.0, 0, 0, true, 100, 2.0, 3.5, true, true, true, true, 80000000, 20000, 365, '制御車（運転台・トイレ）。0001〜', 3550, '462', '', 0, '{}', 4, 7),
+  ('E462-Mp46200', 'E462', 'Mp46200', 'Mp', '', 2001, 3999, 20.0, 140, 64, 48.0, 480, 1, false, 100, 2.0, 3.5, true, true, true, false, 95000000, 24000, 365, '電動車（パンタグラフ・変圧器・整流器・120kW×4。M46200 と1組）。2001〜', 3560, '462', '', 0, '{}', 4, 7),
+  ('E462-M46200', 'E462', 'M46200', 'M', '', 4001, 5999, 20.0, 140, 64, 44.0, 480, 0, false, 100, 2.0, 3.5, true, true, true, false, 88000000, 22000, 365, '電動車（制御器・120kW×4。Mp46200 と1組）。4001〜', 3570, '462', '', 0, '{}', 4, 7),
+  ('LED96-ED96', 'LED96', 'ED96', 'L', '', 1, 499, 14.3, 0, 0, 67.2, 1900, 1, true, 100, 1.5, 3.0, true, true, false, false, 230000000, 46000, 365, '交流電気機関車（50Hz・60Hz 両用）。最高100km/h', 3600, 'ED96', '', 0, '{}', 1, 6),
+  ('LEF88-EF88', 'LEF88', 'EF88', 'L', '', 1, 499, 18.6, 0, 0, 100.8, 2550, 2, true, 110, 1.5, 3.0, true, true, false, false, 310000000, 58000, 365, '交直流電気機関車（直流・交流50Hz・60Hz）。最高110km/h・寝台特急の客車もひける', 3610, 'EF88', '', 0, '{}', 1, 7)
+on conflict (code) do nothing;
 
 -- 蒸気機関車（DB の更新78。名前は架空）：小形タンク機・古い小形機・旅客用・貨物用・大形の急行用。水と石炭は、給水・給炭できる駅で補給する
 insert into public.mp_series(code, name, kind, note, ord, grp, yr, sets) values
@@ -18741,7 +18764,8 @@ begin
                   || case when s.rack then jsonb_build_object('rk', 1) else '{}'::jsonb end || case when s.hm is not null then jsonb_build_object('hm', s.hm) else '{}'::jsonb end
                   || case when s.hopt is not null then jsonb_build_object('ho', s.hopt) else '{}'::jsonb end   -- 高さの数値（DB の更新84）
                   || case when s.sig > 0 then jsonb_build_object('sg', s.sig) else '{}'::jsonb end   -- 信号の段（DB の更新85）
-                  || case when s.quad then jsonb_build_object('q', 1) else '{}'::jsonb end), '[]'::jsonb)   -- 複々線（DB の更新86）
+                  || case when s.quad then jsonb_build_object('q', 1) else '{}'::jsonb end   -- 複々線（DB の更新86）
+                  || case when s.elec and s.ps > 0 then jsonb_build_object('ps', s.ps) else '{}'::jsonb end), '[]'::jsonb)   -- 電化方式（DB の更新87）
                from mp_segs s where s.bb && b and (p_lod = 0 or s.kind = 'rail' or s.cls in ('exp', 'nat', 'pref') or (p_lod = 1 and s.art))
                  and (p_lod < 2 or s.kind = 'rail' or s.cls in ('exp', 'nat'))
                  and (p_lod < 3 or s.kind = 'rail' or s.cls = 'exp')),   -- lod 3（とても遠く。t108）：線路と高速だけ
@@ -18792,7 +18816,7 @@ begin
                union select distinct 'c:' || pa.own_c, (select name from companies where id = pa.own_c) from mp_parcels pa where p_lod = 0 and pa.own_c is not null and pa.bb && box(point(p_x0 * 5, p_y0 * 5), point(p_x1 * 5, p_y1 * 5))
                union select distinct 'u:' || s.own_u, (select nickname from profiles where id = s.own_u) from mp_segs s where s.own_u is not null and s.bb && b
                union select distinct 'c:' || s.own_c, (select name from companies where id = s.own_c) from mp_segs s where s.own_c is not null and s.bb && b) z where v is not null),
-    'ver', coalesce((select max(ver) from mp_changes), 0), 'snow', 1, 'hgt', 1, 'sup', 1, 'hgt2', 1, 'sig', 1, 'quad', 1) into r;   -- sup：給水・給炭のあるサーバー（DB の更新78）・hgt2：平坦・高さを決める・勾配の上限・駅の高さ（DB の更新84）・sig：信号の段（DB の更新85）・quad：複々線（DB の更新86）
+    'ver', coalesce((select max(ver) from mp_changes), 0), 'snow', 1, 'hgt', 1, 'sup', 1, 'hgt2', 1, 'sig', 1, 'quad', 1, 'pw', 1) into r;   -- sup：給水・給炭のあるサーバー（DB の更新78）・hgt2：平坦・高さを決める・勾配の上限・駅の高さ（DB の更新84）・sig：信号の段（DB の更新85）・quad：複々線（DB の更新86）・pw：電化方式（DB の更新87）
   return r;
 end $$;
 -- 変わったもの（共同編集）。なければ空。多すぎたら reload
@@ -18894,10 +18918,10 @@ begin
   insert into mp_nodes(kind, x, y, z) values (sg.kind, round(q.x * 100), round(q.y * 100), case when sg.prof is not null then _mp_pz(sg.prof, s) end) returning id into nid;   -- 高さ（t108）
   pa := _mp_sub(sg.pts, 0, s); pb := _mp_sub(sg.pts, s, sg.len);
   fa := _mp_prof_sub(sg.prof, 0, s); fb := _mp_prof_sub(sg.prof, s, sg.len);   -- 縦断（なければ null）
-  insert into mp_segs(kind, cls, name, own_u, own_c, gov, ctl, pts, bb, len, w, lanes, dbl, elec, vlim, n0, n1, net, art, cost, color, snowp, prof, st, rack, hm, hopt, sig, quad)
+  insert into mp_segs(kind, cls, name, own_u, own_c, gov, ctl, pts, bb, len, w, lanes, dbl, elec, vlim, n0, n1, net, art, cost, color, snowp, prof, st, rack, hm, hopt, sig, quad, ps)
   values (sg.kind, sg.cls, sg.name, sg.own_u, sg.own_c, sg.gov, null, pb, _mp_bb(pb), _mp_len(pb), sg.w, sg.lanes, sg.dbl, sg.elec,
           case when sg.kind = 'rail' then least(case when sg.rack then 30 else 300 end, _mp_vlim(_mp_minr(pb))) else sg.vlim end, nid, sg.n1, sg.net, sg.art, 0, sg.color,   -- color：路線カラーもそのまま（2026-10-29）
-          sg.snowp, fb, _mp_st_of(pb, fb), sg.rack, sg.hm, sg.hopt, sg.sig, sg.quad)   -- 雪よけ・高さ・アプト式もそのまま（t108）。高さの数値も（DB の更新84）・信号の段も（85）
+          sg.snowp, fb, _mp_st_of(pb, fb), sg.rack, sg.hm, sg.hopt, sg.sig, sg.quad, sg.ps)   -- 雪よけ・高さ・アプト式もそのまま（t108）。高さの数値も（DB の更新84）・信号の段も（85）
   returning id into bid;
   update mp_segs set pts = pa, ctl = null, bb = _mp_bb(pa), len = _mp_len(pa), vlim = case when kind = 'rail' then least(case when rack then 30 else 300 end, _mp_vlim(_mp_minr(pa))) else vlim end, n1 = nid,
                      prof = fa, st = _mp_st_of(pa, fa) where id = sid;
@@ -18967,6 +18991,7 @@ begin
   if not (x.own_u is not distinct from y.own_u and x.own_c is not distinct from y.own_c and x.gov = y.gov) then raise exception 'ほかの会社の線路にはつなげません'; end if;
   if x.dbl <> y.dbl or x.elec <> y.elec then raise exception '単線と複線、電化と非電化がかわるところは、またげません（線路の設定をそろえてください）'; end if;
   if x.rack <> y.rack then raise exception 'アプト式とそうでない線路のつなぎ目は、またげません（線路の高さの設定をそろえてください）'; end if;
+  if x.elec and x.ps <> y.ps then raise exception '電化方式がかわるところ（デッドセクション）は、またげません'; end if;   -- DB の更新87
   if x.quad <> y.quad then raise exception '複線と複々線がかわるところは、またげません（線路の設定をそろえてください）'; end if;   -- DB の更新86
   if x.sig <> y.sig then raise exception '信号のちがう線路のつなぎ目は、またげません（線路の信号をそろえてください）'; end if;   -- DB の更新85
   if x.name <> '' and y.name <> '' and x.name <> y.name then raise exception '名前のちがう線路のつなぎ目は、またげません（線路の名前をそろえてください）'; end if;
@@ -19062,7 +19087,7 @@ create or replace function public.mp_seg_build(p_kind text, p_cls text, p_ctl in
 language plpgsql security definer set search_path = public as $$
 #variable_conflict use_column
 declare u uuid := _me(); pa record; tiles int[]; ters text[]; ln real; rmin real; cost numeric := 0; i int; lq record; n0 bigint; n1 bigint; sid bigint;
-        dbl boolean := coalesce((p_opts ->> 'dbl')::boolean, false); quad boolean := coalesce((p_opts ->> 'quad')::boolean, false); elec boolean := coalesce((p_opts ->> 'elec')::boolean, false); nm text := left(coalesce(p_opts ->> 'name', ''), 30);
+        dbl boolean := coalesce((p_opts ->> 'dbl')::boolean, false); quad boolean := coalesce((p_opts ->> 'quad')::boolean, false); pws smallint := least(2, greatest(0, coalesce((p_opts ->> 'ps')::int, 0)))::smallint; elec boolean := coalesce((p_opts ->> 'elec')::boolean, false); nm text := left(coalesce(p_opts ->> 'name', ''), 30);
         cls text := coalesce(p_cls, 'priv'); base numeric; np int := array_length(p_pts, 1) / 2; bad text; ln_ int := (p_opts ->> 'lanes')::int; cells int[]; sw real; need jsonb;
         md text := coalesce(p_opts ->> 'hm', 'auto'); rk boolean := coalesce((p_opts ->> 'rack')::boolean, false); upf real[]; pr jsonb; pf real[]; z0 real; z1 real; ea real; eb real; vl int; nhm text; ho jsonb;
 begin
@@ -19129,10 +19154,10 @@ begin
   perform _mp_pay(pa.pu, pa.pc, pa.gv, cost::bigint, p_kind, format('%sの工事（%sm）', case when p_kind = 'rail' then '線路' else '道路' end, round(ln * 50)));
   n0 := _mp_end(p_kind, p_from, p_pts[1], p_pts[2], pa.pu, pa.pc, pa.gv);
   n1 := _mp_end(p_kind, p_to, p_pts[2 * np - 1], p_pts[2 * np], pa.pu, pa.pc, pa.gv);
-  insert into mp_segs(kind, cls, name, own_u, own_c, gov, ctl, pts, bb, len, w, lanes, dbl, elec, vlim, n0, n1, cost, prof, st, rack, hm, hopt, quad)
+  insert into mp_segs(kind, cls, name, own_u, own_c, gov, ctl, pts, bb, len, w, lanes, dbl, elec, vlim, n0, n1, cost, prof, st, rack, hm, hopt, quad, ps)
   values (p_kind, cls, nm, pa.pu, pa.pc, pa.gv, p_ctl, p_pts, _mp_bb(p_pts), ln,
           sw, ln_,
-          dbl, elec, vl, n0, n1, cost, pf, pr ->> 'st', rk, nhm, ho, quad)
+          dbl, elec, vl, n0, n1, cost, pf, pr ->> 'st', rk, nhm, ho, quad, case when elec then pws else 0 end)
   returning id into sid;
   update mp_nodes set z = pf[2] where id = n0 and z is null;   -- はしの点の高さ（つないだ先は同じ高さ）
   update mp_nodes set z = pf[array_length(pf, 1)] where id = n1 and z is null;
@@ -19281,12 +19306,13 @@ begin
        and ((case when pa.gv then s.gov else (not s.gov and s.own_u is not distinct from pa.pu and s.own_c is not distinct from pa.pc) end) or us.sid is not null)), '[]'::jsonb);
 end $$;
 -- 線の設定：複線・電化・名前・車線。複々線（DB の更新86）：p_quad（線路だけ。複々線は複線のうち。null は いまのまま）。
+--   電化方式（DB の更新87）：p_ps（0 直流・1 交流50Hz・2 交流60Hz。電化した線だけ。null は いまのまま）。方式を変えるのは 1マス 電化の 0.6倍。
 --   工事費は つくりの倍率 ×（新しい倍率 − いまの倍率。単線 1・複線 dbl_mul・複々線 dbl_mul × 1.7）。はばが広がるところは建物・他人の筆を見る。
---   複々線にする・やめると、通る系統の時刻（待避・続行）を計算しなおす
-create or replace function public.mp_seg_opts(p_id bigint, p_dbl boolean, p_elec boolean, p_name text, p_dry boolean, p_lanes int default null, p_quad boolean default null) returns jsonb
+--   複々線・電化方式を変えると、通る系統の時刻（待避・続行・走れるか）を計算しなおす
+create or replace function public.mp_seg_opts(p_id bigint, p_dbl boolean, p_elec boolean, p_name text, p_dry boolean, p_lanes int default null, p_quad boolean default null, p_ps int default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); sg mp_segs; me_cs int[]; ters text[]; amt_ numeric := 0; i int; base numeric; nl int; what text := ''; mul real[]; what2 text; wc int[]; need jsonb;
-        nq boolean; nd boolean; m0 numeric; m1 numeric; rid bigint;
+        nq boolean; nd boolean; m0 numeric; m1 numeric; rid bigint; ne boolean; nps smallint;   -- ne・nps：電化・電化方式（DB の更新87）
 begin
   perform _mp_ok(u);
   select * into sg from mp_segs where id = p_id for update;
@@ -19297,16 +19323,19 @@ begin
   if not sg.gov then mul := case when sg.st is null then _mp_cmuls(_mp_tiles(sg.pts), ters) else _mp_st_muls(sg.pts, ters, sg.st, sg.rack) end; end if;   -- 国の工事は無料（t57b）。縦断のある線は つくりの倍率（t108）
   nq := sg.kind = 'rail' and coalesce(p_quad, sg.quad);
   nd := sg.kind = 'rail' and (coalesce(p_dbl, sg.dbl) or nq);
+  ne := sg.kind = 'rail' and coalesce(p_elec, sg.elec);
+  nps := case when ne then least(2, greatest(0, coalesce(p_ps, sg.ps)))::smallint else sg.ps end;
   if sg.kind = 'rail' then
     base := _mp_rate('rail');
     m0 := _mp_trmul(sg.dbl, sg.quad); m1 := _mp_trmul(nd, nq);
     if not sg.gov then
       for i in 1..array_length(ters, 1) loop
         if m1 > m0 then amt_ := amt_ + base * mul[i] * (m1 - m0); end if;
-        if coalesce(p_elec, sg.elec) and not sg.elec then amt_ := amt_ + _mp_rate('elec'); end if;
+        if coalesce(p_elec, sg.elec) and not sg.elec then amt_ := amt_ + _mp_rate('elec');
+        elsif ne and sg.elec and nps <> sg.ps then amt_ := amt_ + _mp_rate('elec') * 0.6; end if;   -- 電化方式を変える（架線と変電の設備を取りかえる。DB の更新87）
       end loop;
     end if;
-    what := case when nq and not sg.quad then '複々線化' when nd and not sg.dbl then '複線化' else '' end || case when coalesce(p_elec, sg.elec) and not sg.elec then '電化' else '' end;
+    what := case when nq and not sg.quad then '複々線化' when nd and not sg.dbl then '複線化' else '' end || case when coalesce(p_elec, sg.elec) and not sg.elec then '電化' when ne and sg.elec and nps <> sg.ps then '電化方式の変更' else '' end;
     nl := sg.lanes;
   else
     nl := coalesce(p_lanes, sg.lanes);
@@ -19327,11 +19356,11 @@ begin
     -- 広げたところが他人の筆にかかるときは、貸出料があるか申請が許可されているときだけ
     need := _mp_land_need(wc, sg.own_u, sg.own_c, sg.gov, _mp_seg_cells_arr(sg.pts, sg.kind, sg.w, sg.dbl));
   end if;
-  if p_dry then return jsonb_build_object('cost', amt_, 'lanes', nl, 'need', need, 'quad', nq); end if;
+  if p_dry then return jsonb_build_object('cost', amt_, 'lanes', nl, 'need', need, 'quad', nq, 'ps', nps); end if;
   perform _mp_land_stop(need);
   if amt_ > 0 then perform _mp_pay(sg.own_u, sg.own_c, sg.gov, amt_::bigint, sg.kind, case when sg.kind = 'rail' then '線路の' else '道路の' end || what); end if;
   update mp_segs set dbl = case when kind = 'rail' then nd else false end, quad = case when kind = 'rail' then nq else false end,
-         elec = case when kind = 'rail' then coalesce(p_elec, elec) else false end,
+         elec = case when kind = 'rail' then coalesce(p_elec, elec) else false end, ps = nps,
          name = coalesce(left(p_name, 30), name),
          lanes = nl,
          w = case when kind = 'rail' then case when nq then 0.8 when nd then 0.5 else 0.36 end else _mp_road_w(cls, nl) end,
@@ -19340,14 +19369,14 @@ begin
    where id = p_id;
   perform _mp_lease_set('seg', p_id, sg.own_u, sg.own_c, sg.gov);
   if sg.kind = 'rail' then perform _mp_routes_fix(sg.own_u, sg.own_c); end if;
-  if sg.kind = 'rail' and nq is distinct from sg.quad then   -- 複々線：通る系統の待避・続行を計算しなおす（道すじは同じなので _mp_routes_fix ではしない）
+  if sg.kind = 'rail' and (nq is distinct from sg.quad or nps is distinct from sg.ps) then   -- 複々線・電化方式（DB の更新87）：通る系統の時刻を計算しなおす（道すじは同じなので _mp_routes_fix ではしない）
     for rid in select distinct ro.id from mp_routes ro, jsonb_array_elements(ro.legs) l, jsonb_array_elements(coalesce(l -> 'g', '[]'::jsonb)) g
                 where ro.kind = 'rail' and ro.ok and (g ->> 0)::bigint = p_id loop
       perform _mp_resched(rid);
     end loop;
   end if;
   perform _mp_chg('seg', p_id, 'set', sg.bb);
-  return jsonb_build_object('id', p_id, 'cost', amt_, 'lanes', nl, 'quad', nq);
+  return jsonb_build_object('id', p_id, 'cost', amt_, 'lanes', nl, 'quad', nq, 'ps', nps);
 end $$;
 -- 線を途中で分ける
 create or replace function public.mp_seg_split(p_id bigint, p_x real, p_y real) returns jsonb
@@ -19735,7 +19764,8 @@ begin
          count(*) filter (where t.fn && array['bag', 'mail']) xbag, bool_or('pow' = any(t.fn)) xpow,
          -- 機関車と客車の両数・蒸気機関車（水と石炭で走れる km。重連なら短いほう。DB の更新78）
          count(*) filter (where t.role = 'L') xnl, count(*) filter (where t.role = 'P') xnp,
-         min(t.wkm) filter (where 'stm' = any(t.fn)) xwkm, min(t.ckm) filter (where 'stm' = any(t.fn)) xckm
+         min(t.wkm) filter (where 'stm' = any(t.fn)) xwkm, min(t.ckm) filter (where 'stm' = any(t.fn)) xckm,
+         bit_and(t.ps::int) filter (where t.elec) xps   -- 走れる電化方式（電化のいる車ぜんぶが走れるもの。DB の更新87）
     into r from mp_cars c join mp_types t on t.code = c.type where c.form = fid;
   if r.n = 0 then return null; end if;
   rail := r.israil;
@@ -19748,7 +19778,7 @@ begin
     'ship', coalesce(r.isship, false), 'load', coalesce(r.load, 0), 'air', coalesce(r.isair, false), 'rwy', r.rwy)
     || jsonb_strip_nulls(jsonb_build_object('g', nullif(r.xg, 0), 'a', nullif(r.xa, 0), 'b', nullif(r.xb, 0), 'rooms', nullif(r.xrm, 0),
          'din', nullif(r.xdin, false), 'lng', nullif(r.xlng, false), 'obs', nullif(r.xobs, false), 'bag', nullif(r.xbag, 0), 'pow', nullif(r.xpow, false),
-         'nl', nullif(r.xnl, 0), 'np', nullif(r.xnp, 0), 'wkm', r.xwkm, 'ckm', r.xckm));
+         'nl', nullif(r.xnl, 0), 'np', nullif(r.xnp, 0), 'wkm', r.xwkm, 'ckm', r.xckm, 'ps', r.xps));
 end $$;
 -- 編成のきまりを見る（形式の列。先頭から順に。よければ null、だめならわけ）
 create or replace function public._mp_form_rule_x(tps text[], p_run boolean) returns text
@@ -20752,6 +20782,7 @@ language plpgsql set search_path = public as $$
 declare r mp_routes; perf jsonb; n int; ord int[]; i int; k int; t int; arr int; dep int; spec jsonb; sc jsonb := '[]'::jsonb; ws text[] := '{}';
         st mp_stations; lastStop int; run int; trk int; dw int; flen real; stop boolean;
         lq boolean[]; qx boolean;   -- 複々線（DB の更新86）
+        lpm int[]; ldz int[]; pneed int; pm int; dzp int := 6;   -- 電化方式・デッドセクション（DB の更新87）
         e jsonb; ci bigint; o mp_ops; cp jsonb; ka int; kb int; cx jsonb := '[]'::jsonb; cw text; nmax int; x jsonb; skipped bigint; k0 int; k1 int;
 begin
   select * into r from mp_routes where id = tr.route;
@@ -20767,6 +20798,14 @@ begin
   if perf is not null and r.kind = 'rail' and (perf ->> 'elec')::boolean and exists (select 1 from jsonb_array_elements(r.legs) with ordinality l(v, lo)
         where l.lo >= least(ord[k0], ord[k1]) and l.lo < greatest(ord[k0], ord[k1]) and not (l.v ->> 'e')::boolean) then   -- 走る区間だけ
     ws := ws || '電化していない区間があります（電車は走れません）'::text;
+  end if;
+  -- 電化方式（DB の更新87）：走る区間の方式を、編成が ぜんぶ走れるか
+  if perf is not null and r.kind = 'rail' and (perf ->> 'elec')::boolean then
+    lpm := _mp_leg_pm(r.legs); ldz := _mp_leg_dz(r.legs); pm := coalesce((perf ->> 'ps')::int, 1);
+    pneed := (select coalesce(bit_or(lpm[lo]), 0) from generate_series(least(ord[k0], ord[k1]), greatest(ord[k0], ord[k1]) - 1) lo);
+    if pneed & ~pm <> 0 then
+      ws := ws || format('%s の区間があります（この編成は %s だけ。走れません）', _mp_ps_names(pneed & ~pm), _mp_ps_names(pm));
+    end if;
   end if;
   -- 飛行機：滑走路の短い空港には離着陸できない（t54p）
   if perf is not null and r.kind = 'air' and coalesce((perf ->> 'rwy')::int, 0) > (select min(s.plat) from mp_stations s where s.id = any(r.stops)) then
@@ -20834,6 +20873,7 @@ begin
       if not stop then continue; end if;
       -- 前に止まった駅からここまで（通過駅をまとめて）
       run := _mp_leg_time(r, least(lastStop, i), greatest(lastStop, i), perf);
+      if ldz is not null then run := run + dzp * (select coalesce(sum(ldz[lo]), 0) from generate_series(least(lastStop, i), greatest(lastStop, i) - 1) lo)::int; end if;   -- デッドセクションは惰行で通る（1か所 6秒。DB の更新87）
       arr := t + run;
       if spec ? 'a' then
         if (spec ->> 'a')::int < arr then ws := ws || format('%s 着 %s は早すぎます（いちばん早くて %s）', st.name, _mp_hms((spec ->> 'a')::int), _mp_hms(arr));
@@ -22073,6 +22113,8 @@ begin
       end if;
       if r.kind = 'rail' and (perf ->> 'elec')::boolean and exists (select 1 from jsonb_array_elements(r.legs) with ordinality l(v, lo)
             where l.lo >= least(ia, ib) and l.lo < greatest(ia, ib) and not (l.v ->> 'e')::boolean) then continue; end if;
+      if r.kind = 'rail' and (perf ->> 'elec')::boolean and (select coalesce(bit_or(x.m), 0) from unnest(_mp_leg_pm(r.legs)) with ordinality x(m, lo)
+            where x.lo >= least(ia, ib) and x.lo < greatest(ia, ib)) & ~coalesce((perf ->> 'ps')::int, 1) <> 0 then continue; end if;   -- 電化方式がちがう区間は走れない（DB の更新87）
       if r.kind = 'air' and coalesce((perf ->> 'rwy')::int, 0) > (select min(s.plat) from mp_stations s where s.id = any(r.stops)) then continue; end if;   -- 滑走路（t54p）
       if r.kind = 'air' and tr.noslot is not null then continue; end if;   -- 発着口が足りない便は飛ばない（t57）
       ev := null; orf := null;
@@ -22587,6 +22629,34 @@ language sql stable set search_path = public as $$
   select coalesce(array_agg(coalesce((select bool_and(s.quad) from jsonb_array_elements(coalesce(l -> 'g', '[]'::jsonb)) g join mp_segs s on s.id = (g ->> 0)::bigint), false) order by k), '{}')
     from jsonb_array_elements(coalesce(legs, '[]'::jsonb)) with ordinality q(l, k)
 $$;
+-- 電化方式の名前（DB の更新87）：しるし（1 直流・2 交流50Hz・4 交流60Hz）を「直流・交流50Hz」のように
+create or replace function public._mp_ps_names(m int) returns text
+language sql immutable as $$
+  select coalesce(nullif(concat_ws('・', case when m & 1 <> 0 then '直流' end, case when m & 2 <> 0 then '交流50Hz' end, case when m & 4 <> 0 then '交流60Hz' end), ''), 'なし')
+$$;
+-- 系統の駅と駅のあいだ（legs）ごとの電化方式のしるし（電化した線の方式を足したもの。電化した線がなければ 0。DB の更新87）
+create or replace function public._mp_leg_pm(legs jsonb) returns int[]
+language sql stable set search_path = public as $$
+  select coalesce(array_agg(coalesce((select bit_or(case when s.elec then 1 << s.ps::int else 0 end) from jsonb_array_elements(coalesce(l -> 'g', '[]'::jsonb)) g join mp_segs s on s.id = (g ->> 0)::bigint), 0) order by k), '{}')
+    from jsonb_array_elements(coalesce(legs, '[]'::jsonb)) with ordinality q(l, k)
+$$;
+-- 系統の駅と駅のあいだごとのデッドセクションの数（電化した線どうしで、方式がかわるところ。前の駅のあいだの最後の線とのさかいも、うしろのほうに数える。DB の更新87）
+create or replace function public._mp_leg_dz(legs jsonb) returns int[]
+language plpgsql stable set search_path = public as $$
+declare out int[] := '{}'; l jsonb; g jsonb; s record; prev int := null; n int;
+begin
+  for l in select v from jsonb_array_elements(coalesce(legs, '[]'::jsonb)) v loop
+    n := 0;
+    for g in select v from jsonb_array_elements(coalesce(l -> 'g', '[]'::jsonb)) v loop
+      select x.elec, x.ps into s from mp_segs x where x.id = (g ->> 0)::bigint;
+      if not found or not s.elec then prev := null; continue; end if;
+      if prev is not null and prev <> s.ps then n := n + 1; end if;
+      prev := s.ps;
+    end loop;
+    out := out || n;
+  end loop;
+  return out;
+end $$;
 -- 線（pts：1/100 マス）から r（区画）以内に中心がある区画
 create or replace function public._mp_line_cells(p int[], r real) returns table (x int, y int)
 language sql immutable as $$
@@ -29897,6 +29967,7 @@ alter table public.mp_segs add column if not exists hm text;       -- 高さの�
 alter table public.mp_segs add column if not exists hopt jsonb;   -- 高さのえらびかたの数値（DB の更新84）：{zt: 高さ m, zr: 地面から, gm: 勾配の上限 ‰}
 alter table public.mp_segs add column if not exists sig smallint not null default 0;   -- 信号の段（DB の更新85）：0 自動閉塞（ふつう）・1 ATC（車内信号）・2 移動閉塞
 alter table public.mp_segs add column if not exists quad boolean not null default false;   -- 複々線（DB の更新86）：複線が2つ（急行線と緩行線）。複々線なら dbl も true
+alter table public.mp_segs add column if not exists ps smallint not null default 0;   -- 電化方式（DB の更新87）：0 直流1500V・1 交流20kV 50Hz・2 交流20kV 60Hz（電化した線だけ）
 alter table public.mp_nodes add column if not exists z real;       -- 点の高さ（m）。null は地面
 
 -- 地面の高さ（m。海・川・湖は 0）
@@ -31800,7 +31871,7 @@ begin
             'mp_sta_build','mp_sta_edit','mp_sta_resize','mp_sta_trk','mp_sta_trk_set','mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list',
             'mp_thru_req','mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market',
             'mp_unit_mine','mp_unit_own','mp_unit_set','mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer','mp_unko_list','mp_unko_pick','mp_unko_furi','mp_unko_make','mp_jam_now','mp_jam_list','mp_er_now','mp_er_list','mp_er_bld','mp_lic_find','mp_lic_at','mp_lic_apply','_mp_lic_pfee_of','_mp_lic_pfee','_mp_lic_have','_mp_lic_mfee','mp_lic_mine','mp_lic_cancel','mp_lic_review','mp_lic_decide',
-            'mp_sta_melt','mp_seg_snow','mp_dep_plow','mp_snow_mine','mp_seg_height','_mp_taut','_mp_prof_flat','_mp_prof_simp','_mp_hopt','_mp_prof_make2','mp_sta_height','_mp_clr_stop2','_mp_clr_pass2','_mp_leg_sig','mp_seg_sig','_mp_trmul','_mp_leg_quad',
+            'mp_sta_melt','mp_seg_snow','mp_dep_plow','mp_snow_mine','mp_seg_height','_mp_taut','_mp_prof_flat','_mp_prof_simp','_mp_hopt','_mp_prof_make2','mp_sta_height','_mp_clr_stop2','_mp_clr_pass2','_mp_leg_sig','mp_seg_sig','_mp_trmul','_mp_leg_quad','_mp_ps_names','_mp_leg_pm','_mp_leg_dz',
             '_mp_form_busy','_mp_form_runs','_mp_cxl_on','_mp_unko_zone','_mp_unko_zi','_mp_unko_zt','_mp_unko_rt','_mp_sched_idx','_mp_unko_trn','_mp_rail_path_x','_mp_unko_det','mp_cxl_add','mp_cxl_del','_mp_form_key','_mp_train_runs','_mp_subst_can','_mp_subst_pick','_mp_subst_has','_mp_subst_ok','_mp_subst_plan','_mp_subst_plan_all','_mp_tmp_back','mp_form_spare','mp_form_add','mp_car_tmp') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then

@@ -515,6 +515,7 @@ function prepArea(d) {
   if (d.hgt2) S.hgt2 = true;     // 平坦・高さを決める・勾配の上限・駅の高さ（DB の更新84）のあるサーバー
   if (d.sig) S.sigOK = true;     // 信号の段（DB の更新85）のあるサーバー
   if (d.quad) S.quadOK = true;   // 複々線（DB の更新86）のあるサーバー
+  if (d.pw) S.pwOK = true;       // 電化方式（DB の更新87）のあるサーバー
   for (const s of d.segs) prepSeg(s);
   for (const s of d.stas) { s.fx = s.x / 100; s.fy = s.y / 100; }
   for (const s of d.deps) { s.fx = s.x / 100; s.fy = s.y / 100; }
@@ -819,6 +820,7 @@ function render() {
     if (s.k === 'rail') { if (S.layer.track) segParts(s, 'VB', () => trackMark(g, s, z)); segParts(s, 'VB', () => drawRail(g, s, z)); }
     else { roadPass(s, 'VB'); if (asph && s.l) segParts(s, 'VB', () => laneMarks(g, s, z)); }
   }
+  if (S.pwOK && z >= 2) drawDeadSecs(g, rails, z);   // デッドセクション（DB の更新87）
   // 航路（海の上の点線。t54o）
   drawLanes(g, it, z);
   // 高速（高架なので上に。高さを決めた高速は、トンネルのところをのぞく）
@@ -993,6 +995,32 @@ function drawUpShadow(g, s, z, w) {
     for (const o of [off, -off]) { pathSeg(g, s, o); g.stroke(); }
   }
   g.lineCap = 'round';
+}
+// 電化方式（DB の更新87）：0 直流・1 交流50Hz・2 交流60Hz
+const PS_N = ['直流', '交流50Hz', '交流60Hz'];
+// デッドセクション（DB の更新87）：電化した線路どうしで、方式のちがう線がつながる点に、黄と黒のしるし
+function drawDeadSecs(g, rails, z) {
+  const at = new Map();
+  for (const s of rails) {
+    if (!s.el || !s.P || s.np < 2) continue;
+    const ends = [[s.n0, s.P[0], s.P[1], s.P[2], s.P[3]], [s.n1, s.P[2 * s.np - 2], s.P[2 * s.np - 1], s.P[2 * s.np - 4], s.P[2 * s.np - 3]]];
+    for (const [n, x, y, x2, y2] of ends) {
+      if (n == null) continue;
+      let e = at.get(n); if (!e) at.set(n, e = { x, y, a: Math.atan2(y2 - y, x2 - x), ps: new Set() });
+      e.ps.add(s.ps || 0);
+    }
+  }
+  const r = Math.max(6, 0.45 * z);
+  for (const e of at.values()) {
+    if (e.ps.size < 2) continue;
+    g.save(); g.translate(sx(e.x), sy(e.y)); g.rotate(e.a + Math.PI / 2);
+    g.fillStyle = '#ffd400'; g.strokeStyle = '#111'; g.lineWidth = 1.5;
+    g.fillRect(-r, -r * 0.35, 2 * r, r * 0.7); g.strokeRect(-r, -r * 0.35, 2 * r, r * 0.7);
+    g.fillStyle = '#111'; for (let k = -1; k <= 1; k += 2) g.fillRect(k * r * 0.5 - r * 0.12, -r * 0.35, r * 0.24, r * 0.7);
+    g.restore();
+    if (z >= 12) { g.font = 'bold 11px system-ui, sans-serif'; g.textAlign = 'center'; g.fillStyle = '#111'; g.strokeStyle = 'rgba(255,255,255,.9)'; g.lineWidth = 3;
+      g.strokeText(T('デッドセクション'), sx(e.x), sy(e.y) - r - 6); g.fillText(T('デッドセクション'), sx(e.x), sy(e.y) - r - 6); }
+  }
 }
 function drawRail(g, s, z) {
   const mine = s.mine, col = s.col && /^#[0-9a-f]{6}$/i.test(s.col) ? s.col : null;   // 路線カラー（2026-10-29）
@@ -3432,7 +3460,7 @@ function showSeg(s, hit) {
   sheet(`<h4><span data-cls>${esc(CLS_NAME[s.c] || s.c)}</span>${s.n ? `・<span>${esc(s.n)}</span>` : ''}</h4><p class="small muted" data-addr translate="no" style="margin:0"></p>
     <div class="mp-kv"><b>持ち主</b><span><span>${esc(own)}</span>${s.mine && s.o !== 'gov' ? '<small>（あなた）</small>' : ''}</span>
       <b>長さ</b><span>${fmt(Math.round(s.len * 50))} m</span>
-      ${s.k === 'road' ? `<b>車線</b><span>${s.l ? '片側' + s.l + '車線' : '中央線なし'}</span>` : `<b>線路</b><span>${s.q ? '複々線' : s.dbl ? '複線' : '単線'}・${s.el ? '電化' : '非電化'}</span>`}
+      ${s.k === 'road' ? `<b>車線</b><span>${s.l ? '片側' + s.l + '車線' : '中央線なし'}</span>` : `<b>線路</b><span>${s.q ? '複々線' : s.dbl ? '複線' : '単線'}・${s.el ? (S.pwOK ? `電化（${PS_N[s.ps || 0]}）` : '電化') : '非電化'}</span>`}
       ${s.k === 'rail' && s.col ? `<b>路線カラー</b><span><span style="display:inline-block;width:2.2em;height:.8em;border-radius:3px;vertical-align:middle;background:${esc(s.col)}"></span></span>` : ''}
       <b>制限速度</b><span data-spd><span>${s.v} km/h</span></span>${segSnowRow(s)}
       ${s.k === 'rail' && S.sigOK ? `<b>信号</b><span>${SIG_N[s.sg || 0]}</span>` : ''}
@@ -3515,9 +3543,9 @@ async function addrInto(x, y, still) {   // x, y：マス（50m）の座標。�
   return d;
 }
 function segOpts(s) {
-  const st = { dbl: s.dbl, qd: !!s.q, el: s.el, l: s.l, name: s.n || '', q: null, quoting: false, seq: 0, col: s.col || null, rts: null, same: 0, sc: 'one' };   // qd：複々線（DB の更新86）
-  const same = () => st.dbl === s.dbl && st.qd === !!s.q && st.el === s.el && st.l === s.l;   // 名前だけ
-  const oa = dry => ({ p_id: s.id, p_dbl: st.dbl, p_elec: st.el, p_name: st.name, p_dry: dry, p_lanes: st.l, ...(S.quadOK && s.k === 'rail' ? { p_quad: st.qd } : {}) });
+  const st = { dbl: s.dbl, qd: !!s.q, ps: s.ps || 0, el: s.el, l: s.l, name: s.n || '', q: null, quoting: false, seq: 0, col: s.col || null, rts: null, same: 0, sc: 'one' };   // qd：複々線（DB の更新86）
+  const same = () => st.dbl === s.dbl && st.qd === !!s.q && st.el === s.el && st.l === s.l && (!st.el || st.ps === (s.ps || 0));   // 名前だけ
+  const oa = dry => ({ p_id: s.id, p_dbl: st.dbl, p_elec: st.el, p_name: st.name, p_dry: dry, p_lanes: st.l, ...(S.quadOK && s.k === 'rail' ? { p_quad: st.qd } : {}), ...(S.pwOK && s.k === 'rail' ? { p_ps: st.ps } : {}) });
   const quote = async () => {
     const my = ++st.seq; st.quoting = true; draw();
     const q = await api('mp_seg_opts', oa(true));
@@ -3529,7 +3557,8 @@ function segOpts(s) {
     const q = st.q;
     sheet(`<h4 data-segopt="${s.id}">${s.k === 'rail' ? '線路' : '道路'}の設定</h4>
       ${s.k === 'rail' ? `<div class="mp-row"><span class="mp-seg"><button data-d="0" class="${!st.dbl ? 'on' : ''}">単線</button><button data-d="1" class="${st.dbl && !st.qd ? 'on' : ''}">複線</button>${S.quadOK ? `<button data-d="2" class="${st.qd ? 'on' : ''}">複々線</button>` : ''}</span>
-        <span class="mp-seg"><button data-e="0" class="${!st.el ? 'on' : ''}">非電化</button><button data-e="1" class="${st.el ? 'on' : ''}">電化</button></span></div>`
+        <span class="mp-seg"><button data-e="0" class="${!st.el ? 'on' : ''}">非電化</button><button data-e="1" class="${st.el ? 'on' : ''}">電化</button></span></div>
+        ${S.pwOK && st.el ? `<div class="mp-row small" style="align-items:center"><span>電化方式</span><span class="mp-seg">${PS_N.map((n, k) => `<button data-ps="${k}" class="${st.ps === k ? 'on' : ''}">${n}</button>`).join('')}</span></div>` : ''}`
       : `<div class="mp-row">片側 <span class="mp-seg">${[0, 1, 2, 3].map(n => `<button data-l="${n}" class="${st.l === n ? 'on' : ''}">${n ? n + '車線' : '細い道'}</button>`).join('')}</span></div>`}
       <div class="mp-row"><input class="mp-inp" data-nm placeholder="名前（路線名など）" value="${esc(st.name)}"></div>
       ${s.k === 'rail' ? `<h4 style="margin:10px 0 4px">路線カラー</h4>
@@ -3550,6 +3579,7 @@ function segOpts(s) {
       needBind(sh, !same() && q && q.need, () => quote());
       sh.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { st.dbl = b.dataset.d !== '0'; st.qd = b.dataset.d === '2'; changed(); });
       sh.querySelectorAll('[data-e]').forEach(b => b.onclick = () => { st.el = b.dataset.e === '1'; changed(); });
+      sh.querySelectorAll('[data-ps]').forEach(b => b.onclick = () => { st.ps = Number(b.dataset.ps); changed(); });   // 電化方式（DB の更新87）
       sh.querySelectorAll('[data-l]').forEach(b => b.onclick = () => { st.l = Number(b.dataset.l); changed(); });
       { const es = sh.querySelector('[data-est]'); if (es) es.onclick = () => quote(); }
       sh.querySelector('[data-nm]').onchange = e => { st.name = e.target.value; };
@@ -4207,7 +4237,7 @@ function drawArgs(st, dry) {
   if (st.edit) return { p_id: st.edit.id, p_ctl: toInts(st.ctrl), p_pts: toInts(st.curve), p_dry: dry };
   const o = st.opts;
   return { p_kind: st.kind, p_cls: st.kind === 'road' ? o.cls : null, p_ctl: st.mode === 'arc' ? null : toInts(st.ctrl), p_pts: toInts(st.curve),
-    p_opts: { dbl: o.dbl, elec: o.elec, name: o.name, lanes: o.lanes, ...(S.quadOK && o.quad ? { quad: true } : {}), ...(S.hgtOK ? { hm: o.hm || 'auto', rack: st.kind === 'rail' && !!o.rack, prof: pinArr(st.pins) } : {}), ...(S.hgt2 ? hgtOpt({ ...o, hm: o.hm || 'auto' }) : {}) },
+    p_opts: { dbl: o.dbl, elec: o.elec, name: o.name, lanes: o.lanes, ...(S.quadOK && o.quad ? { quad: true } : {}), ...(S.pwOK && o.elec && o.ps ? { ps: o.ps } : {}), ...(S.hgtOK ? { hm: o.hm || 'auto', rack: st.kind === 'rail' && !!o.rack, prof: pinArr(st.pins) } : {}), ...(S.hgt2 ? hgtOpt({ ...o, hm: o.hm || 'auto' }) : {}) },
     p_as: S.as, p_from: st.A ? st.A.att : null, p_to: st.B ? st.B.att : null, p_dry: dry };
 }
 function drawSheet() {
@@ -4222,7 +4252,8 @@ function drawSheet() {
     ${st.geoBad ? `<p class="mp-warn">この点では、えらんだ半径のカーブでつながりません（点を動かすか、半径を小さく）</p>` : ''}
     ${tight ? `<p class="mp-warn">${rail ? 'カーブがきつすぎます（線路は半径150m以上）' : 'カーブがきつすぎます'}</p>` : ''}
     ${st.edit ? '' : rail ? `<div class="mp-row"><span class="mp-seg"><button data-d="0" class="${!o.dbl ? 'on' : ''}">単線</button><button data-d="1" class="${o.dbl && !o.quad ? 'on' : ''}">複線</button>${S.quadOK ? `<button data-d="2" class="${o.quad ? 'on' : ''}">複々線</button>` : ''}</span>
-        <span class="mp-seg"><button data-e="0" class="${!o.elec ? 'on' : ''}">非電化</button><button data-e="1" class="${o.elec ? 'on' : ''}">電化</button></span></div>`
+        <span class="mp-seg"><button data-e="0" class="${!o.elec ? 'on' : ''}">非電化</button><button data-e="1" class="${o.elec ? 'on' : ''}">電化</button></span></div>
+        ${S.pwOK && o.elec ? `<div class="mp-row small" style="align-items:center"><span>電化方式</span><span class="mp-seg">${PS_N.map((n, k) => `<button data-ps="${k}" class="${(o.ps || 0) === k ? 'on' : ''}">${n}</button>`).join('')}</span></div>` : ''}`
       : `<div class="mp-row">${gov ? `<select class="mp-inp" style="width:auto" data-cls>${[['exp', '高速道路'], ['nat', '国道'], ['pref', '府県道'], ['city', '市道'], ['lane', '細い道']].map(c => `<option value="${c[0]}" ${o.cls === c[0] ? 'selected' : ''}>${c[1]}</option>`).join('')}</select>` : ''}
         片側 <span class="mp-seg">${(gov ? [0, 1, 2, 3] : [0, 1, 2]).map(n => `<button data-l="${n}" class="${o.lanes === n ? 'on' : ''}">${n ? n + '車線' : '細い道'}</button>`).join('')}</span></div>`}
     ${S.hgtOK && !st.edit ? `<div class="mp-row"><span>高さ</span> <span class="mp-seg" style="flex-wrap:wrap">${hgtModes().map(m => `<button data-hm="${m}" class="${(o.hm || 'auto') === m ? 'on' : ''}">${HGT_MODE[m]}</button>`).join('')}</span>${rail ? `<label class="small"><input type="checkbox" data-rack ${o.rack ? 'checked' : ''}> アプト式</label>` : ''}</div>${hgtOptHtml({ ...o, hm: o.hm || 'auto' }, st.kind, !!o.rack)}` : ''}
@@ -4239,6 +4270,7 @@ function drawSheet() {
     { const rd = s.querySelector('[data-rad]'); if (rd) rd.onchange = () => { st.rad = Number(rd.value); try { localStorage.setItem('mp_dr_' + st.kind, String(st.rad)); } catch (e) {} drawUpdate(); }; }
     s.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { o.dbl = b.dataset.d !== '0'; o.quad = b.dataset.d === '2'; drawUpdate(); });
     s.querySelectorAll('[data-e]').forEach(b => b.onclick = () => { o.elec = b.dataset.e === '1'; drawUpdate(); });
+    s.querySelectorAll('[data-ps]').forEach(b => b.onclick = () => { o.ps = Number(b.dataset.ps); drawUpdate(); });   // 電化方式（DB の更新87）
     s.querySelectorAll('[data-l]').forEach(b => b.onclick = () => { o.lanes = Number(b.dataset.l); drawUpdate(); });
     const cl = s.querySelector('[data-cls]'); if (cl) cl.onchange = () => { o.cls = cl.value; if (o.cls === 'exp' && o.hm === 'auto') o.hm = 'el'; drawUpdate(); };
     // 高さ（t108）
