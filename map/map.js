@@ -1294,7 +1294,8 @@ function prepRun(D) {
     const t0 = sc[0][2], t1 = sc[sc.length - 1][1]; if (t0 == null || t1 == null) continue;
     R.tr.push({ id: t.id, dir: t.dir, num: t.num, kind: t.kind, day: t.day, fn: Math.max(1, t.fn || 1), s: sc, t0, t1, idx: null,
                 fname: t.fname || '', fser: t.fser || '', onum: t.onum || '', form: t.form == null ? null : t.form,
-                wk: Array.isArray(t.wk) ? t.wk : null, wkk: t.wkk || '' });   // wk：編成の工事中［はじめ（null は前から）, おわり］（1970年からの秒。DB の更新60）
+                wk: Array.isArray(t.wk) ? t.wk : null, wkk: t.wkk || '',   // wk：編成の工事中［はじめ（null は前から）, おわり］（1970年からの秒。DB の更新60）
+                sub: Array.isArray(t.sub) ? t.sub : null });   // sub：予備編成の代走［運行日, 発車（1970年からの秒）, 予備編成］（DB の更新80）
   }
   return R;
 }
@@ -1508,7 +1509,7 @@ function showTrain(R, tn) {
     <div class="mp-kv"><b>${RUN_K[R.k] || '列車'}</b><span><b translate="no">${esc(runName(tn, R.k))}</b>　<span>${esc(runDest(R, tn))}行き</span>${tn.day ? ' <small class="mp-tag">臨時</small>' : ''}</span>
       <b>いま</b><span data-now></span><b>つぎ</b><span data-next></span><b data-unkoh hidden>運行</b><span data-unko hidden></span>${S.wx && wxOk() ? '<b>天気</b><span data-wxt>—</span>' : ''}
       ${tn.fname ? `<b>${rail ? '編成' : '車両'}</b><span><span translate="no">${esc(tn.fname)}</span>${tn.fser ? `<small class="muted">（<span>${esc(tn.fser)}</span>）</small>` : ''}${rail ? `・<span>${tn.fn}両</span>` : ''}</span>` : ''}
-      ${tn.onum ? `<b>運用</b><span>${esc(tn.onum)}</span>` : ''}
+      ${tn.onum ? `<b>運用</b><span>${esc(tn.onum)}</span>` : ''}<b data-subh hidden>代走</b><span data-sub hidden></span>
       <b>持ち主</b><span>${esc(R.own)}</span></div>
     <div class="mp-row"><button class="btn main" data-fol></button><button class="btn" data-dia>系統のダイヤ</button></div>
     <div class="mp-row" data-cxrow hidden></div>
@@ -1539,6 +1540,9 @@ function showTrain(R, tn) {
     const ui = unkoTrain(R2, t2, p);   // 運行の乱れ：遅れ・運休（鉄道・バス・船・飛行機。t108）・工事中・持ち主の運休（DB の更新60）
     if (!p && ui && ui.can) now_ = `<b class="mp-late">運休</b>（<span>${esc(ui.why)}</span>）`;
     const a = S.sheet.querySelector('[data-now]'), b = S.sheet.querySelector('[data-next]'); if (a) a.innerHTML = now_; if (b) b.innerHTML = nxt || '—';
+    const sh2 = S.sheet.querySelector('[data-subh]'), sb2 = S.sheet.querySelector('[data-sub]');   // 予備編成の代走（DB の更新80）
+    if (sh2 && sb2) { const sx = ui && ui.run ? runSubOf(t2, ui.run.day) : null; sh2.hidden = sb2.hidden = !sx;
+      if (sx) { const h = `<span>予備編成</span> <b translate="no">${esc(sx[2])}</b> <span>が走ります（${esc(runShopT(t2))}）</span>`; if (sb2.dataset.k !== h) { sb2.dataset.k = h; sb2.innerHTML = h; } } }
     const uh = S.sheet.querySelector('[data-unkoh]'), ub = S.sheet.querySelector('[data-unko]');
     if (uh && ub) { const on = !!(ui && (ui.dl >= 60 || ui.can || ui.stop)); uh.hidden = ub.hidden = !on; if (on) ub.innerHTML = unkoTrainHtml(ui); }
     const cr = S.sheet.querySelector('[data-cxrow]');   // 自分の列車：運休にする・やめる（DB の更新60）
@@ -1720,9 +1724,11 @@ function unkoDlyW(W, d0, te, pl = Infinity) {
 }
 // 工事中（検査・改造・転属・納車）・持ち主の運休（DB の更新60）：その日（day）・d0 に始発駅を出る1本が走らないわけ（shop・cxl）か null
 function runOffK(tn, day, d0) {
-  const w = tn.wk; if (w && d0 < w[1] && d0 + (tn.t1 - tn.t0) > (w[0] == null ? -Infinity : w[0])) return 'shop';
+  const w = tn.wk; if (w && d0 < w[1] && d0 + (tn.t1 - tn.t0) > (w[0] == null ? -Infinity : w[0]) && !runSubOf(tn, day)) return 'shop';   // 予備編成が代走する回は走る（DB の更新80）
   return runCxOf(tn, day, d0) ? 'cxl' : null;
 }
+// 予備編成の代走（DB の更新80）：その日（day）の1本を走る予備編成［運行日, 発車, 予備編成］か null
+const runSubOf = (tn, day) => (tn.sub || []).find(x => x[0] === day) || null;
 // 持ち主の運休（その1本・編成ごと）：[id, 列車, 日, 編成, はじめ, おわり, 乱れ, 自分の] か null
 function runCxOf(tn, day, d0) {
   const ct = UNKO.cxT.get(tn.id); if (ct && ct.has(day)) return ct.get(day);
@@ -4473,7 +4479,10 @@ async function depPlow(d, done) {
   d.pw = n; refreshBox(d.fx - 8, d.fy - 8, d.fx + 8, d.fy + 8); if (done) done();
 }
 // 工事・転属のあいだに運休になる列車（DB の更新60。見つもりの trains）
-const carRunsT = r => r && r.trains ? '\n' + T(`この編成の列車 のべ ${r.trains}本が、そのあいだ運休になります（いま走っている列車も止まります）`) : '';
+const carRunsT = r => (r && r.trains ? '\n' + T(`この編成の列車 のべ ${r.trains}本が、そのあいだ運休になります（いま走っている列車も止まります）`) : '')
+  + (r && r.spare && r.spare.length ? '\n' + T(`予備編成がある編成（${r.spare.join('・')}）の列車は、予備編成が代走します`) : '');   // DB の更新80
+// 増結の期間（DB の更新80）：時間（'' はずっと）
+const ADDH = [['', 'ずっと'], ['6', '6時間'], ['12', '12時間'], ['24', '1日'], ['48', '2日'], ['72', '3日'], ['168', '1週間'], ['336', '2週間'], ['720', '30日']];
 // 車両の雪の対策（まとめて）：鉄道は耐雪改造（48時間）・バスとトラックは冬用タイヤとチェーン（6時間）
 async function carSnow(ids, done, u) {
   const r = await api('mp_car_work', { p_cars: ids, p_kind: 'snow', p_as: S.as, p_dry: true }); if (!r) return;
@@ -4931,7 +4940,7 @@ function openHelp() {
 const roleKind = r => r === 'Ship' ? 'ship' : r === 'Air' ? 'air' : (r === 'Bus' || r === 'Truck') ? 'bus' : 'rail';
 async function openCars(depFocus) {
   const m = modal(['車両と編成', '<p class="muted small">読みこんでいます…</p>']);
-  const st = { dep: depFocus || null, pick: [], form: null, mode: 'view', seq: [], maker: null, mk: [], ser: null, one: null, loco: null, pcs: null, fno: '', att: null, attL: null, lone: null };   // att：機関車をつなぐ編成・attL：つなぐ機関車・lone：注文する機関車（DB の更新78）   // seq：編成で注文する形式の列。maker：鉄道車両工場（t54k）。ser：系列（機関車と客車は 'lp'）・one：1両ずつの形式（DB の更新71）
+  const st = { dep: depFocus || null, pick: [], form: null, mode: 'view', seq: [], maker: null, mk: [], ser: null, one: null, loco: null, pcs: null, fno: '', att: null, attL: null, lone: null, addF: null, addAt: 'tail', addH: '24' };   // addF・addAt・addH：増結する編成・場所・期間（DB の更新80）。att：機関車をつなぐ編成・attL：つなぐ機関車・lone：注文する機関車（DB の更新78）   // seq：編成で注文する形式の列。maker：鉄道車両工場（t54k）。ser：系列（機関車と客車は 'lp'）・one：1両ずつの形式（DB の更新71）
   const load = async () => {
     const [d, mk] = await Promise.all([api('mp_cars_list', { p_as: S.as }), api('mp_makers', {})]); if (!d) return;
     st.d = d; st.mk = mk || [];
@@ -4939,11 +4948,16 @@ async function openCars(depFocus) {
     if (!st.dep || !d.depots.some(x => x.id === st.dep)) st.dep = d.depots.length ? d.depots[0].id : null;
     draw();
   };
-  const carChip = (c, on) => `<span class="mp-car ${on ? 'on' : ''} ${c.busy ? 'busy' : ''}" data-car="${c.id}">${c.xfer ? '<small class="mp-warn">譲渡中</small> ' : ''}${c.role === 'Truck' ? '<small class="muted">トラック</small> ' : c.role && c.role !== 'Bus' && c.role !== 'Ship' && c.role !== 'Air' ? `<small class="muted">${esc(c.role)}</small> ` : ''}${esc(c.num)}<span class="n">${c.busy ? esc(CAR_BUSY[c.busy] || c.busy) : `<span>状態${c.cond}</span>${c.ac ? '❄' : ''}${c.toilet ? '🚻' : ''}${c.snow ? '⛄' : ''}`}</span></span>`;
+  const carChip = (c, on) => `<span class="mp-car ${on ? 'on' : ''} ${c.busy ? 'busy' : ''}" data-car="${c.id}">${c.xfer ? '<small class="mp-warn">譲渡中</small> ' : ''}${c.tmp ? `<small class="mp-tag">増結 〜${esc(mdhmA(Date.parse(c.tmp) / 1000))}</small> ` : ''}${c.role === 'Truck' ? '<small class="muted">トラック</small> ' : c.role && c.role !== 'Bus' && c.role !== 'Ship' && c.role !== 'Air' ? `<small class="muted">${esc(c.role)}</small> ` : ''}${esc(c.num)}<span class="n">${c.busy ? esc(CAR_BUSY[c.busy] || c.busy) : `<span>状態${c.cond}</span>${c.ac ? '❄' : ''}${c.toilet ? '🚻' : ''}${c.snow ? '⛄' : ''}`}</span></span>`;
   const draw = () => {
     const d = st.d, deps = d.depots, dep = deps.find(x => x.id === st.dep);
     if (!deps.length) return m.set('車両と編成', `<p class="small">まず地図で車庫（🏭）をつくってください。車両は車庫に車籍をおきます（${esc(asName())}）。船は港（フェリーターミナルの建物）に、飛行機は国の空港の駐機場に置きます。</p>`);
     const cars = d.cars.filter(c => c.depot === st.dep), forms = d.forms.filter(f => f.depot === st.dep), loose = cars.filter(c => !c.form);
+    // 期間つき増結（DB の更新80）：入れ替え枠の車をえらぶと、この車庫の編成に増結できる。増結した車は期間を変えられる
+    const v80 = d.forms.some(f => 'spare' in f), railForms = forms.filter(f => (f.perf || {}).rail !== false);
+    const picked = st.pick.map(id => d.cars.find(c => c.id === id)).filter(Boolean);
+    const addOK = v80 && dep && dep.kind === 'rail' && !st.form && picked.length > 0 && picked.every(c => !c.form && !c.xfer) && railForms.length > 0;
+    const tmpOK = v80 && picked.length > 0 && picked.every(c => c.form && c.tmp);
     const road = dep.kind === 'bus', sea = dep.kind === 'ship', air = dep.kind === 'air', uni = sea || air, typeOpts = d.types.filter(t => roleKind(t.role) === dep.kind);   // 営業所：バス・トラック（t54l）・港：船（t54o）・空港：飛行機（t54p）
     const mks = st.mk.filter(x => (x.kind || 'rail') === (road ? 'road' : sea ? 'sea' : air ? 'air' : 'rail')), trucks = loose.filter(c => c.role === 'Truck');
     // 系列（DB の更新71）：電車・気動車は系列ごと、機関車と客車は1つにまとめて、編成で注文する。つなげる仲間（grp）
@@ -4995,12 +5009,14 @@ async function openCars(depFocus) {
       ${dep.pub ? '<p class="muted small" style="margin:4px 0 0">国の空港の駐機場です（みんなで使います。数は、みんなの飛行機の合計）</p>' : ''}
       <h4 style="margin:12px 0 4px">編成（${forms.length}）</h4>
       ${forms.map(f => { const p = f.perf || {}; const fc = cars.filter(c => c.form === f.id).sort((a, b) => a.pos - b.pos); return `<div class="mp-item">
-        <b>${esc(f.name)}</b>${f.op ? ` <small class="muted"><span>運用</span> <span>${esc(f.op.num)}</span></small>` : ''}${f.xfer ? ' <small class="mp-warn">譲渡の申しこみ中</small>' : ''}
+        <b>${esc(f.name)}</b>${f.op ? ` <small class="muted"><span>運用</span> <span>${esc(f.op.num)}</span></small>` : ''}${f.spare ? ' <small class="mp-tag">予備</small>' : ''}${f.xfer ? ' <small class="mp-warn">譲渡の申しこみ中</small>' : ''}
         <small>${p.air ? `<span>長さ${p.len}m・${fmt(p.cap)}席</span><span>・巡航${p.vmax}km/h</span><span>・滑走路${fmt(p.rwy)}m以上</span>` : p.ship ? `<span>長さ${p.len}m・旅客${fmt(p.cap)}人</span>${p.load ? `<span>・車両 ${fmt(p.load)}t</span>` : '<span>・車はのせられない</span>'}<span>・最高${p.vmax}km/h</span>` : `<span>${p.n}両・${p.len}m・定員${fmt(p.cap)}人・加速 ${p.acc}km/h/s・最高${p.vmax}km/h</span>${p.ac ? '<span>・冷房</span>' : ''}${p.toilet ? '<span>・トイレ</span>' : ''}${p.g ? `<span>・グリーン${p.g}</span>` : ''}${p.a ? `<span>・A寝台${p.a}</span>` : ''}${p.b ? `<span>・B寝台${p.b}</span>` : ''}${p.rooms ? `<span>・個室${p.rooms}室</span>` : ''}${p.din ? '<span>・食堂車</span>' : ''}${p.lng ? '<span>・ラウンジ</span>' : ''}${p.obs ? '<span>・展望車</span>' : ''}${p.bag ? `<span>・荷物と郵便${p.bag}両</span>` : ''}${p.wkm ? `<span>・蒸気（水で ${p.wkm}km・石炭で ${p.ckm}km）</span>` : ''}`}${uni ? `<span>・状態${p.cond}・便 ${f.trains}本</span>` : `<span>・状態${p.cond}・列車 ${f.trains}本</span>`}</small>
         ${split && p.np && !p.nl ? '<small class="mp-warn"><br>客車だけの編成です。機関車をつなぐまで走れません（運用に入れられません）</small>' : ''}
+        ${f.spare ? `<small class="muted"><br>${f.subn ? `<b>代走の予定 ${f.subn}本</b>・` : ''}<span>同じ車庫の、同じ形式・両数の編成が検査・改造・転属のあいだ、その列車をかわりに走ります</span></small>`
+          : f.subby ? `<small><br>🔁 <span>工事のあいだ、予備編成が ${f.subby}本 代走します</span></small>` : ''}
         <div class="mp-cars">${fc.map(c => carChip(c, st.pick.includes(c.id))).join('')}</div>
         ${dep.kind === 'rail' && split && p.np ? attH(f, p) : ''}
-        <div class="mp-row">${dep.kind === 'rail' && split && p.np ? `<button class="btn" data-att="${f.id}">${p.nl ? '🚂 機関車をとりかえる・足す' : '🚂 機関車をつなぐ'}</button>${p.nl ? `<button class="btn" data-detach="${f.id}">機関車をはずす</button>` : ''}` : ''}${dep.kind === 'rail' ? `<button class="btn" data-reform="${f.id}">組みかえる</button><button class="btn" data-split="${f.id}">ばらす</button>` : ''}${f.xfer ? '' : `<button class="btn" data-give="${f.id}">ゆずる</button>`}</div></div>`; }).join('') || '<p class="muted small">まだありません</p>'}
+        <div class="mp-row">${dep.kind === 'rail' && split && p.np ? `<button class="btn" data-att="${f.id}">${p.nl ? '🚂 機関車をとりかえる・足す' : '🚂 機関車をつなぐ'}</button>${p.nl ? `<button class="btn" data-detach="${f.id}">機関車をはずす</button>` : ''}` : ''}${dep.kind === 'rail' ? `<button class="btn" data-reform="${f.id}">組みかえる</button><button class="btn" data-split="${f.id}">ばらす</button>` : ''}${dep.kind === 'rail' && 'spare' in f ? (f.spare ? `<button class="btn" data-spare="${f.id}" data-on="0">予備をやめる</button>` : f.op ? '' : `<button class="btn" data-spare="${f.id}" data-on="1">予備にする</button>`) : ''}${f.xfer ? '' : `<button class="btn" data-give="${f.id}">ゆずる</button>`}</div></div>`; }).join('') || '<p class="muted small">まだありません</p>'}
       ${dep.kind === 'rail' ? `<h4 style="margin:12px 0 4px">${split ? `入れ替え枠（編成に入っていない車両・${loose.length}両）` : `編成に入っていない車両（${loose.length}）`}</h4><div class="mp-cars">${loose.map(c => carChip(c, st.pick.includes(c.id))).join('') || '<span class="muted small">なし</span>'}</div>`
         : air ? `<p class="muted small" style="margin:6px 0 0">飛行機は1機ずつが編成（機体の番号）になります。≡ →「系統とダイヤ」で空路に便を入れて飛ばします。滑走路の短い空港には離着陸できません</p>`
         : sea ? `<p class="muted small" style="margin:6px 0 0">船は1隻ずつが編成（船の名前）になります。≡ →「系統とダイヤ」で航路に便を入れて走らせます。フェリーは人のほかにトラックをのせて、海をこえる荷物を運びます（運賃は航路の持ち主に）</p>`
@@ -5008,6 +5024,11 @@ async function openCars(depFocus) {
           <p class="muted small" style="margin:2px 0 0">トラックは、${esc(asName())}の工場・田畑・港の荷物を運びます（そのぶん運送費がかかりません）。1台で1時間に「積める重さ × ${fmt((S.boot.scr || {}).trk || 300)}km ÷ 24」t・km（1t 運ぶごとに 距離＋10km 分）。トラックターミナルを動かしていると +10%（3つまで）。状態が20より悪いと走りません</p>`}
       <div class="mp-item" style="margin-top:8px">${st.pick.length ? `<b>えらんだ車両（${st.pick.length}）</b>：${st.pick.map(id => esc((d.cars.find(c => c.id === id) || {}).num || '')).join(' → ')}
           <div class="mp-row">${dep.kind === 'rail' ? `<input class="mp-inp" style="flex:1 1 120px" data-fname placeholder="編成番号（例：R1）" value="${esc(st.form ? (d.forms.find(f => f.id === st.form) || {}).name || '' : '')}"><button class="btn main" data-mkform>${st.form ? 'この順に組みかえる' : 'この順で編成にする'}</button>` : ''}</div>
+          ${addOK ? `<div class="mp-row small" style="align-items:center"><span>増結</span><select class="mp-inp" data-addf style="width:auto;max-width:100%">${railForms.map(f => `<option value="${f.id}" ${st.addF === f.id ? 'selected' : ''}>${esc(f.name)}${f.op ? '（' + esc(T('運用')) + ' ' + esc(f.op.num) + '）' : f.spare ? '（' + esc(T('予備')) + '）' : ''}</option>`).join('')}</select>
+            <select class="mp-inp" data-addat style="width:auto"><option value="tail" ${st.addAt === 'tail' ? 'selected' : ''}>最後がわ</option><option value="head" ${st.addAt === 'head' ? 'selected' : ''}>先頭がわ</option></select>
+            <select class="mp-inp" data-addh style="width:auto">${ADDH.map(([h, l]) => `<option value="${h}" ${String(st.addH) === String(h) ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+            <div class="mp-row"><button class="btn" data-addgo>見つもって増結</button></div>` : ''}
+          ${tmpOK ? `<div class="mp-row small" style="align-items:center"><span>増結の期間</span><select class="mp-inp" data-tmph style="width:auto">${ADDH.map(([h, l]) => `<option value="${h}" ${String(h) === '24' ? 'selected' : ''}>${h === '' ? 'ずっと（期間なし）' : 'いまから' + l}</option>`).join('')}</select><button class="btn" data-tmpgo>期間を変える</button></div>` : ''}
           <div class="mp-row">${uni ? '' : `<button class="btn" data-w="ac">冷房をつける</button><button class="btn" data-w="heat">暖房をつける</button>${st.pick.every(id => (d.cars.find(c => c.id === id) || {}).role === 'Truck') ? '' : '<button class="btn" data-w="toilet">トイレをつける</button>'}${'zone' in dep ? `<button class="btn" data-w="snow" title="${road ? '冬用タイヤとチェーン（6時間）' : '耐雪改造（48時間）'}">❄ 雪の対策</button>` : ''}`}
             <button class="btn" data-w="inspect">検査</button><button class="btn" data-w="renew">更新工事</button><button class="btn" data-move>${uni ? '回航' : '転属'}</button><button class="btn" data-scrap>${sea ? '廃船' : air ? '廃機' : '廃車'}</button>
             ${dep.kind === 'rail' && st.pick.every(id => { const c = d.cars.find(x => x.id === id); return c && !c.form && !c.xfer; }) ? '<button class="btn" data-give2>ゆずる</button>' : ''}<button class="btn" data-hist>車歴</button><button class="btn" data-clear>えらびなおす</button></div>`
@@ -5119,6 +5140,33 @@ async function openCars(depFocus) {
         if (!confirm(T(`編成「${f.name}」から機関車をはずして、入れ替え枠に入れます。${f.op ? `運用 ${f.op.num} からはずれます（機関車をつないだら、運用に入れなおしてください）。` : ''}`))) return;
         const r = await api('mp_form_set', { p_form: f.id, p_cars: rest, p_name: f.name, p_as: S.as }); if (r) { toast(T('機関車をはずしました')); runListStale(); load(); }
       });
+      // 予備編成にする・やめる（DB の更新80）
+      b.querySelectorAll('[data-spare]').forEach(x => x.onclick = async () => {
+        const on = x.dataset.on === '1', f = d.forms.find(z => z.id === Number(x.dataset.spare)); if (!f) return;
+        if (on && !confirm(T(`編成「${f.name}」を予備にします。運用には入れずに待機して、同じ車庫の同じ形式・両数の編成が検査・改造・転属のあいだ、その列車をかわりに走ります（代走）。運用に入れると予備ではなくなります`))) return;
+        const r = await api('mp_form_spare', { p_form: f.id, p_on: on, p_as: S.as }); if (!r) return;
+        toast(on ? (r.subn ? T(`予備にしました（代走の予定 ${r.subn}本）`) : T('予備にしました')) : T('予備をやめました')); runListStale(); load();
+      });
+      // 入れ替え枠の車両を増結する・増結の期間を変える（DB の更新80）
+      if (q('[data-addf]')) q('[data-addf]').onchange = () => { st.addF = Number(q('[data-addf]').value); };
+      if (q('[data-addat]')) q('[data-addat]').onchange = () => { st.addAt = q('[data-addat]').value; };
+      if (q('[data-addh]')) q('[data-addh]').onchange = () => { st.addH = q('[data-addh]').value; };
+      if (q('[data-addgo]')) q('[data-addgo]').onclick = async () => {
+        const fid = Number(q('[data-addf]').value), at = q('[data-addat]').value, hv = q('[data-addh]').value, f = d.forms.find(z => z.id === fid);
+        if (!f) return toast('増結する編成をえらんでください');
+        const arg = { p_form: fid, p_cars: st.pick, p_at: at, p_hours: hv === '' ? null : Number(hv), p_as: S.as };
+        const r = await api('mp_form_add', { ...arg, p_dry: true }); if (!r) return;
+        const until = r.until ? T(`期間：${mdhmA(Date.parse(r.until) / 1000)} まで（すぎたら はずして入れ替え枠にもどします）`) : T('期間：ずっと（もどすときは「組みかえる」で）');
+        if (!confirm(T(`編成「${f.name}」に ${st.pick.length}両を増結します（${at === 'head' ? '先頭がわ' : '最後がわ'}）`) + `\n${r.seq.join(' → ')}\n`
+          + T(`${r.n}両・長さ ${r.len}m・定員 ${fmt(r.cap0)} → ${fmt(r.cap)}人`) + '\n' + T(`組みかえの手間 ${fmt(r.fee)} X`) + '\n' + until)) return;
+        const r2 = await api('mp_form_add', { ...arg, p_dry: false }); if (!r2) return;
+        toast(T(`増結しました（${r2.n}両）`)); st.pick = []; st.addF = fid; runListStale(); load();
+      };
+      if (q('[data-tmpgo]')) q('[data-tmpgo]').onclick = async () => {
+        const hv = q('[data-tmph]').value;
+        const r = await api('mp_car_tmp', { p_cars: st.pick, p_hours: hv === '' ? null : Number(hv), p_as: S.as }); if (!r) return;
+        toast(r.until ? T(`期間を ${mdhmA(Date.parse(r.until) / 1000)} までにしました`) : T('期間をなくしました（ずっと編成に入れておきます）')); st.pick = []; load();
+      };
       if (q('[data-pcs]')) q('[data-pcs]').onchange = () => { st.pcs = q('[data-pcs]').value; draw(); };
       if (q('[data-fno]')) q('[data-fno]').oninput = () => { st.fno = q('[data-fno]').value; };
       b.querySelectorAll('[data-bs]').forEach(x => x.onclick = () => { const p = bsets[Number(x.dataset.bs)]; if (!p) return; st.seq = p.t.slice(); draw(); });
@@ -5413,7 +5461,7 @@ async function openDia(rid) {
             : `<div class="mp-row small" style="align-items:center"><button class="btn" style="flex:none" data-son>☑ えらんで消す</button><span class="muted">エラーの出た列車などを、まとめてえらんで消せます</span></div>`) : ''}
           <div class="mp-row small" style="align-items:center"><span style="min-width:3.5em">並べかえ</span><select class="mp-inp" style="width:auto" data-sort>${[['dep', '発車時刻'], ['num', '列車番号'], ['kind', '種別'], ['ser', '形式']].map(o => `<option value="${o[0]}" ${lf.sort === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}</select>
             <span class="muted">${L.length} / ${D.trains.length}本</span></div>
-          <div class="mp-list">${L.map(t => `<button class="mp-item${lf.sel && lf.sel.has(t.id) ? ' on' : ''}" style="text-align:left" data-t="${t.id}">${lf.sel ? (lf.sel.has(t.id) ? '☑ ' : '☐ ') : ''}<b>${esc(t.num)}</b>${t.bad ? ' <small class="mp-warn">走れない</small>' : ''} <span>${esc(kindL(t.kind))}・${t.dir === 1 ? '下り' : '上り'}・${hms(t.dep)}発</span>${t.day ? ` <small class="mp-tag"><span>臨時</span> <span>${mdL(t.day)}</span></small>` : ''}・${t.onum ? `<small class="muted"><span>運用</span> <span>${esc(t.onum)}</span></small> ` : ''}${t.fname ? `<span>${esc(t.fname)}</span>${t.fser ? `<small class="muted">（${serH(serOf(t))}）</small>` : ''}` : `<span class="mp-warn">${t.onum ? '運用に編成なし' : '編成なし'}</span>`}${cplL(t, D)}${taiL(t, D)}${t.warn ? `<br><small class="mp-warn">${warnH(t.warn)}</small>` : ''}${Array.isArray(t.wk) ? `<br><small class="mp-warn">🔧 <span>${esc(runShopT(t))}は運休</span></small>` : ''}</button>`).join('')
+          <div class="mp-list">${L.map(t => `<button class="mp-item${lf.sel && lf.sel.has(t.id) ? ' on' : ''}" style="text-align:left" data-t="${t.id}">${lf.sel ? (lf.sel.has(t.id) ? '☑ ' : '☐ ') : ''}<b>${esc(t.num)}</b>${t.bad ? ' <small class="mp-warn">走れない</small>' : ''} <span>${esc(kindL(t.kind))}・${t.dir === 1 ? '下り' : '上り'}・${hms(t.dep)}発</span>${t.day ? ` <small class="mp-tag"><span>臨時</span> <span>${mdL(t.day)}</span></small>` : ''}・${t.onum ? `<small class="muted"><span>運用</span> <span>${esc(t.onum)}</span></small> ` : ''}${t.fname ? `<span>${esc(t.fname)}</span>${t.fser ? `<small class="muted">（${serH(serOf(t))}）</small>` : ''}` : `<span class="mp-warn">${t.onum ? '運用に編成なし' : '編成なし'}</span>`}${cplL(t, D)}${taiL(t, D)}${t.warn ? `<br><small class="mp-warn">${warnH(t.warn)}</small>` : ''}${Array.isArray(t.wk) ? (Array.isArray(t.sub) && t.sub.length ? `<br><small>🔁 <span>${esc(runShopT(t))}は、予備編成</span> <b translate="no">${esc([...new Set(t.sub.map(x => x[2]))].join('・'))}</b> <span>が代走（${t.sub.length}本）</span></small>` : `<br><small class="mp-warn">🔧 <span>${esc(runShopT(t))}は運休</span></small>`) : ''}</button>`).join('')
             || `<p class="muted small">${D.trains.length ? '条件にあう列車はありません' : '列車はまだありません'}</p>`}</div>`;
         const tog = (set, v) => { if (v === '*') set.clear(); else if (set.has(v)) set.delete(v); else set.add(v); draw(); };
         pane.querySelectorAll('[data-fd]').forEach(x => x.onclick = () => tog(lf.dirs, x.dataset.fd === '*' ? '*' : Number(x.dataset.fd)));
@@ -8057,6 +8105,6 @@ function showCert(r) {
   modal([r.kind === 'cert' ? '住民票の写し' : '印鑑登録証明書', html], null, 'mp-wide');
 }
 window.MapInt = { MQ, q, LITE, liteNeed, EDEC, B64I, bldShift, S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runOff, runIsSel, runName, runDest, showTrain, showSta, runFollow, pfZ };   // 3D（map3d.js）が使う
-window.MapApp = { open, pause, state: S, spline, setCam, jamList: () => openJamList(), erList: () => openErList(), jamAt: L => layAt('jam', L, 3), erAt: L => layAt('er', L, 2.5), landReqs: () => openLandReqs(), xfers: () => openXfers(), goto: (x, y) => homeGo(x, y), thru: () => openThru(), bld: id => openBld(id), sc: () => openSC(),
+window.MapApp = { open, pause, state: S, spline, setCam, jamList: () => openJamList(), erList: () => openErList(), jamAt: L => layAt('jam', L, 3), erAt: L => layAt('er', L, 2.5), landReqs: () => openLandReqs(), xfers: () => openXfers(), cars: () => openCars(), goto: (x, y) => homeGo(x, y), thru: () => openThru(), bld: id => openBld(id), sc: () => openSC(),
   slots: L => (L && L.st ? openSlots(Number(L.st)) : openSlotList()), unko: L => openUnko(L && L.id ? Number(L.id) : 0), bldAt: L => { if (L && L.cx != null) homeGo(Number(L.cx), Number(L.cy)); }, lic: L => { if (L && /申請があります/.test(L.body || '')) LIC.tab = 'rev'; openLic(); }, snow: () => openSnow(), find: () => openFind(), jm: id => openJuumin(id), wxMap: () => wxMapOn() };
 })();

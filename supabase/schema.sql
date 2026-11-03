@@ -19775,13 +19775,16 @@ begin
                'cond', round(c.cond::numeric), 'heat', c.heat, 'ac', c.ac, 'toilet', c.toilet, 'snow', c.snow, 'renewed', c.renewed,
                'age', floor(extract(epoch from now() - c.born) / 86400), 'life', t.life,
                'busy', case when c.busy_until > now() then c.busy_kind end, 'until', case when c.busy_until > now() then c.busy_until end, 'price', c.price,
-               'xfer', exists (select 1 from mp_xfers x where x.st = 'offer' and c.id = any(x.cars)))
+               'xfer', exists (select 1 from mp_xfers x where x.st = 'offer' and c.id = any(x.cars)),
+               'tmp', case when c.form is not null then c.tmp_until end)   -- 期間つき増結：入れ替え枠にもどる時刻（DB の更新80）
                order by c.depot, c.form nulls last, c.pos, c.num), '[]'::jsonb)
              from mp_cars c join mp_types t on t.code = c.type where c.own_u is not distinct from pa.pu and c.own_c is not distinct from pa.pc),
     'forms', (select coalesce(jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'depot', f.depot, 'perf', _mp_form_perf(f.id),
                'trains', (select count(*) from mp_trains tr where tr.form = f.id),
                'op', (select jsonb_build_object('id', o.id, 'num', o.num) from mp_ops o where o.form = f.id),
-               'xfer', (select x.id from mp_xfers x where x.form = f.id and x.st = 'offer' limit 1)) order by f.name), '[]'::jsonb)
+               'xfer', (select x.id from mp_xfers x where x.form = f.id and x.st = 'offer' limit 1),
+               -- 予備編成（DB の更新80）：subn 予備として代走する回・subby この編成のかわりに予備編成が走る回（これからのもの）
+               'spare', f.spare, 'subn', (select count(*) from mp_subst s where s.sub = f.id and s.t1 > now()), 'subby', (select count(*) from mp_subst s where s.orig = f.id and s.t1 > now())) order by f.name), '[]'::jsonb)
              from mp_forms f where f.own_u is not distinct from pa.pu and f.own_c is not distinct from pa.pc),
     'depots', (select coalesce(jsonb_agg(jsonb_build_object('id', d.id, 'kind', d.kind, 'name', d.name, 'cap', d.cap, 'x', d.x, 'y', d.y,
                'n', (select count(*) from mp_cars c where c.depot = d.id), 'plows', d.plows, 'zone', _mp_snowzone_at(floor(d.x / 100.0)::int, floor(d.y / 100.0)::int), 'pub', d.own_u is null and d.own_c is null and not pa.gv) order by d.own_u is null and d.own_c is null, d.id), '[]'::jsonb)
@@ -19855,11 +19858,11 @@ begin
     if old is distinct from p_cars then fee := 100000 * (select count(*) from unnest(p_cars) x where not (x = any(old))) + 50000; end if;   -- 組みかえの手間
   end if;
   -- ほかの編成から抜く（抜かれた編成は、のこりの車でもう一度きまりを見る → だめなら運用から外す）
-  update mp_cars set form = null, pos = 0 where id = any(p_cars) and form is distinct from p_form;
+  update mp_cars set form = null, pos = 0, tmp_until = null where id = any(p_cars) and form is distinct from p_form;   -- ほかから来た車は、増結の期間なし（DB の更新80）
   if p_form is null then
     insert into mp_forms(name, own_u, own_c, depot) values (left(trim(p_name), 20), pa.pu, pa.pc, dep) returning * into f;
   else
-    update mp_cars set form = null, pos = 0 where form = p_form and not (id = any(p_cars));
+    update mp_cars set form = null, pos = 0, tmp_until = null where form = p_form and not (id = any(p_cars));
     update mp_forms set name = coalesce(nullif(left(trim(p_name), 20), ''), name), depot = dep where id = p_form;
   end if;
   for i in 1..array_length(p_cars, 1) loop update mp_cars set form = f.id, pos = i where id = p_cars[i]; end loop;
@@ -19870,10 +19873,12 @@ begin
   -- この編成が走れなくなったら（機関車をはずした など）、運用からはずす（DB の更新78）
   if _mp_form_rule(array(select c.id from mp_cars c where c.form = f.id order by c.pos)) is not null then
     perform _mp_form_drop(array[f.id], '機関車がないので、運用からはずれました（機関車をつなぐと、運用にもどせます）');
+    update mp_forms set spare = false where id = f.id and spare;   -- 走れない編成は予備にしない（DB の更新80）
   end if;
   delete from mp_forms x where x.own_u is not distinct from pa.pu and x.own_c is not distinct from pa.pc and not exists (select 1 from mp_cars c where c.form = x.id);
   -- 組みかえた編成の列車（運用）は、時刻を計算しなおす（長さ・性能が変わる）
   perform _mp_resched(rr) from _mp_form_routes(f.id) rr;
+  perform _mp_subst_plan(pa.pu, pa.pc);   -- 代走の予定を見なおす（中身が変わると予備編成が合わなくなる。DB の更新80）
   return jsonb_build_object('id', f.id, 'perf', _mp_form_perf(f.id), 'fee', fee);
 end $$;
 -- 編成をばらす
@@ -19888,7 +19893,7 @@ begin
   if not found then raise exception '編成が見つかりません'; end if;
   if exists (select 1 from mp_cars c join mp_types t on t.code = c.type where c.form = p_form and t.role in ('Bus', 'Ship', 'Air')) then raise exception 'バス・船・飛行機はばらせません'; end if;
   perform _mp_form_drop(array[p_form], '編成がばらされたので、運用からはずれました');
-  update mp_cars set form = null, pos = 0 where form = p_form;
+  update mp_cars set form = null, pos = 0, tmp_until = null where form = p_form;
   delete from mp_forms where id = p_form;
   return jsonb_build_object('ok', true);
 end $$;
@@ -19942,10 +19947,13 @@ begin
                                                 when (select bool_and(t.role = 'Air') from mp_cars x join mp_types t on t.code = x.type where x.id = any(p_cars))
                                                 then '飛行機の%s（%s機）' else '車両の%s（%s両）' end, label, n)
                                     || case when subs > 0 then format('（補助金 %s X）', _mp_snow_x(subs)) else '' end); end if;
+  if not p_dry then perform _mp_subst_plan(pa.pu, pa.pc); end if;   -- 予備編成の代走の予定（DB の更新80）
   return jsonb_build_object('n', n, 'cost', cost, 'hours', case when p_kind = 'snow' and busn = n then 6 else hrs end, 'skip', trim(skip), 'sub', subs,
     -- 工事のあいだに運休になる列車（のべ。DB の更新60）
     'trains', case when p_dry then _mp_form_runs(array(select distinct x.form from mp_cars x where x.id = any(ids) and x.form is not null), now(),
-                                                 now() + make_interval(hours => case when p_kind = 'snow' and busn = n then 6 else hrs end)) end);
+                                                 now() + make_interval(hours => case when p_kind = 'snow' and busn = n then 6 else hrs end)) end,
+    -- 予備編成がかわりに走れる編成（DB の更新80）
+    'spare', case when p_dry then (select jsonb_agg(f.name order by f.name) from mp_forms f where f.id in (select x.form from mp_cars x where x.id = any(ids) and x.form is not null) and _mp_subst_has(f.id)) end);
 end $$;
 
 -- 転属（車籍をほかの車庫へ）。同じ線路でつながっていれば回送（安い・早い）、ちがえば陸送
@@ -19999,6 +20007,7 @@ begin
   perform _mp_form_drop(array(select x from unnest(forms) x where _mp_form_rule(array(select cc.id from mp_cars cc where cc.form = x order by cc.pos)) is not null),
                         '編成が組みかわったので、運用からはずれました');
   delete from mp_forms f where f.id = any(forms) and not exists (select 1 from mp_cars cc where cc.form = f.id);
+  perform _mp_subst_plan(pa.pu, pa.pc);   -- 予備編成の代走の予定（DB の更新80）
   return jsonb_build_object('n', n, 'cost', cost, 'hours', hrs);
 end $$;
 
@@ -21676,7 +21685,9 @@ begin
                  'sched', t.sched, 'warn', case when mine then t.warn end, 'fname', (select name from mp_forms where id = t.form),
                  'op', t.op, 'onum', (select num from mp_ops where id = t.op), 'day', t.day, 'bad', t.bad, 'cpl', t.cpl, 'cplx', t.cplx, 'tai', t.tai, 'sa', t.sa, 'sb', t.sb,
                  'fser', fi.ser, 'fn', fi.n,   -- 編成の形式（系列）と両数（列車一覧の絞り込み）
-                 'wk', case when fi.wu is not null then jsonb_build_array(case when fi.wn then null else extract(epoch from fi.wf) end, extract(epoch from fi.wu)) end, 'wkk', fi.wkk   -- 編成の工事中（DB の更新60）
+                 'wk', case when fi.wu is not null then jsonb_build_array(case when fi.wn then null else extract(epoch from fi.wf) end, extract(epoch from fi.wu)) end, 'wkk', fi.wkk,   -- 編成の工事中（DB の更新60）
+                 'sub', (select jsonb_agg(jsonb_build_array(s.day, extract(epoch from s.t0)::bigint, sf.name) order by s.t0) from mp_subst s join mp_forms sf on sf.id = s.sub
+                          where s.train = t.id and s.t1 > now() - interval '1 day')   -- 予備編成の代走（DB の更新80）：［運行日, 発車, 予備編成］
                ) order by t.dir desc, t.dep), '[]'::jsonb)
                from mp_trains t left join lateral (select string_agg(distinct se.name, '+') ser, count(*) n,
                                                           min(c.busy_from) filter (where c.busy_until > now()) wf, max(c.busy_until) filter (where c.busy_until > now()) wu,
@@ -21783,7 +21794,7 @@ declare r mp_routes; hh int := extract(hour from h at time zone 'Asia/Tokyo')::i
         t0 int; tr record; perf jsonb; ntr int; tph1 real; tph2 real; cap1 bigint; cap2 bigint; cf real; ia int; ib int; catch jsonb; pop real; dem real; dem1 real; dem2 real; served bigint; rev bigint;
         km real; trip real; fare real; spd real; q real; share real; comf real; acn real; htn real; toil real; nok int; broke int; o record; amt bigint; rt real;
         lastj jsonb; secs real; d0 date := ((h - interval '1 hour') at time zone 'Asia/Tokyo')::date; ce jsonb; cperf jsonb; crt real; ccap real;
-        upc jsonb; dep_abs float8; ncan int; dsum float8; nd int; lost real; h0 float8 := extract(epoch from h - interval '1 hour'); nwk int; ev jsonb; nrun int; ran jsonb := '{}'::jsonb;
+        upc jsonb; dep_abs float8; ncan int; dsum float8; nd int; lost real; h0 float8 := extract(epoch from h - interval '1 hour'); nwk int; ev jsonb; nrun int; ran jsonb := '{}'::jsonb; rfid bigint; nsub int;
         xg real; xa real; xb real; xrm real; xdin int; xlng int; xbag real; xfee real; xmeal real; xbagr real; xug real; xus real; xua real; xub real; xur real;
         xnight boolean := ((hh + 23) % 24) >= 18 or ((hh + 23) % 24) <= 2;   -- この1時間に始発を出る列車は夜行（18時〜2時台）
 begin
@@ -21795,7 +21806,7 @@ begin
     tph1 := 0; tph2 := 0; cap1 := 0; cap2 := 0; acn := 0; htn := 0; toil := 0; nok := 0; broke := 0; secs := 0;
     xg := 0; xa := 0; xb := 0; xrm := 0; xdin := 0; xlng := 0; xbag := 0;
     -- 運行の乱れ（DB の更新51）：運転見合わせ中に始発駅を出る列車は運休・遅れ
-    ncan := 0; dsum := 0; nd := 0; upc := null; nwk := 0; nrun := 0;
+    ncan := 0; dsum := 0; nd := 0; upc := null; nwk := 0; nrun := 0; nsub := 0;
     begin upc := _mp_unko_rt(r.id, h0, h0 + 3600 * 8); exception when others then upc := null; end;   -- うまくいかなくても、ふだんどおり（鉄道・バス・船・飛行機。t108）。乱れの区間つき（DB の更新60）
     for tr in select t.*, f.id fid from mp_trains t left join mp_forms f on f.id = t.form
                where t.route = r.id and ((t.dep - t0 + 86400) % 86400) < 3600 and (t.day is null or t.day = d0) loop
@@ -21805,7 +21816,14 @@ begin
       dep_abs := h0 + ((tr.dep - t0 + 86400) % 86400);
       rt := coalesce((select max(coalesce((s.v ->> 1)::int, (s.v ->> 2)::int)) - tr.dep from jsonb_array_elements(tr.sched) s(v)), 1800);
       -- 編成の工事中（検査・改造・転属・納車）にかかる列車は運休：始発駅を出てから終点に着くまでのどこかが、工事の時間にかかるもの（DB の更新60）
-      if _mp_form_busy(tr.fid, to_timestamp(dep_abs), to_timestamp(dep_abs + rt)) then nwk := nwk + 1; continue; end if;
+      --   予備編成（DB の更新80）：同じ車庫・同じ形式と両数の予備編成があれば、かわりに走る（代走。予定は mp_subst）
+      rfid := tr.fid;
+      if _mp_form_busy(tr.fid, to_timestamp(dep_abs), to_timestamp(dep_abs + rt)) then
+        begin rfid := _mp_subst_ok(tr.id, d0, tr.fid, to_timestamp(dep_abs), to_timestamp(dep_abs + rt)); exception when others then rfid := null; end;
+        if rfid is not null then perf := _mp_form_perf(rfid); end if;
+        if rfid is null or perf is null then nwk := nwk + 1; continue; end if;
+        nsub := nsub + 1;
+      end if;
       -- 持ち主が運休にした列車（1本ずつ・編成ごと。DB の更新60）
       begin if _mp_cxl_on(tr.id, d0, tr.fid, dep_abs) then ncan := ncan + 1; continue; end if; exception when others then null; end;
       -- 走る区間（途中始発・途中止まり。2026-10-28）：系統のうちの何割を走るか（cf）。本数・定員はその割合で数える
@@ -21834,7 +21852,7 @@ begin
       -- 走った時間の分、車両がいたむ（寿命をすぎると2倍）
       rt := coalesce((select max(coalesce((s.v ->> 1)::int, (s.v ->> 2)::int)) - tr.dep from jsonb_array_elements(tr.sched) s(v)), 1800);
       update mp_cars c set cond = greatest(0, cond - 0.035 * rt / 3600.0 * case when now() - born > make_interval(days => (select life from mp_types where code = c.type) * (1 + renewed) / 1) then 2 else 1 end)
-       where form = tr.fid;
+       where form = rfid;   -- 代走なら予備編成がいたむ（DB の更新80）
       -- 連結している編成（つなぐ駅から切りはなす駅まで）：その分いたみ、定員は走る時間のわりあいで足す
       ccap := 0;
       for ce in select c.v from jsonb_array_elements(tr.cplx) c(v)
@@ -21921,7 +21939,7 @@ begin
     lastj := jsonb_build_object('at', h, 'tph', case when tph1 + tph2 = floor(tph1 + tph2) then to_jsonb((tph1 + tph2)::int) else to_jsonb(round((tph1 + tph2)::numeric, 1)) end, 'demand', round(dem), 'served', served, 'revenue', rev, 'cap', (cap1 + cap2) * 3, 'fare', round(fare),
              'load', case when cap1 + cap2 > 0 then round(100.0 * served / ((cap1 + cap2) * case when r.kind = 'air' then 1 else 2 end)) else 0 end, 'broke', broke, 'speed', round(spd::numeric, 1),
              'cancel', ncan, 'shop', nwk, 'delay', round((dsum / greatest(nd, 1) / 60)::numeric), 'trust', round(r.trust::numeric, 2));
-    lastj := lastj || jsonb_strip_nulls(jsonb_build_object('fee', nullif(round(xfee), 0), 'meal', nullif(round(xmeal), 0), 'bag', nullif(round(xbagr), 0)));   -- うち料金・食堂・荷物と郵便（DB の更新72）
+    lastj := lastj || jsonb_strip_nulls(jsonb_build_object('fee', nullif(round(xfee), 0), 'meal', nullif(round(xmeal), 0), 'bag', nullif(round(xbagr), 0), 'sub', nullif(nsub, 0)));   -- sub：代走の本数（DB の更新80）   -- うち料金・食堂・荷物と郵便（DB の更新72）
     update mp_routes set last = lastj where id = r.id;
     insert into mp_hours(route, hour, tph, cap, demand, served, revenue) values (r.id, date_trunc('hour', h), tph1 + tph2, (cap1 + cap2)::int, round(dem)::int, served, rev)
       on conflict (route, hour) do update set tph = excluded.tph, cap = excluded.cap, demand = excluded.demand, served = excluded.served, revenue = excluded.revenue;
@@ -22039,6 +22057,7 @@ begin
   h := date_trunc('hour', now());
   if last is null then insert into mp_state values ('hour', h) on conflict (k) do update set v = excluded.v; return; end if;
   last := greatest(last, h - interval '12 hours');
+  begin perform _mp_subst_plan_all(); exception when others then raise warning 'mp subst: %', sqlerrm; end;   -- 予備編成の代走の予定（DB の更新80）
   while last < h and n < 12 loop
     last := last + interval '1 hour'; n := n + 1;
     begin perform _mp_tick_hour(last); exception when others then raise warning 'mp hour: %', sqlerrm; end;
@@ -22047,6 +22066,7 @@ begin
     end if;
   end loop;
   begin perform _mp_slot_tick(); exception when others then raise warning 'mp slot: %', sqlerrm; end;   -- 発着口の入札・権利の期限（t57）
+  begin perform _mp_tmp_back(); exception when others then raise warning 'mp tmp: %', sqlerrm; end;   -- 期間つき増結の車両を入れ替え枠にもどす（DB の更新80）
   update mp_state set v = last where k = 'hour';
 end $$;
 
@@ -24620,6 +24640,9 @@ begin
       update mp_ops set form = null where id = other;
       update mp_trains set form = null where op = other;
     end if;
+    -- 予備編成を運用に入れたら、予備ではなくなる（DB の更新80）
+    update mp_forms set spare = false where id = p_form and spare;
+    delete from mp_subst where sub = p_form and t1 > now();
   end if;
   if p_id is null then
     insert into mp_ops(own_u, own_c, kind, num, form, note) values (pa.pu, pa.pc, kd, nm, p_form, left(coalesce(p_note, ''), 200)) returning id into oid_;
@@ -24632,6 +24655,7 @@ begin
   rids := array(select distinct route from mp_trains where op = oid_ or op = other
                    or cpl @> jsonb_build_array(jsonb_build_object('op', oid_)) or (other is not null and cpl @> jsonb_build_array(jsonb_build_object('op', other))));
   perform _mp_resched(x) from unnest(rids) x;
+  perform _mp_subst_plan(pa.pu, pa.pc);   -- 代走の予定を見なおす（DB の更新80）
   return jsonb_build_object('id', oid_, 'moved_from', othernum);
 end $$;
 -- 運用を消す（列車は運用なし・編成なしに）
@@ -30301,6 +30325,232 @@ language sql stable set search_path = public as $$
              where c.form = fid and c.t0 <= to_timestamp(dep)
                and to_timestamp(dep) < coalesce(c.t1, case when z.st = 'done' then greatest(z.t_end, z.t0 + make_interval(secs => z.dur)) end, 'infinity'::timestamptz)))
 $$;
+/* ---------- 予備編成の代走・期間つき増結（DB の更新80） ---------- */
+alter table public.mp_forms add column if not exists spare boolean not null default false;   -- 予備編成（DB の更新80）：運用に入れず、同じ車庫・同じ形式と両数の編成が工事中のとき、かわりに走る（代走）
+alter table public.mp_cars add column if not exists tmp_until timestamptz;   -- 期間つき増結（DB の更新80）：この時刻をすぎたら編成からはずれて、入れ替え枠にもどる
+create table if not exists public.mp_subst (      -- 予備編成の代走（DB の更新80）：列車の1回（train・day）を、予備編成 sub が orig のかわりに走る
+  id      bigserial primary key,
+  train   bigint not null references public.mp_trains(id) on delete cascade,
+  day     date not null,                -- 運行日（日本時間。始発駅を出る日）
+  orig    bigint not null references public.mp_forms(id) on delete cascade,   -- 工事中の編成（もとの編成）
+  sub     bigint not null references public.mp_forms(id) on delete cascade,   -- 走る予備編成
+  own_u   uuid, own_c int,              -- 編成の名義
+  t0      timestamptz not null,         -- 始発駅を出る
+  t1      timestamptz not null,         -- 終点に着く
+  made_at timestamptz not null default now(),
+  unique (train, day)
+);
+create index if not exists mp_subst_sub on public.mp_subst (sub, t0);
+create index if not exists mp_subst_orig on public.mp_subst (orig);
+create index if not exists mp_subst_own on public.mp_subst (own_u, own_c);
+alter table public.mp_subst enable row level security;
+revoke all on public.mp_subst from public, anon, authenticated;
+revoke all on sequence public.mp_subst_id_seq from public, anon, authenticated;
+-- 編成の中身（形式と両数）：予備編成がかわりに走れるか（同じ形式が同じ両数。ならびはとわない。DB の更新80）
+create or replace function public._mp_form_key(fid bigint) returns text
+language sql stable set search_path = public as $$
+  select string_agg(c.type, ',' order by c.type) from mp_cars c where c.form = fid
+$$;
+-- 列車 tid が ta〜tb に走る回（運行日 d・始発駅を出る a・終点に着く b）。毎日の列車は日ごと、臨時列車はその日だけ（DB の更新80）
+create or replace function public._mp_train_runs(tid bigint, ta timestamptz, tb timestamptz) returns table(d date, a timestamptz, b timestamptz)
+language sql stable set search_path = public as $$
+  select x.dd, x.aa, x.bb
+    from mp_trains t
+    cross join lateral (select g::date dd from generate_series(((ta at time zone 'Asia/Tokyo')::date - 1)::timestamp, ((tb at time zone 'Asia/Tokyo')::date)::timestamp, interval '1 day') g) dz
+    cross join lateral (select dz.dd, (dz.dd::timestamp + make_interval(secs => t.dep)) at time zone 'Asia/Tokyo' aa,
+                               (dz.dd::timestamp + make_interval(secs => coalesce((select max(coalesce((s.v ->> 1)::int, (s.v ->> 2)::int)) from jsonb_array_elements(t.sched) s(v)), t.dep))) at time zone 'Asia/Tokyo' bb) x
+   where t.id = tid and not coalesce(t.bad, false) and jsonb_array_length(t.sched) > 1 and (t.day is null or t.day = dz.dd)
+     and x.aa < tb and x.bb > ta
+$$;
+-- 予備編成 sp が、工事中の編成 orig のかわりに a〜b を走れるか：同じ名義・同じ車庫・同じ形式と両数・運用に入っていない・その時間（前後5分）に工事中でない
+create or replace function public._mp_subst_can(sp bigint, orig bigint, a timestamptz, b timestamptz) returns boolean
+language sql stable set search_path = public as $$
+  select exists (select 1 from mp_forms s join mp_forms o on o.id = orig
+                  where s.id = sp and s.spare and s.id <> o.id and s.own_u is not distinct from o.own_u and s.own_c is not distinct from o.own_c and s.depot = o.depot
+                    and not exists (select 1 from mp_ops p where p.form = s.id)
+                    and not exists (select 1 from mp_trains t where t.form = s.id)
+                    and _mp_form_key(s.id) = _mp_form_key(o.id)
+                    and not _mp_form_busy(s.id, a - interval '5 minutes', b + interval '5 minutes'))
+$$;
+-- orig のかわりに a〜b を走る予備編成をえらぶ（ほかの代走と時間がかさならないもの）。同じ編成の代走をしているものを先に、つぎに状態のよいもの
+create or replace function public._mp_subst_pick(orig bigint, a timestamptz, b timestamptz) returns bigint
+language sql stable set search_path = public as $$
+  select s.id from mp_forms o join mp_forms s on s.spare and s.id <> o.id and s.own_u is not distinct from o.own_u and s.own_c is not distinct from o.own_c and s.depot = o.depot
+   where o.id = orig and _mp_subst_can(s.id, orig, a, b)
+     and not exists (select 1 from mp_subst q where q.sub = s.id and q.t0 < b + interval '5 minutes' and q.t1 > a - interval '5 minutes')
+   order by exists (select 1 from mp_subst q where q.sub = s.id and q.orig = o.id) desc, (select min(c.cond) from mp_cars c where c.form = s.id) desc nulls last, s.id
+   limit 1
+$$;
+-- この編成に、かわりに走れる予備編成があるか（時間は見ない。工事の見つもりで出す）
+create or replace function public._mp_subst_has(fid bigint) returns boolean
+language sql stable set search_path = public as $$
+  select exists (select 1 from mp_forms o join mp_forms s on s.spare and s.id <> o.id and s.own_u is not distinct from o.own_u and s.own_c is not distinct from o.own_c and s.depot = o.depot
+                  where o.id = fid and not exists (select 1 from mp_ops p where p.form = s.id) and _mp_form_key(s.id) = _mp_form_key(o.id))
+$$;
+-- 列車の1回（p_tid・p_day、p_a〜p_b）を走る予備編成（なければ null）：予定があれば、まだ使えるか見てそれを。なければここでえらんで予定に入れる
+create or replace function public._mp_subst_ok(p_tid bigint, p_day date, p_orig bigint, p_a timestamptz, p_b timestamptz) returns bigint
+language plpgsql set search_path = public as $$
+declare v mp_subst; v_sp bigint;
+begin
+  select * into v from mp_subst where train = p_tid and day = p_day;
+  if found then
+    if v.orig = p_orig and _mp_subst_can(v.sub, p_orig, p_a, p_b) then return v.sub; end if;
+    delete from mp_subst where id = v.id;
+  end if;
+  v_sp := _mp_subst_pick(p_orig, p_a, p_b);
+  if v_sp is null then return null; end if;
+  insert into mp_subst(train, day, orig, sub, own_u, own_c, t0, t1)
+    select p_tid, p_day, p_orig, v_sp, o.own_u, o.own_c, p_a, p_b from mp_forms o where o.id = p_orig
+  on conflict (train, day) do update set orig = excluded.orig, sub = excluded.sub, t0 = excluded.t0, t1 = excluded.t1, made_at = now();
+  return v_sp;
+end $$;
+-- 予備編成の代走の予定（名義ごと）：これから72時間に走るはずの列車のうち、編成が工事中（検査・改造・転属・納車）でとまる回に予備編成をわりあてる。
+--   合わなくなった予定（工事がおわった・予備をやめた・中身が変わった・列車の編成が変わった など）は消す。すんだ予定は3日のこす
+create or replace function public._mp_subst_plan(pu uuid, pc int) returns int
+language plpgsql set search_path = public as $$
+declare v record; v_n int := 0; v_tb timestamptz := now() + interval '72 hours';
+begin
+  delete from mp_subst s where s.own_u is not distinct from pu and s.own_c is not distinct from pc and s.t1 < now() - interval '3 days';
+  delete from mp_subst s where s.own_u is not distinct from pu and s.own_c is not distinct from pc and s.t1 > now()
+     and (not exists (select 1 from mp_trains t where t.id = s.train and t.form = s.orig and not coalesce(t.bad, false))
+          or not _mp_form_busy(s.orig, s.t0, s.t1) or not _mp_subst_can(s.sub, s.orig, s.t0, s.t1));
+  delete from mp_subst s where s.own_u is not distinct from pu and s.own_c is not distinct from pc and s.t1 > now()   -- 同じ予備編成で時間がかさなるものは、あとのほうを消す
+     and exists (select 1 from mp_subst q where q.sub = s.sub and q.id < s.id and q.t0 < s.t1 + interval '5 minutes' and q.t1 > s.t0 - interval '5 minutes');
+  if not exists (select 1 from mp_forms f where f.spare and f.own_u is not distinct from pu and f.own_c is not distinct from pc) then return 0; end if;
+  for v in
+    select t.id tid, t.form fid, r.d rd, r.a ra, r.b rb
+      from mp_forms f join mp_trains t on t.form = f.id
+      cross join lateral _mp_train_runs(t.id, now(), v_tb) r
+     where f.own_u is not distinct from pu and f.own_c is not distinct from pc and not f.spare
+       and exists (select 1 from mp_cars c where c.form = f.id and c.busy_until > now())
+       and _mp_form_busy(f.id, r.a, r.b)
+       and not exists (select 1 from mp_subst s where s.train = t.id and s.day = r.d)
+     order by r.a
+  loop
+    if _mp_subst_ok(v.tid, v.rd, v.fid, v.ra, v.rb) is not null then v_n := v_n + 1; end if;
+  end loop;
+  return v_n;
+end $$;
+-- 予備編成のある名義（と、予定ののこっている名義）の代走の予定を見なおす（毎時）
+create or replace function public._mp_subst_plan_all() returns void
+language plpgsql set search_path = public as $$
+declare v record;
+begin
+  for v in select distinct z.own_u, z.own_c from (select f.own_u, f.own_c from mp_forms f where f.spare union select s.own_u, s.own_c from mp_subst s) z loop
+    begin perform _mp_subst_plan(v.own_u, v.own_c); exception when others then raise warning 'mp subst %/%: %', v.own_u, v.own_c, sqlerrm; end;
+  end loop;
+end $$;
+-- 期間つき増結：期間がおわった車両を編成からはずして、入れ替え枠にもどす（毎時。DB の更新80）。のこりの編成がきまりに合わなければ運用からはずす
+create or replace function public._mp_tmp_back() returns int
+language plpgsql set search_path = public as $$
+declare v record; v_left bigint[]; v_n int := 0; v_who uuid;
+begin
+  update mp_cars set tmp_until = null where tmp_until is not null and form is null;
+  for v in select x.id, x.name, x.own_u, x.own_c, array_agg(c.id order by c.pos) ids, string_agg(c.num, '・' order by c.pos) nums
+             from mp_cars c join mp_forms x on x.id = c.form where c.tmp_until <= now() group by x.id, x.name, x.own_u, x.own_c loop
+    update mp_cars set form = null, pos = 0, tmp_until = null where id = any(v.ids);
+    v_left := array(select c.id from mp_cars c where c.form = v.id order by c.pos);
+    if coalesce(array_length(v_left, 1), 0) = 0 then
+      perform _mp_form_drop(array[v.id], '編成の車両がなくなったので、運用からはずれました');
+      delete from mp_forms where id = v.id;
+    else
+      update mp_cars c set pos = z.o from unnest(v_left) with ordinality z(id, o) where c.id = z.id;
+      if _mp_form_rule(v_left) is not null then
+        perform _mp_form_drop(array[v.id], '増結の期間がおわって車両をはずしたら、編成のきまりに合わなくなったので、運用からはずれました');
+        update mp_forms set spare = false where id = v.id;
+      end if;
+      perform _mp_resched(rr) from _mp_form_routes(v.id) rr;
+    end if;
+    v_who := coalesce(v.own_u, (select owner from companies where id = v.own_c));
+    if v_who is not null then
+      perform _notice_l(v_who, format('【国土】増結の期間がおわったので、編成「%s」から %s（%s両）をはずして、入れ替え枠にもどしました', v.name, v.nums, array_length(v.ids, 1)),
+                        jsonb_build_object('go', 'map', 'k', 'cars'), null);
+    end if;
+    v_n := v_n + array_length(v.ids, 1);
+  end loop;
+  return v_n;
+end $$;
+-- 予備編成にする・やめる（DB の更新80）：予備編成は運用に入れず、同じ車庫の同じ形式・両数の編成が検査・改造・転属・納車のあいだ、
+--   その列車をかわりに走る（代走）。運用に入れると予備ではなくなる
+create or replace function public.mp_form_spare(p_form bigint, p_on boolean, p_as text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); pa record; v_on boolean := coalesce(p_on, false);
+begin
+  perform _mp_ok(u);
+  select * into pa from _mp_party(u, p_as);
+  perform _mp_lock(pa.pu, pa.pc);
+  perform 1 from mp_forms where id = p_form and own_u is not distinct from pa.pu and own_c is not distinct from pa.pc for update;
+  if not found then raise exception '編成が見つかりません'; end if;
+  if _mp_form_kind(p_form) <> 'rail' then raise exception '予備編成にできるのは鉄道の編成だけです'; end if;
+  if v_on then
+    if exists (select 1 from mp_ops o where o.form = p_form) then raise exception '運用に入っている編成は予備にできません（運用からはずしてください）'; end if;
+    if exists (select 1 from mp_trains t where t.form = p_form) then raise exception '列車に入っている編成は予備にできません'; end if;
+    if _mp_form_rule(array(select c.id from mp_cars c where c.form = p_form order by c.pos)) is not null then
+      raise exception 'この編成は走れないので、予備にできません（編成のきまりに合っていません）';
+    end if;
+  end if;
+  update mp_forms set spare = v_on where id = p_form;
+  if not v_on then delete from mp_subst where sub = p_form and t1 > now(); end if;
+  perform _mp_subst_plan(pa.pu, pa.pc);
+  return jsonb_build_object('id', p_form, 'spare', v_on, 'subn', (select count(*) from mp_subst s where s.sub = p_form and s.t1 > now()));
+end $$;
+-- 入れ替え枠の車両を編成に増結する（DB の更新80）。p_at：head（先頭がわ）・tail（最後がわ）。機関車のある編成は、機関車の内がわ（客車のとなり）に入れる
+--   p_hours 時間たつと、はずして入れ替え枠にもどす（null はずっと）。組みかえの手間は 1両 10万 X ＋ 5万 X。p_dry なら見つもり
+create or replace function public.mp_form_add(p_form bigint, p_cars bigint[], p_at text, p_hours int, p_as text, p_dry boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); pa record; v_f mp_forms; v_cur bigint[]; v_seq bigint[]; v_k int; v_len int; v_why text; v_res jsonb; v_cnt int := coalesce(array_length(p_cars, 1), 0);
+        v_until timestamptz := case when p_hours is not null then now() + make_interval(hours => p_hours) end;
+begin
+  perform _mp_ok(u);
+  select * into pa from _mp_party(u, p_as);
+  select * into v_f from mp_forms where id = p_form and own_u is not distinct from pa.pu and own_c is not distinct from pa.pc;
+  if not found then raise exception '編成が見つかりません'; end if;
+  if v_cnt = 0 then raise exception '増結する車両をえらんでください'; end if;
+  if p_hours is not null and (p_hours < 1 or p_hours > 24 * 90) then raise exception '期間は1時間から90日までです'; end if;
+  if (select count(distinct x) from unnest(p_cars) x) <> v_cnt then raise exception '同じ車両が2回入っています'; end if;
+  if exists (select 1 from unnest(p_cars) x where not exists (select 1 from mp_cars c where c.id = x and c.form is null and c.own_u is not distinct from pa.pu and c.own_c is not distinct from pa.pc)) then
+    raise exception '入れ替え枠（編成に入っていない車両）からえらんでください';
+  end if;
+  if exists (select 1 from mp_cars c where c.id = any(p_cars) and c.depot is distinct from v_f.depot) then raise exception 'ちがう車庫の車両は増結できません（先に転属を）'; end if;
+  v_cur := array(select c.id from mp_cars c where c.form = p_form order by c.pos);
+  v_len := coalesce(array_length(v_cur, 1), 0);
+  if p_at = 'tail' then   -- 最後がわ：うしろに続く機関車の前
+    v_k := v_len;
+    while v_k > 0 and exists (select 1 from mp_cars c join mp_types t on t.code = c.type where c.id = v_cur[v_k] and t.role = 'L') loop v_k := v_k - 1; end loop;
+    if v_k = 0 then v_k := v_len; end if;   -- 機関車だけの編成：最後に
+  else                    -- 先頭がわ：前に続く機関車のあと
+    v_k := 0;
+    while v_k < v_len and exists (select 1 from mp_cars c join mp_types t on t.code = c.type where c.id = v_cur[v_k + 1] and t.role = 'L') loop v_k := v_k + 1; end loop;
+    if v_k = v_len then v_k := 0; end if;   -- 機関車だけの編成：先頭に
+  end if;
+  v_seq := v_cur[1:v_k] || p_cars || v_cur[v_k + 1:v_len];
+  v_why := _mp_form_rule(v_seq);
+  if v_why is not null then raise exception '増結すると走れません：%', v_why; end if;
+  if coalesce(p_dry, false) then
+    return jsonb_build_object('fee', 100000 * v_cnt + 50000, 'until', v_until, 'n', array_length(v_seq, 1),
+      'seq', (select jsonb_agg(c.num order by z.o) from unnest(v_seq) with ordinality z(id, o) join mp_cars c on c.id = z.id),
+      'cap0', coalesce((_mp_form_perf(p_form) ->> 'cap')::int, 0),
+      'cap', (select coalesce(sum(t.cap), 0) from unnest(v_seq) z(id) join mp_cars c on c.id = z.id join mp_types t on t.code = c.type),
+      'len', (select coalesce(sum(t.len), 0) from unnest(v_seq) z(id) join mp_cars c on c.id = z.id join mp_types t on t.code = c.type));
+  end if;
+  v_res := mp_form_set(p_form, v_seq, v_f.name, p_as);
+  if v_until is not null then update mp_cars set tmp_until = v_until where id = any(p_cars) and form = p_form; end if;
+  return v_res || jsonb_build_object('until', v_until, 'n', array_length(v_seq, 1));
+end $$;
+-- 増結の期間を変える（DB の更新80）：p_hours 時間たったらもどす。null なら期間をなくす（ずっと編成に入れておく）
+create or replace function public.mp_car_tmp(p_cars bigint[], p_hours int, p_as text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); pa record; v_n int;
+begin
+  perform _mp_ok(u);
+  select * into pa from _mp_party(u, p_as);
+  if p_hours is not null and (p_hours < 1 or p_hours > 24 * 90) then raise exception '期間は1時間から90日までです'; end if;
+  update mp_cars set tmp_until = case when p_hours is null then null else now() + make_interval(hours => p_hours) end
+   where id = any(p_cars) and form is not null and tmp_until is not null and own_u is not distinct from pa.pu and own_c is not distinct from pa.pc;
+  get diagnostics v_n = row_count;
+  if v_n = 0 then raise exception '増結した車両（期間つき）をえらんでください'; end if;
+  return jsonb_build_object('n', v_n, 'until', case when p_hours is not null then now() + make_interval(hours => p_hours) end);
+end $$;
 
 -- 乱れの場所の駅：起きた駅。天気（風・雨・雪・濃霧・高温・ひょう）は、かかわる系統の駅のうち まわり約10km（×100 マスで 20000）のもの。系統ごとに いちばん近い駅も
 create or replace function public._mp_unko_zone(p_kind text, p_sta bigint, p_x int, p_y int, p_routes bigint[]) returns bigint[]
@@ -30869,7 +31119,7 @@ begin
             'mp_thru_req','mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market',
             'mp_unit_mine','mp_unit_own','mp_unit_set','mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer','mp_unko_list','mp_unko_pick','mp_unko_furi','mp_unko_make','mp_jam_now','mp_jam_list','mp_er_now','mp_er_list','mp_er_bld','mp_lic_find','mp_lic_at','mp_lic_apply','_mp_lic_pfee_of','_mp_lic_pfee','_mp_lic_have','_mp_lic_mfee','mp_lic_mine','mp_lic_cancel','mp_lic_review','mp_lic_decide',
             'mp_sta_melt','mp_seg_snow','mp_dep_plow','mp_snow_mine','mp_seg_height',
-            '_mp_form_busy','_mp_form_runs','_mp_cxl_on','_mp_unko_zone','_mp_unko_zi','_mp_unko_zt','_mp_unko_rt','_mp_sched_idx','_mp_unko_trn','mp_cxl_add','mp_cxl_del') loop
+            '_mp_form_busy','_mp_form_runs','_mp_cxl_on','_mp_unko_zone','_mp_unko_zi','_mp_unko_zt','_mp_unko_rt','_mp_sched_idx','_mp_unko_trn','mp_cxl_add','mp_cxl_del','_mp_form_key','_mp_train_runs','_mp_subst_can','_mp_subst_pick','_mp_subst_has','_mp_subst_ok','_mp_subst_plan','_mp_subst_plan_all','_mp_tmp_back','mp_form_spare','mp_form_add','mp_car_tmp') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
       execute format('revoke all on function %s from authenticated', f.sig);
@@ -30901,7 +31151,7 @@ begin
   for f in select p.oid::regprocedure sig from pg_proc p join pg_namespace n on n.oid = p.pronamespace
             where n.nspname = 'public' and p.proname in ('mp_dia_undo', 'mp_form_set', 'mp_kinds_set', 'mp_op_del', 'mp_op_import', 'mp_op_save',
               'mp_route_pat', 'mp_route_save', 'mp_rwy_build', 'mp_rwy_del', 'mp_seg_build', 'mp_seg_del', 'mp_seg_edit', 'mp_seg_join', 'mp_seg_opts',
-              'mp_sta_resize', 'mp_sta_trk_set', 'mp_thru_end', 'mp_seg_height', 'mp_route_xwait', 'mp_ops_bulk', 'mp_op_backup_restore', 'mp_form_order_many', 'mp_train_autoform', 'mp_train_bulk', 'mp_train_del', 'mp_train_save') loop
+              'mp_sta_resize', 'mp_sta_trk_set', 'mp_thru_end', 'mp_seg_height', 'mp_route_xwait', 'mp_ops_bulk', 'mp_op_backup_restore', 'mp_form_order_many', 'mp_train_autoform', 'mp_train_bulk', 'mp_train_del', 'mp_train_save', 'mp_form_add', 'mp_form_spare', 'mp_car_work', 'mp_car_move') loop
     execute format('alter function %s set statement_timeout = %L', f.sig, '20s');
   end loop;
 end $$;
