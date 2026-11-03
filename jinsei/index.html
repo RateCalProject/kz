@@ -1,0 +1,1396 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>人生すごろく｜風の芽製作所</title>
+<meta name="description" content="風の芽の国で、うまれてから引退するまでをルーレットで進むすごろく。しごと・結婚・家・株・競馬。CPU・同じ端末で4人・ネット対戦。">
+<meta name="theme-color" content="#14181B">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Zen+Kaku+Gothic+New:wght@500;700;900&display=swap" rel="stylesheet">
+<style>
+/* 人生すごろく（風の芽製作所・2026-11-01）
+   人生を1本の鉄道として描く：盤面は路線図（駅＝マス・線の色＝人生の時期）、ルーレットは駅の発車標（LED）、できごとは きっぷ。 */
+:root{
+  --paper:#EEF3F6; --ink:#1E2A33; --muted:#5D6D79; --rule:#C9D4DC; --sign:#FFFFFF; --card:#FFFFFF;
+  --led:#14181B; --amber:#FFA53A; --ledg:#7EE2A8; --go:#169A58; --go-d:#0E7441; --plus:#11804A; --minus:#C2302E; --gold:#FFD54F;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){ --paper:#141C22; --ink:#E6EDF1; --muted:#9AABB7; --rule:#2D3B45; --sign:#1B262E; --card:#1B262E; --plus:#5BD38F; --minus:#FF7A73; }
+}
+:root[data-theme="dark"]{ --paper:#141C22; --ink:#E6EDF1; --muted:#9AABB7; --rule:#2D3B45; --sign:#1B262E; --card:#1B262E; --plus:#5BD38F; --minus:#FF7A73; }
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--paper);color:var(--ink);font-family:'Zen Kaku Gothic New',system-ui,-apple-system,'Hiragino Sans','Noto Sans JP',sans-serif;font-weight:500;-webkit-text-size-adjust:100%;overscroll-behavior:none}
+button{font:inherit;color:inherit;cursor:pointer}
+button:disabled{cursor:default}
+input,select{font:inherit;color:inherit}
+:focus-visible{outline:3px solid #2E86DE;outline-offset:2px}
+[hidden]{display:none!important}
+#app{height:100vh;height:100dvh;display:flex;flex-direction:column}
+.bar{display:flex;align-items:center;gap:8px;padding:8px 12px;padding-top:max(8px,env(safe-area-inset-top));border-bottom:1px solid var(--rule);background:var(--sign);flex:none}
+.back{color:var(--ink);text-decoration:none;font-weight:700;font-size:14px;white-space:nowrap}
+.bar-t{flex:1;text-align:center;font-weight:900;font-size:15px;letter-spacing:.06em;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar-r{display:flex;gap:6px}
+.ib{border:1px solid var(--rule);background:var(--sign);border-radius:10px;min-width:38px;height:36px;font-size:15px;font-weight:700;padding:0 8px}
+.scr{flex:1;min-height:0;overflow:auto}
+
+/* ---- ホーム：駅名標 ---- */
+.home{max-width:640px;margin:0 auto;padding:22px 16px 48px}
+.sign{background:#fff;color:#1E2A33;border:2px solid #C3CED6;border-radius:6px;padding:16px 0 0;text-align:center;box-shadow:0 3px 0 rgba(30,42,51,.12)}
+.sign-kana{font-size:14px;letter-spacing:.32em;color:#5D6D79;padding-left:.32em}
+.sign-name{font-size:clamp(36px,11vw,58px);font-weight:900;margin:2px 0 0;letter-spacing:.1em;padding-left:.1em;line-height:1.15}
+.sign-en{font-size:13px;color:#5D6D79;letter-spacing:.14em;margin:2px 0 14px}
+.sign-bar{display:flex;height:14px}
+.sign-bar i{flex:1}
+.sign-ends{display:flex;justify-content:space-between;padding:7px 12px 9px;font-weight:700;font-size:13px}
+.sign-ends small{display:block;font-weight:500;color:#5D6D79;font-size:11px}
+.sign-ends span:last-child{text-align:right}
+.lead{margin:16px 2px 0;line-height:1.8;font-size:15px}
+.sec{margin-top:24px}
+.sec h2{font-size:16px;margin:0 0 8px;font-weight:900}
+.seat{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px dashed var(--rule)}
+.seat input{flex:1;min-width:0;border:1px solid var(--rule);background:var(--sign);border-radius:8px;padding:8px 10px;font-size:15px}
+.seat.off input{opacity:.45}
+.seg{display:inline-flex;border:1.5px solid var(--rule);border-radius:999px;overflow:hidden;flex:none;background:var(--sign)}
+.seg button{border:0;background:transparent;padding:7px 11px;font-weight:700;font-size:13px;white-space:nowrap}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.lens{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.len{border:1.5px solid var(--rule);background:var(--sign);border-radius:12px;padding:10px 6px;text-align:center;font-weight:900;font-size:16px}
+.len small{display:block;font-weight:500;font-size:12px;color:var(--muted)}
+.len[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1.5px var(--ink)}
+.go{display:block;width:100%;border:0;border-radius:14px;background:var(--go);color:#fff;font-weight:900;font-size:20px;letter-spacing:.08em;padding:15px;box-shadow:0 4px 0 var(--go-d);margin-top:22px}
+.go:active{transform:translateY(2px);box-shadow:0 2px 0 var(--go-d)}
+.go:disabled{background:#8E9AA3;box-shadow:0 4px 0 #6F7A82}
+.sub{display:block;width:100%;border:1.5px solid var(--ink);background:transparent;border-radius:14px;font-weight:900;font-size:16px;padding:12px;margin-top:12px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.net{margin-top:14px;padding:14px;border:1.5px dashed var(--rule);border-radius:14px}
+.net p{margin:0 0 10px;font-size:14px;line-height:1.7;color:var(--muted)}
+.code-in{display:flex;gap:8px;margin-top:10px}
+.code-in input{flex:1;min-width:0;border:1.5px solid var(--rule);background:var(--sign);border-radius:10px;padding:10px;font-family:'DotGothic16',monospace;font-size:22px;letter-spacing:.3em;text-transform:uppercase;text-align:center}
+.code-in button{flex:none;border:0;border-radius:10px;background:var(--ink);color:var(--paper);font-weight:900;padding:0 16px}
+.muted{color:var(--muted)}
+.small{font-size:13px}
+.tk{flex:none;width:24px;height:24px;border-radius:50%;background:var(--pc);color:#fff;display:grid;place-items:center;font-weight:900;font-size:12px;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.rules{margin-top:26px;font-size:14px;line-height:1.75}
+.rules summary{font-weight:900;font-size:16px;cursor:pointer}
+.rules li{margin:4px 0}
+
+/* ---- 部屋（ネット対戦） ---- */
+.lob{max-width:560px;margin:0 auto;padding:22px 16px 48px}
+.ledbox{background:var(--led);border-radius:12px;padding:14px 16px;color:var(--amber);font-family:'DotGothic16',monospace}
+.ledbox .big{font-size:44px;letter-spacing:.35em;text-shadow:0 0 10px rgba(255,165,58,.55)}
+.ledbox .lt{font-size:14px;color:var(--ledg)}
+.mem{display:flex;align-items:center;gap:10px;padding:10px 2px;border-bottom:1px dashed var(--rule);font-weight:700}
+.mem small{font-weight:500;color:var(--muted);margin-left:auto}
+.cpuc{display:flex;align-items:center;gap:10px;margin-top:12px}
+.cpuc button{border:1.5px solid var(--rule);background:var(--sign);border-radius:10px;width:44px;height:40px;font-weight:900;font-size:18px}
+
+/* ---- ゲーム ---- */
+#game{display:grid;grid-template-rows:auto minmax(0,1fr) auto;grid-template-columns:minmax(0,1fr);grid-template-areas:"pls" "board" "dock";position:relative;overflow:hidden}
+.pls{grid-area:pls;display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:8px 10px;background:var(--sign);border-bottom:1px solid var(--rule)}
+.pc{display:flex;align-items:center;gap:8px;min-width:0;border:1.5px solid var(--rule);border-radius:10px;padding:4px 8px;background:var(--paper);text-align:left;position:relative}
+.pc.on{border-color:var(--pc);box-shadow:inset 0 0 0 1.5px var(--pc)}
+.pc.out{opacity:.7}
+.pc .tx{min-width:0;flex:1;line-height:1.3}
+.pc .nm{font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.pc .mo{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.pc .ics{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.bw{grid-area:board;overflow-y:auto;overflow-x:hidden;position:relative;-webkit-overflow-scrolling:touch}
+.board{position:relative;margin:0 auto;max-width:620px}
+.board svg{position:absolute;left:0;top:0;pointer-events:none}
+.st{position:absolute;width:0;height:0}
+.st .mk{position:absolute;left:-10px;top:-10px;width:20px;height:20px;border-radius:50%;background:#fff;border:4px solid var(--lc)}
+.st.stop .mk{left:-15px;top:-12px;width:30px;height:24px;border-radius:7px;border-width:4px}
+.st.k-pay .mk{background:var(--gold)}
+.st.k-goal .mk,.st.k-start .mk{left:-16px;top:-16px;width:32px;height:32px;border-width:6px}
+.st .lb{position:absolute;left:22px;top:0;transform:translateY(-50%);font-size:13px;line-height:1.3}
+.st.stop .lb{left:26px}
+.st.k-goal .lb,.st.k-start .lb{left:28px}
+.st.right .lb{left:auto;right:22px;text-align:right}
+.st .no{display:inline-block;background:var(--lc);color:var(--lf,#fff);border-radius:4px;font-size:10.5px;font-weight:900;padding:0 4px;margin-right:4px;vertical-align:1px;font-variant-numeric:tabular-nums}
+.st b{font-weight:700}
+.st.stop b{font-weight:900}
+.st small{display:block;color:var(--muted);font-size:11.5px}
+.st .tg{font-style:normal;font-size:10.5px;border:1px solid var(--rule);border-radius:4px;padding:0 3px;margin-left:3px;color:var(--muted);white-space:nowrap}
+.st .tg.me{border-color:#D99A00;color:#A26F00;background:#FFF4D1}
+.lane-t{position:absolute;font-size:12px;font-weight:900;color:#fff;border-radius:999px;padding:2px 9px;transform:translate(-50%,-50%);white-space:nowrap}
+.tok{position:absolute;left:0;top:0;width:24px;height:24px;margin:-12px 0 0 -12px;border-radius:50%;background:var(--pc);border:2.5px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.35);color:#fff;font-weight:900;font-size:12px;display:grid;place-items:center;transition:transform .16s ease;z-index:3;pointer-events:none}
+.tok.on{z-index:4}
+.tok.on::after{content:'';position:absolute;inset:-7px;border-radius:50%;border:3px solid var(--pc);animation:ring 1.3s ease-out infinite}
+@keyframes ring{from{opacity:.9;transform:scale(.75)}to{opacity:0;transform:scale(1.45)}}
+
+.dock{grid-area:dock;background:var(--led);color:var(--amber);padding:10px 12px;padding-bottom:max(10px,env(safe-area-inset-bottom));display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;position:relative;z-index:6}
+.led-num{font-family:'DotGothic16',monospace;font-size:46px;line-height:1;width:66px;height:60px;display:grid;place-items:center;background:#000;border-radius:8px;border:1px solid #2A3238;color:var(--amber);text-shadow:0 0 9px rgba(255,165,58,.6)}
+.led-num.idle{color:#5A4325;text-shadow:none}
+.led-txt{font-family:'DotGothic16',monospace;font-size:15px;line-height:1.4;min-width:0}
+.led-txt .l1{color:var(--amber);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.led-txt .l2{color:var(--ledg);font-size:13px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.fire{border:0;border-radius:14px;background:var(--go);color:#fff;font-weight:900;font-size:21px;letter-spacing:.1em;min-width:96px;min-height:60px;box-shadow:0 4px 0 var(--go-d);padding:0 14px;line-height:1.1}
+.fire small{display:block;font-size:10.5px;letter-spacing:0;font-weight:700;opacity:.85}
+.fire:active:not(:disabled){transform:translateY(2px);box-shadow:0 2px 0 var(--go-d)}
+.fire:disabled{background:#2C353B;color:#7E8B94;box-shadow:0 4px 0 #1C2327}
+.dock-sub{grid-column:1/-1;display:flex;gap:8px;justify-content:flex-end;margin-top:-2px}
+.dock-sub button{border:1px solid #2F3A41;background:transparent;color:#AFC0CB;border-radius:8px;font-size:12.5px;font-weight:700;padding:4px 10px}
+
+/* きっぷ（できごと） */
+.card{position:absolute;left:10px;right:10px;bottom:calc(var(--dockh,128px) + 10px);max-height:min(56%,480px);overflow:auto;z-index:5;background:var(--card);border-radius:12px;border:1px solid var(--rule);box-shadow:0 12px 34px rgba(20,24,27,.28)}
+.card-h{display:flex;align-items:flex-start;gap:8px;padding:11px 12px 10px 20px;border-bottom:2px dashed var(--rule);position:relative}
+.card-h::before{content:'';position:absolute;left:0;top:0;bottom:0;width:8px;background:var(--lc);border-radius:12px 0 0 0}
+.card-h .who{flex:none}
+.card-h .tt{flex:1;min-width:0}
+.card-h .tt small{display:block;color:var(--muted);font-size:12px;font-weight:700}
+.card-h .tt b{font-size:17px;font-weight:900}
+.card-h .x{flex:none;border:0;background:transparent;font-size:20px;line-height:1;padding:2px 4px;color:var(--muted)}
+.card-b{padding:8px 12px 12px 20px}
+.fx{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:4px 0;font-size:15px;line-height:1.45}
+.fx .d{font-weight:900;font-variant-numeric:tabular-nums;white-space:nowrap}
+.fx .d.p{color:var(--plus)}.fx .d.n{color:var(--minus)}
+.fx.tok{color:#A26F00;font-weight:700}
+.fx.debt,.fx.info{color:var(--muted);font-size:14px}
+.fx.win{font-weight:900}
+.ask{margin-top:6px;font-weight:900}
+.opts{display:grid;gap:8px;margin-top:8px}
+.opt{display:flex;gap:10px;align-items:flex-start;text-align:left;border:1.5px solid var(--rule);background:var(--sign);border-radius:10px;padding:10px 12px;font-weight:700;width:100%}
+.opt:not(:disabled):hover{border-color:var(--ink)}
+.opt:disabled{opacity:.55}
+.opt .n{flex:none;width:24px;height:24px;border-radius:6px;background:var(--ink);color:var(--paper);display:grid;place-items:center;font-size:13px;font-weight:900}
+.opt .ot{min-width:0}
+.opt small{display:block;font-weight:500;color:var(--muted);font-size:12.5px;line-height:1.5}
+.opt .lc{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:0}
+.nums{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:8px}
+.nums button{border:1.5px solid var(--rule);background:var(--sign);border-radius:10px;height:46px;font-family:'DotGothic16',monospace;font-size:22px}
+.nums button:disabled{opacity:.5}
+.wait{margin-top:8px;color:var(--muted);font-size:14px}
+
+.pop{position:fixed;z-index:30;font-weight:900;font-size:15px;pointer-events:none;animation:pop 1.4s ease-out forwards;text-shadow:0 1px 0 var(--paper),0 -1px 0 var(--paper),1px 0 0 var(--paper),-1px 0 0 var(--paper)}
+.pop.p{color:var(--plus)}.pop.n{color:var(--minus)}
+@keyframes pop{from{opacity:0;transform:translateY(6px)}15%{opacity:1}to{opacity:0;transform:translateY(-26px)}}
+
+/* シート（くわしく・記録・あそびかた） */
+.sheet{position:fixed;inset:0;z-index:40;background:rgba(10,14,17,.45);display:flex;align-items:flex-end;justify-content:center}
+.sheet-in{background:var(--card);width:100%;max-width:560px;max-height:85vh;overflow:auto;border-radius:16px 16px 0 0;padding:14px 16px max(18px,env(safe-area-inset-bottom))}
+.sheet-h{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.sheet-h b{flex:1;font-size:17px;font-weight:900}
+.sheet-h button{border:1px solid var(--rule);background:var(--sign);border-radius:10px;padding:6px 12px;font-weight:700}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:14.5px;line-height:1.5}
+.kv b{color:var(--muted);font-weight:700}
+.logl{font-size:14px;line-height:1.6}
+.logl div{padding:3px 0;border-bottom:1px dashed var(--rule);display:flex;gap:8px;align-items:baseline}
+.logl i{flex:none;width:10px;height:10px;border-radius:50%;background:var(--pc,#999);display:inline-block}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:50;background:var(--ink);color:var(--paper);border-radius:12px;padding:10px 16px;font-weight:700;font-size:14px;max-width:calc(100% - 32px)}
+
+/* けっか */
+.res{max-width:620px;margin:0 auto;padding:22px 16px 48px}
+.rsign .sign-name{font-size:clamp(30px,9vw,48px)}
+.rk{display:grid;grid-template-columns:34px 24px minmax(0,1fr) auto;align-items:center;column-gap:10px;padding:12px 2px;border-bottom:1px solid var(--rule)}
+.rk .o{font-family:'DotGothic16',monospace;font-size:30px;text-align:center}
+.rk .nm{font-weight:900;font-size:17px;min-width:0}
+.rk .nm .jb{display:block;font-size:12.5px;font-weight:500}
+.rk .tot{font-weight:900;font-size:18px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.rk .bk{grid-column:3/-1;font-size:12.5px;color:var(--muted);line-height:1.7;margin-top:4px;display:flex;flex-wrap:wrap;column-gap:8px}
+.rk .bk span{white-space:nowrap}
+
+@media (min-width:880px){
+  #game{grid-template-columns:minmax(0,1fr) 380px;grid-template-rows:auto auto minmax(0,1fr);grid-template-areas:"board pls" "board dock" "board side"}
+  .pls{grid-template-columns:1fr;border-left:1px solid var(--rule);border-bottom:0}
+  .bw{border-right:1px solid var(--rule)}
+  .dock{margin:0 10px;border-radius:14px}
+  .card{position:static;grid-area:side;margin:10px;max-height:none;align-self:start;box-shadow:0 4px 14px rgba(20,24,27,.12)}
+}
+@media (prefers-reduced-motion: reduce){
+  .tok{transition:none}
+  .tok.on::after{animation:none;opacity:.55;transform:scale(1.15)}
+  .pop{animation-duration:.01s}
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="bar">
+    <a class="back" href="../">‹ 風の芽経済組</a>
+    <div class="bar-t" id="barT">人生すごろく</div>
+    <div class="bar-r"><button class="ib" id="bRule" type="button" aria-label="あそびかた">？</button><button class="ib" id="bSnd" type="button" aria-label="音"></button></div>
+  </header>
+
+  <main id="home" class="scr">
+    <div class="home">
+      <div class="sign" role="img" aria-label="駅名標：人生すごろく。前の駅 うまれる、つぎの駅 いんたい">
+        <div class="sign-kana">じんせいすごろく</div>
+        <h1 class="sign-name">人生すごろく</h1>
+        <div class="sign-en">Jinsei Sugoroku</div>
+        <div class="sign-bar" id="signBar"></div>
+        <div class="sign-ends"><span>◀ うまれる<small>Umareru</small></span><span>いんたい ▶<small>Intai</small></span></div>
+      </div>
+      <p class="lead">風の芽の国で、うまれてから引退するまでを、ルーレットで1駅ずつ進みます。しごと・結婚・家・株・競馬。いちばんお金持ちで引退した人の勝ちです（ゲームの中のお金です。所持金の X は使いません）。</p>
+      <div id="cont" hidden></div>
+      <section class="sec">
+        <h2>あそぶ人</h2>
+        <div id="seats"></div>
+      </section>
+      <section class="sec">
+        <h2>長さ</h2>
+        <div class="lens" id="lens"></div>
+      </section>
+      <button class="go" id="bStart" type="button">出発する</button>
+      <section class="net">
+        <h2 style="margin:0 0 6px;font-size:16px;font-weight:900">ネットで遊ぶ</h2>
+        <p>部屋をつくると、4文字の部屋番号が出ます。友だちは「部屋に入る」に番号を入れます（4人まで。足りない分は CPU）。</p>
+        <button class="sub" id="bHost" type="button" style="margin-top:0">部屋をつくる</button>
+        <div class="code-in"><input id="codeIn" maxlength="4" placeholder="ABCD" autocomplete="off" inputmode="latin" aria-label="部屋番号"><button id="bJoin" type="button">部屋に入る</button></div>
+      </section>
+      <details class="rules" id="rulesBox"><summary>あそびかた</summary><div id="rulesTxt"></div></details>
+    </div>
+  </main>
+
+  <main id="lobby" class="scr" hidden>
+    <div class="lob" id="lobIn"></div>
+  </main>
+
+  <main id="game" class="scr" hidden>
+    <div class="pls" id="pls"></div>
+    <div class="bw" id="bw"><div class="board" id="board"><svg id="lines" aria-hidden="true"></svg><div id="sts"></div><div id="toks"></div></div></div>
+    <section class="card" id="card" hidden aria-live="polite"></section>
+    <div class="dock" id="dock">
+      <div class="led-num idle" id="ledNum" aria-hidden="true">-</div>
+      <div class="led-txt"><div class="l1" id="led1"></div><div class="l2" id="led2"></div></div>
+      <button class="fire" id="bFire" type="button" disabled>発車<small>ルーレット</small></button>
+      <div class="dock-sub"><button id="bLog" type="button">記録</button><button id="bQuit" type="button">やめる</button></div>
+    </div>
+  </main>
+
+  <main id="result" class="scr" hidden>
+    <div class="res" id="resIn"></div>
+  </main>
+  <div class="sheet" id="sheet" hidden></div>
+  <div class="toast" id="toast" hidden role="status"></div>
+</div>
+<noscript><p style="padding:16px">このゲームは JavaScript をつかいます。</p></noscript>
+<script>
+(() => {
+'use strict';
+const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const QS = new URLSearchParams(location.search), TEST = QS.has('test');
+const RM = () => TEST || matchMedia('(prefers-reduced-motion: reduce)').matches;
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const LS = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+  del(k) { try { localStorage.removeItem(k); } catch (e) {} }
+};
+const sleep = ms => new Promise(r => setTimeout(r, TEST ? 0 : ms));
+const rnd10 = () => { try { return 1 + crypto.getRandomValues(new Uint32Array(1))[0] % 10; } catch (e) { return 1 + Math.floor(Math.random() * 10); } };
+const pickR = a => a[Math.floor(Math.random() * a.length)];
+const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+// お金（万円）：1,230万円・1億2,300万円
+const fmtM = m => { m = Math.round(m); const neg = m < 0; m = Math.abs(m); const s = m >= 10000 ? Math.floor(m / 10000) + '億' + (m % 10000 ? (m % 10000).toLocaleString('ja-JP') + '万' : '') : m.toLocaleString('ja-JP') + '万'; return (neg ? '−' : '') + s + '円'; };
+const fmtD = d => (d > 0 ? '+' : '−') + fmtM(Math.abs(d));
+
+/* ================= データ：線・しごと・家・会社・マス ================= */
+// 人生の時期＝線（路線図の色）。k：駅ナンバリングの1文字
+const LINES = {
+  ko: { n: 'こども線', c: '#E9A800', k: 'こ', f: '#1E2A33' }, da: { n: '大学線', c: '#2BA84A', k: 'だ' }, ha: { n: 'はたらく線', c: '#0098C8', k: 'は' },
+  si: { n: 'しごと線', c: '#1D5FD6', k: 'し' }, ki: { n: '起業線', c: '#E2363A', k: 'き' }, tu: { n: 'つとめ線', c: '#0F9D8A', k: 'つ' },
+  ka: { n: '家族線', c: '#E84B8A', k: 'か' }, fu: { n: 'ふるさと線', c: '#7F9A12', k: 'ふ' }, to: { n: 'とかい線', c: '#6C5CE7', k: 'と' },
+  yu: { n: 'ゆうやけ線', c: '#F07C22', k: 'ゆ' }
+};
+const PCOL = ['#E4572E', '#2E7DD7', '#1F9D55', '#C98A00'];   // 1〜4番の人の色
+const TAGN = { rail: '鉄道', sea: '海', food: '食べもの', town: 'まち', game: 'ゲーム', health: 'けんこう', air: '空', money: 'お金', house: '家', kabu: '株', learn: 'まなび' };
+// しごと：給料日の給料（もと＋ルーレット×） と 得意な分野（そのマスでは、もらうお金が2倍・はらうお金が0・休まない・一か八かは4以上で当たり）
+const JOBS = {
+  driver: { n: '瑠璃急行の運転士', ic: '🚆', sal: [40, 0], tag: 'rail', pool: 'work' },
+  fisher: { n: '港の漁師', ic: '🎣', sal: [15, 5], tag: 'sea', pool: 'work' },
+  baker: { n: 'パン屋さん', ic: '🥐', sal: [38, 0], tag: 'food', pool: 'work' },
+  bus: { n: 'バスの運転手', ic: '🚌', sal: [40, 0], tag: 'town', pool: 'work' },
+  racer: { n: '競輪選手', ic: '🚴', sal: [10, 6], tag: 'health', pool: 'work' },
+  creator: { n: 'ゲーム作家', ic: '🎮', sal: [20, 4], tag: 'game', pool: 'work' },
+  doctor: { n: '大学病院のお医者さん', ic: '🩺', sal: [80, 0], tag: 'health', pool: 'uni' },
+  pilot: { n: 'パイロット', ic: '✈️', sal: [85, 0], tag: 'air', pool: 'uni' },
+  lawyer: { n: '弁護士', ic: '⚖️', sal: [72, 0], tag: 'money', pool: 'uni' },
+  official: { n: '瑠璃市役所の職員', ic: '🏛', sal: [66, 0], tag: 'town', pool: 'uni' },
+  broker: { n: '証券会社の社員', ic: '📈', sal: [30, 8], tag: 'kabu', pool: 'uni' },
+  architect: { n: '建築家', ic: '📐', sal: [66, 0], tag: 'house', pool: 'uni' },
+  scholar: { n: '風の芽大学の研究者', ic: '🔬', sal: [66, 0], tag: 'learn', pool: 'uni' },
+  captain: { n: 'フェリーの船長', ic: '⛴', sal: [68, 0], tag: 'sea', pool: 'uni' }
+};
+const jobSal = J => J.sal[1] ? `${J.sal[0]}万＋ルーレット×${J.sal[1]}万` : `${J.sal[0]}万円`;
+const jobExp = J => J.sal[0] + J.sal[1] * 5.5;
+const HOUSES = [
+  { k: 'apa', n: '瑠璃市のアパート', p: 150, ic: '🏢' }, { k: 'man', n: '豊浜区のマンション', p: 400, ic: '🏬' },
+  { k: 'umi', n: '南陽島の海辺の家', p: 500, ic: '🏝' }, { k: 'kod', n: '姫路区の一戸建て', p: 700, ic: '🏡' },
+  { k: 'tei', n: '美東区の邸宅', p: 1200, ic: '🏯' }
+];
+const houseOf = k => HOUSES.find(h => h.k === k);
+const CO = [{ k: 'rail', n: '瑠璃急行', ic: '🚆' }, { k: 'land', n: '瑠璃地所', ic: '🏢' }, { k: 'game', n: '風の芽製作所', ic: '🌱' }, { k: 'tour', n: '紺野観光', ic: '🏖' }];
+const KABU = [-50, -30, -20, -10, 0, 10, 20, 30, 50, 100];   // 株価の発表：ルーレットの数 → 何％かわるか
+const BETS = [10, 30, 50];
+const KIND = { start: '🚩', goal: '🏁', g: '💰', l: '💸', pay: '💴', rest: '⛔', mv: '⏩', job: '💼', jobc: '🔁', marry: '💍', baby: '👶', house: '🏠',
+  stock: '📈', kabu: '📊', keiba: '🏇', lotto: '🎫', draw: '🎊', ins: '🛡', dis: '🌀', sick: '🏥', tax: '🧾', 'all+': '🎉', 'all-': '🎁',
+  'kid-': '🎒', 'kid+': '🧸', gamble: '🎲', again: '🚄', pickp: '🤝', bonus: '💵', br: '🔀' };
+const BV = 1;   // 盤の版（駅をかえたら上げる。前の版の「つづきから」は出さない）
+const STOP = new Set(['br', 'job', 'marry', 'house', 'goal']);   // とまる駅（ルーレットの数がのこっていても、ここでとまる）
+const LENS = { s: { n: '短い', d: '10分ぐらい', lv: 0 }, m: { n: 'ふつう', d: '15分ぐらい', lv: 1 }, l: { n: '長い', d: '20分ぐらい', lv: 2 } };   // 4人で遊んだときの目安（CPU が多いと もっと早い）
+// マス：[長さ（0 短い〜・1 ふつう〜・2 長いだけ）, 種類, 名前, 数, 分野]
+const KO = [
+  [0, 'start', '誕生駅'], [0, 'g', 'お宮参りのお祝い', 10], [1, 'g', 'ハイハイ大会で優勝', 10], [2, 'l', 'おもちゃをこわす', 5],
+  [0, 'mv', 'つかまり立ち！', 2], [1, 'rest', 'おたふくかぜ', 0, 'health'], [0, 'g', '七五三のお祝い', 10], [0, 'g', 'お年玉をためる', 20],
+  [2, 'g', '瑠璃急行の一日駅長', 10, 'rail'], [0, 'again', 'かけっこで一等賞'], [1, 'l', 'スマホを落とす', 10], [0, 'g', '写生大会で金賞', 15, 'learn'],
+  [2, 'rest', '修学旅行で寝ぼう', 0], [1, 'g', '百人一首大会で優勝', 15, 'learn'], [0, 'mv', 'リレーの選手に', 3], [2, 'g', '釣り大会で大物', 10, 'sea'],
+  [1, 'l', '塾にかよう', 20, 'learn'], [0, 'pickp', 'ゲーム大会で優勝', 10, 'game'], [0, 'g', '自由研究が新聞にのる', 20, 'learn'], [2, 'l', '部活の道具を買う', 15],
+  [0, 'br', '進路の分かれ道']
+];
+const DA = [
+  [0, 'g', '入学祝い', 20], [1, 'g', '麦畑祭で屋台', 30, 'food'], [0, 'l', '教科書をまとめ買い', 20, 'learn'], [2, 'g', '家庭教師のアルバイト', 20, 'learn'],
+  [0, 'g', '駅の売店でアルバイト', 40, 'rail'], [0, 'again', '単位をぜんぶとった'], [2, 'rest', '試験前の徹夜', 0], [1, 'g', '研究室でほめられる', 30, 'learn'],
+  [2, 'mv', '瑠璃国際空港から留学', 2, 'air'], [0, 'all+', '学園祭の模擬店が大はやり', 10, 'food'], [0, 'g', '奨学金をもらう', 50, 'learn'], [2, 'l', 'サークルの合宿', 20],
+  [1, 'l', '卒業旅行（玖珠市）', 30], [1, 'l', 'パソコンを買う', 20, 'game'], [0, 'job', '就職活動（大学卒）', 'uni']
+];
+const HA = [
+  [0, 'job', '就職活動', 'work'], [0, 'pay', '給料日'], [2, 'g', '職場の歓迎会', 5, 'food'], [0, 'g', 'はじめてのボーナス', 20], [1, 'l', 'スーツを新調', 10],
+  [0, 'again', 'しごとをすぐ おぼえた'], [2, 'g', '資格をとる', 15, 'learn'], [0, 'g', '現場で表彰される', 30], [1, 'pickp', '同期との競争に勝つ', 20],
+  [2, 'l', '定期券を落とす', 5, 'rail'], [1, 'pay', '給料日'], [0, 'l', '引っこしの費用', 20, 'town'], [0, 'g', '自炊で節約じょうず', 10, 'food'],
+  [2, 'g', '後輩のめんどうを見る', 10]
+];
+const SI = [
+  [0, 'pay', '給料日'], [0, 'ins', '保険のすすめ'], [1, 'g', '社長賞', 50], [0, 'l', '車を買う', 80, 'town'], [2, 'g', '新線開業の手当', 20, 'rail'],
+  [0, 'again', '特急で出張'], [0, 'stock', '証券会社の窓口', 0, 'kabu'], [1, 'rest', '強風で運転見合わせ', 0, 'rail'], [2, 'l', '結婚式場の見学', 10],
+  [1, 'l', '結婚指輪を買う', 30], [0, 'marry', '結婚'], [2, 'g', '新婚旅行で福引き', 20, 'sea'], [0, 'pay', '給料日'], [0, 'pickp', 'ゴルフコンペで優勝', 30],
+  [1, 'keiba', '府中競馬場'], [0, 'house', '家を買う', 0, 'house'], [2, 'l', '家具をそろえる', 40, 'house'], [0, 'lotto', '宝くじ売り場'],
+  [1, 'g', '副業のゲームが売れる', 40, 'game'], [2, 'l', 'ペットの犬をむかえる', 20], [0, 'baby', '赤ちゃん誕生', 1], [2, 'g', '残業代がたまる', 30],
+  [1, 'kabu', '株価の発表', 0, 'kabu'], [0, 'bonus', '決算ボーナス'], [0, 'pay', '給料日'], [2, 'sick', 'かぜで入院', 30, 'health'],
+  [0, 'dis', '台風で屋根がこわれる', 20, 'house'], [1, 'all+', '誕生日パーティー', 10], [2, 'draw', 'ジャンボ抽せん'], [0, 'g', '趣味の写真が入賞', 20],
+  [0, 'tax', '確定申告', 0, 'money'], [0, 'br', '会社の分かれ道']
+];
+const KI = [
+  [0, 'g', '開業祝いの花がとどく', 10], [0, 'gamble', '新しいアプリを出す', 300, 'game'], [2, 'g', '取材をうける', 20], [1, 'pay', '給料日'],
+  [1, 'pickp', '大口の取引先ができた', 40], [0, 'gamble', '瑠璃市に支店を出す', 400, 'town'], [2, 'rest', '資金ぐりで走りまわる', 0, 'money'],
+  [1, 'l', '社員の給料', 100], [0, 'again', '注文が殺到'], [2, 'gamble', '空港に売店を出す', 200, 'air'], [0, 'gamble', '株式を上場する', 600, 'kabu'],
+  [0, 'pay', '給料日']
+];
+const TU = [
+  [0, 'pay', '給料日'], [0, 'g', '昇進', 60], [2, 'l', '部下と飲み会', 10, 'food'], [1, 'g', '部長賞', 40], [0, 'again', '社員旅行'],
+  [2, 'g', '社内の運動会で優勝', 10, 'health'], [0, 'pay', '給料日'], [1, 'jobc', '転職のチャンス'], [2, 'pickp', '社内コンペで優勝', 20],
+  [2, 'g', '長く勤めて表彰', 30], [0, 'bonus', 'ボーナス']
+];
+const KA = [
+  [0, 'pay', '給料日'], [0, 'baby', 'ふたごが生まれる', 2], [1, 'kid-', '子どもの習いごと', 10], [0, 'keiba', '京都競馬場'], [1, 'g', '川で砂金を見つける', 30, 'sea'],
+  [0, 'kid-', '子どもの入学', 30, 'learn'], [0, 'again', '家族で遊園地'], [2, 'l', '冬用タイヤに交換', 10, 'town'], [0, 'pay', '給料日'],
+  [1, 'stock', '証券会社の窓口', 0, 'kabu'], [0, 'kabu', '株価の発表', 0, 'kabu'], [2, 'all-', '町内会のおまつり', 5], [0, 'dis', '家の修理', 10, 'house'],
+  [1, 'lotto', '風の芽ジャンボ売り場'], [0, 'pickp', '発明が大ヒット', 50], [0, 'draw', 'ジャンボ抽せん'], [2, 'g', 'フリマで古いゲームが売れる', 20, 'game'],
+  [1, 'baby', '赤ちゃん誕生', 1], [0, 'g', '子どもが表彰される', 30, 'learn'], [2, 'sick', 'ぎっくり腰', 20, 'health'], [0, 'pay', '給料日'],
+  [1, 'jobc', '転職のチャンス'], [0, 'ins', '保険の見なおし'], [2, 'g', '家族旅行で福引き', 20, 'sea'], [0, 'kid+', '子どもが家事を手伝う', 10],
+  [1, 'dis', '地震で家がかたむく', 30, 'house'], [0, 'bonus', 'ボーナス'], [2, 'gamble', 'ペンションを開業', 200, 'town'], [1, 'all+', '子どもの結婚式', 10],
+  [0, 'tax', '確定申告', 0, 'money'], [1, 'br', '人生の分かれ道']
+];
+const FU = [
+  [1, 'l', '南陽島へ引っこし', 50, 'sea'], [1, 'g', '畑の麦を売る', 30, 'food'], [2, 'g', '海で大物をつりあげる', 40, 'sea'], [1, 'again', 'フェリーの旅'],
+  [1, 'pay', '給料日'], [2, 'gamble', '民宿をはじめる', 150, 'town'], [1, 'rest', '台風で船が欠航', 0, 'sea'], [2, 'l', '漁船をなおす', 30, 'sea'],
+  [1, 'pickp', '島の名産が大人気', 30, 'food'], [1, 'g', '島の祭りで優勝', 20]
+];
+const TO = [
+  [1, 'g', '瑠璃市でもうひと花', 50], [1, 'kabu', '株価の発表', 0, 'kabu'], [2, 'l', 'タワーマンションの管理費', 30, 'house'], [1, 'pay', '給料日'],
+  [1, 'again', '地下鉄で通勤らくらく', 0, 'rail'], [2, 'g', '講演をたのまれる', 30, 'learn'], [1, 'keiba', '中京競馬場'], [2, 'stock', '証券会社の窓口', 0, 'kabu'],
+  [1, 'pickp', 'ビルの家賃が入る', 30, 'town'], [1, 'l', '都会のくらしは高い', 40, 'town']
+];
+const YU = [
+  [0, 'pay', '給料日'], [0, 'g', '長年のごほうび', 100], [1, 'kid+', '孫が生まれる', 10], [2, 'g', '鉄道模型が高く売れる', 50, 'rail'], [0, 'again', '孫と鉄道の旅'],
+  [0, 'sick', '健康診断でひっかかる', 40, 'health'], [1, 'keiba', '府中競馬場'], [2, 'l', '世界一周の船旅', 80, 'sea'], [0, 'pickp', '囲碁大会で優勝', 30],
+  [0, 'pay', 'さいごの給料日'], [2, 'all+', '還暦のお祝い', 20], [0, 'kabu', '株価の発表', 0, 'kabu'], [2, 'gamble', '名作ゲームを発掘', 100, 'game'],
+  [1, 'g', '年金の手続き', 30, 'money'], [0, 'g', '退職金', 150], [1, 'draw', 'ジャンボ抽せん'], [0, 'goal', '引退ターミナル']
+];
+// 分かれ道：cost は えらんだときに はらう（足りなければ借金）
+const FORKS = {
+  1: { q: '進路の分かれ道', o: [{ line: 'da', cost: 300, ct: '風の芽大学の学費', d: '風の芽大学へ。学費 300万円（足りない分は借金）。卒業すると、給料の高いしごとをえらべる' }, { line: 'ha', d: 'すぐに働く。早くから給料がもらえる' }] },
+  2: { q: '会社の分かれ道', o: [{ line: 'ki', cost: 200, ct: '会社をつくる', d: '自分の会社をつくる（200万円）。社長になると、給料日に 会社の利益（ルーレット×7万円）も入る。一か八かの駅が多い' }, { line: 'tu', d: '会社につとめる。給料日とボーナスで安定' }] },
+  3: { q: '人生の分かれ道', o: [{ line: 'fu', d: '南陽島へ。海と畑の のんびりしたくらし' }, { line: 'to', d: '瑠璃市にのこる。株と競馬の多い道' }] }
+};
+const ROUTE = [{ line: 'ko', sq: KO }, { fork: 1, lv: 0, lanes: [DA, HA] }, { line: 'si', sq: SI }, { fork: 2, lv: 0, lanes: [KI, TU] },
+  { line: 'ka', sq: KA }, { fork: 3, lv: 1, lanes: [FU, TO] }, { line: 'yu', sq: YU }];
+
+// 盤面（長さごと）：駅 {id, line, no, k, t, a, tag, next: [つぎの駅], fork, lanes, laneOf, li}
+const BOARDS = {};
+function boardFor(len) {
+  if (BOARDS[len]) return BOARDS[len];
+  const L = (LENS[len] || LENS.m).lv, N = [], cnt = {};
+  const mk = (line, s) => { cnt[line] = (cnt[line] || 0) + 1; const n = { id: N.length, line, no: cnt[line], k: s[1], t: s[2], a: s[3] == null ? 0 : s[3], tag: s[4] || null, next: [] }; N.push(n); return n; };
+  let tails = [];
+  for (const part of ROUTE) {
+    if (part.fork) {
+      if (part.lv > L) continue;
+      const br = N[N.length - 1];
+      if (!br || br.k !== 'br') throw new Error('分かれ道がない');
+      br.fork = part.fork; br.lanes = [];
+      const ends = [];
+      part.lanes.forEach((sq, li) => {
+        const line = FORKS[part.fork].o[li].line, ids = []; let prev = br;
+        for (const s of sq) { if (s[0] > L) continue; const n = mk(line, s); n.laneOf = br.id; n.li = li; prev.next.push(n.id); prev = n; ids.push(n.id); }
+        br.lanes.push(ids); ends.push(prev);
+      });
+      tails = ends;
+    } else {
+      for (const s of part.sq) {
+        if (s[0] > L) continue;
+        const n = mk(part.line, s);
+        for (const t of tails) t.next.push(n.id);
+        tails = [n];
+      }
+    }
+  }
+  return (BOARDS[len] = N);
+}
+const bd = G => boardFor(G.len);
+const stCode = n => LINES[n.line].k + String(n.no).padStart(2, '0');
+// 駅の下の小さい字（どうなるか）
+function hint(n) {
+  const a = n.a;
+  switch (n.k) {
+    case 'g': return `+${a}万`; case 'l': return `−${a}万`; case 'pay': return '給料がもらえる'; case 'rest': return '1回休み'; case 'mv': return `${a}駅すすむ`;
+    case 'job': return 'しごとをえらぶ'; case 'jobc': return 'しごとを変えられる'; case 'marry': return 'みんなからお祝い'; case 'baby': return a > 1 ? 'こども +2人' : 'こども +1人';
+    case 'house': return '家をえらんで買う'; case 'stock': return '株を買える'; case 'kabu': return '株価がかわる'; case 'keiba': return '馬券を買える';
+    case 'lotto': return 'くじ 1枚5万'; case 'draw': return '当たると +200万'; case 'ins': return '保険に入れる'; case 'dis': return `家の${a}%をはらう`;
+    case 'sick': return `−${a}万`; case 'tax': return 'お金の10%'; case 'all+': return `みんなから${a}万ずつ`; case 'all-': return `みんなに${a}万ずつ`;
+    case 'kid-': return `こども1人につき −${a}万`; case 'kid+': return `こども1人につき +${a}万`; case 'gamble': return `6以上で +${a}万・5以下は −${Math.round(a / 2)}万`;
+    case 'again': return 'もう1回 発車'; case 'pickp': return `えらんだ人から ${a}万`; case 'bonus': return '給料の2倍';
+    case 'br': return 'どちらへ行くか えらぶ'; case 'start': return '100万円をもって出発'; case 'goal': return 'ここでおわり（とまる）';
+  }
+  return '';
+}
+
+/* ================= ルール（ホストだけが動かす） ================= */
+function newGame(seats, len, net) {
+  const G = { ver: 1, bv: BV, gid: Math.random().toString(36).slice(2, 10), len, net: net ? 1 : 0, turn: 0, round: 1, ph: 'spin', pend: null, es: 0, ev: null, fin: 0, pr: {}, log: [], rk: null };
+  CO.forEach(c => { G.pr[c.k] = 30; });
+  G.pl = seats.map((s, i) => ({ n: String(s.n || `プレイヤー${i + 1}`).slice(0, 12), k: s.k, peer: s.peer || null, c: i, pos: 0, m: 100, debt: 0, job: null, uni: 0,
+    hs: null, ins: {}, st: {}, kids: 0, sp: 0, tk: 0, rest: 0, done: 0, ln: {}, bonus: 0 }));
+  log(G, -1, `出発！（${LENS[len].n}・${G.pl.length}人）`);
+  return G;
+}
+function log(G, pi, t) { G.log.push([pi, t]); if (G.log.length > 80) G.log.splice(0, G.log.length - 80); }
+const tagOK = (p, nd) => !!(nd.tag && p.job && JOBS[p.job] && JOBS[p.job].tag === nd.tag);
+// お金をうごかす。足りなくなったら 100万円ずつ借金（おわりに1.2倍で返す）
+function add(G, p, d, fx, t, cls) {
+  d = Math.round(d); p.m += d;
+  if (fx && t != null) fx.push([t, d, cls || '']);
+  if (p.m < 0) {
+    const u = Math.ceil(-p.m / 100) * 100; p.debt += u; p.m += u;
+    if (fx) fx.push([`${p.n}：借金 ${fmtM(u)}（給料日か おわりに 1.2倍で返す）`, 0, 'debt']); else log(G, p.c, `${p.n}：借金 ${fmtM(u)}`);
+  }
+}
+function salary(G, p, fx, mul) {
+  const J = JOBS[p.job], k = mul || 1, nm = k > 1 ? 'ボーナス' : '給料日';
+  if (!J) { fx.push([`${nm}（まだ しごとがない）`, 0, 'info']); return; }
+  let s = J.sal[0], t = `${nm}（${J.n}）`;
+  if (J.sal[1]) { const r = rnd10(); s += J.sal[1] * r; t += `：${J.sal[0]}＋${J.sal[1]}×${r}`; }
+  if (k > 1) t += `×${k}`;
+  add(G, p, s * k, fx, t, 'pay');
+  if (p.co && k === 1) { const r = rnd10(); add(G, p, r * 7, fx, `会社の利益：7×${r}`, 'pay'); }
+  repay(p, fx);
+}
+// 給料日に、お金があれば借金を100万円ずつ返す（1.2倍。50万円はのこす）
+function repay(p, fx) {
+  const u = Math.min(p.debt / 100, Math.floor((p.m - 50) / 120));
+  if (!(u > 0)) return;
+  p.debt -= u * 100; p.m -= u * 120;
+  fx.push([`借金を ${u * 100}万円 返した（1.2倍）`, -u * 120, 'debt']);
+}
+function drawLot(G, p, fx, landed) {
+  const r = rnd10();
+  if (!p.tk) { if (landed) fx.push([`ジャンボ抽せん：当たりは ${r}（くじを持っていない）`, 0, 'info']); return; }
+  if (p.tk === r) add(G, p, 200, fx, `ジャンボ抽せん：${r} 当たり！`, 'win');
+  else fx.push([`ジャンボ抽せん：当たりは ${r}（${p.tk} は はずれ）`, 0, 'info']);
+  p.tk = 0;
+}
+function nextOf(p, nd) { if (!nd.next.length) return null; if (nd.next.length === 1) return nd.next[0]; const c = p.ln[nd.fork]; return nd.next[c === 1 ? 1 : 0]; }
+// n 駅すすむ（とまる駅でとまる）。とちゅうの給料日・抽せんは通るだけでも
+function move(G, p, n, fx) {
+  const N = bd(G), path = []; let cur = p.pos;
+  for (let i = 0; i < n; i++) {
+    const nx = nextOf(p, N[cur]); if (nx == null) break;
+    cur = nx; path.push(cur);
+    const nd = N[cur];
+    if (STOP.has(nd.k)) break;
+    if (i < n - 1) { if (nd.k === 'pay') salary(G, p, fx); else if (nd.k === 'draw' && p.tk) drawLot(G, p, fx, false); }
+  }
+  p.pos = cur;
+  return path;
+}
+function others(G, p) { return G.pl.filter(q => q !== p); }
+function setPend(G, pend) { G.pend = pend; G.ph = 'pick'; }
+// 駅にとまった
+function land(G, pi, fx, depth) {
+  const p = G.pl[pi], N = bd(G), nd = N[p.pos], t = tagOK(p, nd), a = nd.a, tok = () => fx.push([`得意な分野（${TAGN[nd.tag]}）！`, 0, 'tok']);
+  switch (nd.k) {
+    case 'start': break;
+    case 'g': add(G, p, a * (t ? 2 : 1), fx, nd.t); if (t) tok(); break;
+    case 'l': case 'sick':
+      if (nd.k === 'sick' && p.ins.m) { fx.push([`${nd.t}：医療保険でまかなえた`, 0, 'tok']); break; }
+      if (t) { fx.push([`${nd.t}：はらわずにすんだ`, 0]); tok(); } else add(G, p, -a, fx, nd.t);
+      break;
+    case 'pay': salary(G, p, fx); break;
+    case 'bonus': salary(G, p, fx, 2); break;
+    case 'again': G.again = 1; fx.push([`${nd.t}：もう1回 発車！`, 0, 'win']); break;
+    case 'pickp': setPend(G, { t: 'pickp', a: a * (t ? 2 : 1) }); if (t) tok(); break;
+    case 'rest': if (t) { fx.push([`${nd.t}：休まずにすんだ`, 0]); tok(); } else { p.rest = 1; fx.push([`${nd.t}：つぎは1回休み`, 0, 'info']); } break;
+    case 'mv': {
+      fx.push([`${nd.t}：${a}駅すすむ`, 0, 'info']);
+      if (depth < 1) { G.ev.path.push(...move(G, p, a, fx)); land(G, pi, fx, depth + 1); }
+      break;
+    }
+    case 'job': {
+      const pool = Object.keys(JOBS).filter(k => JOBS[k].pool === nd.a), taken = new Set(G.pl.filter(q => q !== p && q.job).map(q => q.job));
+      let cand = shuffle(pool.filter(k => !taken.has(k))); if (cand.length < 3) cand = cand.concat(shuffle(pool.filter(k => taken.has(k))));
+      setPend(G, { t: 'job', o: cand.slice(0, 3) });
+      break;
+    }
+    case 'jobc': {
+      if (!p.job) { fx.push([`${nd.t}：まだ しごとがない`, 0, 'info']); break; }
+      const pool = Object.keys(JOBS).filter(k => k !== p.job && (p.uni || JOBS[k].pool === 'work'));
+      setPend(G, { t: 'jobc', o: shuffle(pool).slice(0, 2) });
+      break;
+    }
+    case 'marry': {
+      if (p.sp) { add(G, p, 10, fx, '結婚記念日のパーティー'); break; }
+      p.sp = 1; let s = 0;
+      for (const q of others(G, p)) { add(G, q, -20, null); s += 20; }
+      add(G, p, s, fx, `結婚！ みんなから お祝い 20万円ずつ`, 'win');
+      break;
+    }
+    case 'baby': {
+      p.kids += a; let s = 0;
+      for (const q of others(G, p)) { add(G, q, -5 * a, null); s += 5 * a; }
+      add(G, p, s, fx, `${a > 1 ? 'ふたご' : '赤ちゃん'}が生まれた！ みんなから お祝い ${5 * a}万円ずつ`, 'win');
+      break;
+    }
+    case 'house':
+      if (p.hs) { fx.push([`${nd.t}：もう家がある（${houseOf(p.hs).n}）`, 0, 'info']); break; }
+      setPend(G, { t: 'house' });
+      if (t) fx.push(['得意な分野（家）！ 2割びきで買える', 0, 'tok']);
+      break;
+    case 'stock':
+      if (t) { add(G, p, 20, fx, '得意な分野（株）のボーナス'); }
+      setPend(G, { t: 'stock', n: 0 });
+      break;
+    case 'kabu': {
+      fx.push(['株価の発表', 0, 'info']);
+      for (const c of CO) {
+        const r = rnd10(), pc = KABU[r - 1], old = G.pr[c.k];
+        G.pr[c.k] = Math.max(5, Math.round(old * (100 + pc) / 100));
+        fx.push([`${c.ic} ${c.n}：${old}万 → ${G.pr[c.k]}万（${r}・${pc >= 0 ? '+' : ''}${pc}%）`, 0, 'info']);
+      }
+      if (t) add(G, p, 20, fx, '得意な分野（株）のボーナス');
+      break;
+    }
+    case 'keiba': setPend(G, { t: 'keiba', s: 1 }); break;
+    case 'lotto':
+      if (p.tk) { fx.push([`${nd.t}：もう くじを持っている（${p.tk}番）`, 0, 'info']); break; }
+      setPend(G, { t: 'lotto' });
+      break;
+    case 'draw': drawLot(G, p, fx, true); break;
+    case 'ins':
+      if (p.ins.h && p.ins.m) { fx.push([`${nd.t}：もう保険に入っている`, 0, 'info']); break; }
+      setPend(G, { t: 'ins' });
+      break;
+    case 'dis': {
+      if (!p.hs) { fx.push([`${nd.t}：家がないので だいじょうぶ`, 0, 'info']); break; }
+      if (p.ins.h) { fx.push([`${nd.t}：すまいの保険で直せた`, 0, 'tok']); break; }
+      if (t) { fx.push([`${nd.t}：自分で直した`, 0]); tok(); break; }
+      add(G, p, -Math.round(houseOf(p.hs).p * a / 100), fx, `${nd.t}（家の${a}%）`);
+      break;
+    }
+    case 'tax': {
+      if (t) { fx.push([`${nd.t}：はらわずにすんだ`, 0]); tok(); break; }
+      const x = Math.floor(Math.max(0, p.m) * 0.1);
+      if (x > 0) add(G, p, -x, fx, `${nd.t}（お金の10%）`); else fx.push([`${nd.t}：はらうお金はない`, 0, 'info']);
+      break;
+    }
+    case 'all+': { let s = 0; for (const q of others(G, p)) { add(G, q, -a, null); s += a; } add(G, p, s, fx, `${nd.t}：みんなから ${a}万円ずつ`); break; }
+    case 'all-': { const os = others(G, p); for (const q of os) add(G, q, a, null); add(G, p, -a * os.length, fx, `${nd.t}：みんなに ${a}万円ずつ`); break; }
+    case 'kid-':
+      if (!p.kids) { fx.push([`${nd.t}：こどもがいない`, 0, 'info']); break; }
+      if (t) { fx.push([`${nd.t}：はらわずにすんだ`, 0]); tok(); break; }
+      add(G, p, -a * p.kids, fx, `${nd.t}（${p.kids}人）`);
+      break;
+    case 'kid+':
+      if (!p.kids) { fx.push([`${nd.t}：こどもがいない`, 0, 'info']); break; }
+      add(G, p, a * p.kids * (t ? 2 : 1), fx, `${nd.t}（${p.kids}人）`); if (t) tok();
+      break;
+    case 'gamble': {
+      const r = rnd10(), need = t ? 4 : 6;
+      if (t) tok();
+      if (r >= need) add(G, p, a, fx, `${nd.t}：ルーレット ${r} … 大当たり！`, 'win');
+      else add(G, p, -Math.round(a / 2), fx, `${nd.t}：ルーレット ${r} … うまくいかなかった`);
+      break;
+    }
+    case 'br': {
+      setPend(G, { t: 'br', f: nd.fork });
+      break;
+    }
+    case 'goal': {
+      p.done = ++G.fin; const b = [300, 200, 100, 50][p.done - 1] || 0; p.bonus = b;
+      add(G, p, b, fx, `引退！ ${p.done}番目のゴール（ボーナス）`, 'win');
+      break;
+    }
+  }
+}
+// 番をすすめる（休みの人はとばす）。ぜんいん引退したら おわり
+function nextTurn(G) {
+  G.pend = null; G.ph = 'spin';
+  if (G.pl.every(q => q.done)) { finish(G); return; }
+  let i = G.turn;
+  for (let k = 0; k < G.pl.length * 3; k++) {
+    i = (i + 1) % G.pl.length;
+    if (i === 0) G.round++;
+    const q = G.pl[i];
+    if (q.done) continue;
+    if (q.rest > 0) { q.rest--; log(G, i, `${q.n}：1回休み`); continue; }
+    G.turn = i; return;
+  }
+}
+function finish(G) {
+  G.rk = G.pl.map((p, i) => {
+    const h = p.hs ? houseOf(p.hs) : null, hr = h ? rnd10() : 0, hv = h ? Math.round(h.p * (0.6 + hr * 0.1)) : 0;
+    const sv = CO.reduce((s, c) => s + (p.st[c.k] || 0) * G.pr[c.k], 0), fam = (p.sp + p.kids) * 30, dp = Math.round(p.debt * 1.2);
+    return { i, m: p.m, hr, hv, sv, fam, dp, tot: p.m + hv + sv + fam - dp };
+  }).sort((a, b) => b.tot - a.tot || G.pl[a.i].done - G.pl[b.i].done);
+  G.ph = 'over'; G.pend = null;
+  log(G, -1, `ぜんいん引退！ 1位は ${G.pl[G.rk[0].i].n}`);
+}
+function doSpin(G, pi) {
+  const p = G.pl[pi], n = rnd10(), fx = [];
+  G.ev = { s: ++G.es, p: pi, n, path: [], fx, from: p.pos };
+  G.ev.path = move(G, p, n, fx);
+  land(G, pi, fx, 0);
+  G.ev.at = p.pos;
+  log(G, pi, `${p.n}：${n} → ${bd(G)[p.pos].t}`);
+  if (G.ph !== 'pick') { if (G.again && !p.done) { G.ph = 'spin'; G.pend = null; G.ev.ag = 1; } else nextTurn(G); }
+  G.again = 0;
+  G.ver++;
+}
+// えらんだ（v）。正しくなければ false
+function doPick(G, pi, v) {
+  const p = G.pl[pi], P = G.pend; if (!P || typeof v !== 'number' || !isFinite(v)) return false;
+  const fx = [], N = bd(G), nd = N[p.pos]; let done = true;
+  switch (P.t) {
+    case 'br': {
+      if (v !== 0 && v !== 1) return false;
+      const o = FORKS[P.f].o[v], L = LINES[o.line];
+      p.ln[P.f] = v;
+      fx.push([`${L.n}へ`, 0, 'info']);
+      if (o.cost) add(G, p, -o.cost, fx, o.ct);
+      if (o.line === 'da') p.uni = 1;
+      if (o.line === 'ki') p.co = 1;
+      log(G, pi, `${p.n}：${L.n}へ`);
+      break;
+    }
+    case 'pickp': {
+      const q = G.pl[v]; if (!q || q === p) return false;
+      add(G, q, -P.a, null);
+      add(G, p, P.a, fx, `${q.n}から ${P.a}万円もらった`, 'win');
+      log(G, pi, `${p.n}：${q.n}から ${P.a}万円`);
+      break;
+    }
+    case 'job': case 'jobc': {
+      if (P.t === 'jobc' && v === -1) { fx.push(['いまのしごとをつづける', 0, 'info']); break; }
+      const k = P.o[v]; if (!k) return false;
+      p.job = k; const J = JOBS[k];
+      fx.push([`${J.ic} ${J.n}になった（給料 ${jobSal(J)}・得意：${TAGN[J.tag]}）`, 0, 'win']);
+      log(G, pi, `${p.n}：${J.n}に`);
+      break;
+    }
+    case 'house': {
+      if (v === -1) { fx.push(['家は買わない', 0, 'info']); break; }
+      const h = HOUSES[v]; if (!h) return false;
+      const price = Math.round(h.p * (tagOK(p, nd) ? 0.8 : 1));
+      p.hs = h.k; add(G, p, -price, fx, `${h.ic} ${h.n}を買った`);
+      log(G, pi, `${p.n}：${h.n}を買った`);
+      break;
+    }
+    case 'stock': {
+      if (v === -1) { fx.push([P.n ? `株を ${P.n}株 買った` : '株は買わない', 0, 'info']); break; }
+      const c = CO[v]; if (!c) return false;
+      p.st[c.k] = (p.st[c.k] || 0) + 1; add(G, p, -G.pr[c.k], fx, `${c.ic} ${c.n}の株を1株`);
+      P.n++;
+      if (P.n < 5) { done = false; G.pend = { t: 'stock', n: P.n }; }
+      break;
+    }
+    case 'keiba': {
+      if (P.s === 1) {
+        if (v === -1) { fx.push(['馬券は買わない', 0, 'info']); break; }
+        if (!BETS[v]) return false;
+        done = false; G.pend = { t: 'keiba', s: 2, b: BETS[v] };
+        fx.push([`${BETS[v]}万円 賭ける：馬をえらぶ`, 0, 'info']);
+        break;
+      }
+      if (!(v >= 1 && v <= 10)) return false;
+      const r = rnd10(), b = P.b;
+      if (r === v) add(G, p, b * 5, fx, `${v}番の馬 → ${r}番が1着！ 6倍`, 'win');
+      else if (Math.abs(r - v) === 1) fx.push([`${v}番の馬 → ${r}番が1着（おしい。お金はもどる）`, 0, 'info']);
+      else add(G, p, -b, fx, `${v}番の馬 → ${r}番が1着（はずれ）`);
+      break;
+    }
+    case 'lotto': {
+      if (v === -1) { fx.push(['くじは買わない', 0, 'info']); break; }
+      if (!(v >= 1 && v <= 10)) return false;
+      p.tk = v; add(G, p, -5, fx, `風の芽ジャンボ ${v}番を買った（つぎの抽せんで当たれば +200万）`);
+      break;
+    }
+    case 'ins': {
+      if (v === -1) { fx.push(['保険には入らない', 0, 'info']); break; }
+      if (v === 0 || v === 2) { if (!p.ins.h) { p.ins.h = 1; add(G, p, -30, fx, 'すまいの保険に入った'); } }
+      if (v === 1 || v === 2) { if (!p.ins.m) { p.ins.m = 1; add(G, p, -20, fx, '医療保険に入った'); } }
+      if (!fx.length) return false;
+      break;
+    }
+    default: return false;
+  }
+  G.ev = { s: ++G.es, p: pi, n: null, path: [], fx, pk: P.t, at: p.pos };
+  if (done) nextTurn(G); else G.ph = 'pick';
+  G.ver++;
+  return true;
+}
+function act(G, pi, a) {
+  if (!G || G.ph === 'over' || pi !== G.turn || !a) return false;
+  if (G.ph === 'spin' && a.k === 'spin') { doSpin(G, pi); return true; }
+  if (G.ph === 'pick' && a.k === 'pick') return doPick(G, pi, a.v);
+  return false;
+}
+// CPU のきめかた
+function cpuMove(G, pi) {
+  const p = G.pl[pi];
+  if (G.ph === 'spin') return { k: 'spin' };
+  const P = G.pend; if (!P) return null;
+  const R = Math.random(), pk = v => ({ k: 'pick', v });
+  switch (P.t) {
+    case 'br': return pk(P.f === 1 ? (R < 0.55 ? 0 : 1) : P.f === 2 ? (R < (p.m > 250 ? 0.55 : 0.25) ? 0 : 1) : (R < 0.5 ? 0 : 1));
+    case 'job': { if (R < 0.25) return pk(Math.floor(Math.random() * P.o.length)); let b = 0; P.o.forEach((k, i) => { if (jobExp(JOBS[k]) > jobExp(JOBS[P.o[b]])) b = i; }); return pk(b); }
+    case 'jobc': { const cur = jobExp(JOBS[p.job]); let b = -1, bv = cur + 5; P.o.forEach((k, i) => { if (jobExp(JOBS[k]) > bv) { b = i; bv = jobExp(JOBS[k]); } }); return pk(b); }
+    case 'house': {
+      if ((p.m < 60 && p.debt >= 400) || R < 0.15) return pk(-1);
+      let b = 0; HOUSES.forEach((h, i) => { if (h.p <= p.m + 300 && h.p > HOUSES[b].p) b = i; });
+      return pk(b);
+    }
+    case 'pickp': { let b = -1; G.pl.forEach((q, i) => { if (q !== p && (b < 0 || q.m > G.pl[b].m)) b = i; }); return pk(b); }
+    case 'stock': { const want = p.m > 400 ? 3 : p.m > 120 ? 1 : 0; return pk(P.n < want ? Math.floor(Math.random() * CO.length) : -1); }
+    case 'keiba': if (P.s === 1) return pk(p.m > 120 && R < 0.75 ? (p.m > 400 ? 1 : 0) : -1); return pk(rnd10());
+    case 'lotto': return pk(p.m > 30 && R < 0.6 ? rnd10() : -1);
+    case 'ins': { const h = !p.ins.h && p.hs && p.m > 80, m = !p.ins.m && p.m > 120 && R < 0.6; return pk(h && m ? 2 : h ? 0 : m ? 1 : -1); }
+  }
+  return null;
+}
+
+/* ================= 音（発車ベル・コイン） ================= */
+let AC = null, SND = LS.get('jinsei_snd', 1);
+function beep(seq) {
+  if (!SND || TEST) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    let t = AC.currentTime;
+    for (const [f, d, v] of seq) {
+      const o = AC.createOscillator(), g = AC.createGain(); o.type = 'triangle'; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(v || 0.07, t + 0.015); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+      o.connect(g).connect(AC.destination); o.start(t); o.stop(t + d + 0.02); t += d * 0.75;
+    }
+  } catch (e) {}
+}
+const SFX = { go: [[880, 0.18], [660, 0.18], [880, 0.18], [660, 0.28]], hop: [[1320, 0.05, 0.025]], pay: [[1568, 0.08], [2093, 0.16]], win: [[784, 0.1], [988, 0.1], [1175, 0.1], [1568, 0.26]], bad: [[330, 0.16], [262, 0.26]] };
+function sndBtn() { const b = $('#bSnd'); b.textContent = SND ? '🔔' : '🔕'; b.setAttribute('aria-label', SND ? '音：あり' : '音：なし'); }
+
+/* ================= 画面 ================= */
+const V = { mode: 'local', G: null, es: 0, busy: false, pos: [], m: [], q: null, seen: 0, cardOpen: false, layout: null, laid: '', cpuT: 0, myPeer: null, room: null, net: null };
+let G = null;
+function show(id) { for (const s of ['home', 'lobby', 'game', 'result']) $('#' + s).hidden = s !== id; }
+function toast(t, ms) { const e = $('#toast'); e.textContent = t; e.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => { e.hidden = true; }, ms || 2600); }
+function sheet(title, html, bind) {
+  const s = $('#sheet');
+  s.innerHTML = `<div class="sheet-in" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="sheet-h"><b>${esc(title)}</b><button type="button" data-x>とじる</button></div>${html}</div>`;
+  s.hidden = false;
+  const close = () => { s.hidden = true; s.innerHTML = ''; };
+  s.onclick = e => { if (e.target === s || e.target.closest('[data-x]')) close(); };
+  if (bind) bind(s, close);
+  const b = s.querySelector('[data-x]'); if (b) b.focus();
+}
+const RULES = `<ul>
+  <li>じゅんばんに <b>発車</b>（ルーレット 1〜10）をおして、その数だけ駅をすすみます。とまった駅のできごとがおきます</li>
+  <li>四角い駅（分かれ道・就職活動・結婚・家を買う・引退ターミナル）は、数がのこっていても そこでとまります</li>
+  <li><b>給料日</b>は、とおるだけでも給料がもらえます。<b>ジャンボ抽せん</b>も、くじを持っていれば とおるだけで</li>
+  <li><b>しごと</b>：就職活動で3枚から1つ。しごとごとに給料と <b>得意な分野</b>（鉄道・海・まち…）があります。得意な分野の駅では、もらうお金が2倍・はらうお金が0・休まない・一か八かは4以上で当たり</li>
+  <li><b>分かれ道</b>：大学線（学費 300万円。給料の高いしごとをえらべる）か はたらく線、起業線（200万円で会社をつくる。給料日に 会社の利益も入る。一か八か）か つとめ線、ふるさと線か とかい線（長さ ふつう・長い）</li>
+  <li>🚄 の駅では もう1回 発車。🤝 の駅では、えらんだ人からお金をもらえます。💵 ボーナスは給料の2倍</li>
+  <li><b>家</b>：おわりに売ります。売るときの値段は ルーレットで 買った値段の 0.7〜1.6倍</li>
+  <li><b>株</b>：瑠璃急行・瑠璃地所・風の芽製作所・紺野観光。株価の発表でかわり、おわりにその株価で売ります</li>
+  <li><b>競馬</b>（府中・京都・中京）：馬番がルーレットの数と同じなら6倍、となりの数ならお金がもどります</li>
+  <li><b>保険</b>：すまいの保険（30万）は家のこわれる駅、医療保険（20万）は入院の駅で はらわなくてよくなります</li>
+  <li>お金が足りなくなると、100万円ずつ<b>借金</b>します。給料日に お金があれば 1.2倍で返し、のこりは おわりに1.2倍で返します</li>
+  <li><b>引退ターミナル</b>に着いた順にボーナス（300・200・100・50万円）。ぜんいん着いたら、お金＋家＋株＋家族（1人30万円）−借金で順位がきまります</li>
+  <li>長さ：短い 約10分・ふつう 約15分・長い 約20分（4人で遊んだとき。CPU が多いと もっと早くおわります）</li>
+  <li>ゲームの中のお金です。風の芽経済組の所持金（X）は つかいません</li></ul>`;
+
+// ---- ホーム ----
+const SEATK = [['hum', '人'], ['cpu', 'CPU'], ['off', 'なし']];
+const CPUN = ['つばめ', 'かもめ', 'ひばり'];
+let setup = LS.get('jinsei_setup', null);
+if (!setup || !Array.isArray(setup.seats) || setup.seats.length !== 4) setup = { len: 'm', seats: [{ k: 'hum', n: 'あなた' }, { k: 'cpu', n: 'つばめ' }, { k: 'cpu', n: 'かもめ' }, { k: 'off', n: 'ひばり' }] };
+if (!LENS[setup.len]) setup.len = 'm';
+function renderHome() {
+  $('#signBar').innerHTML = ['ko', 'da', 'si', 'ki', 'ka', 'fu', 'yu'].map(k => `<i style="background:${LINES[k].c}"></i>`).join('');
+  $('#seats').innerHTML = setup.seats.map((s, i) => `<div class="seat ${s.k === 'off' ? 'off' : ''}"><span class="tk" style="--pc:${PCOL[i]}">${i + 1}</span>
+    <input value="${esc(s.n)}" maxlength="12" data-sn="${i}" aria-label="${i + 1}番の名前" ${s.k === 'off' ? 'disabled' : ''}>
+    <span class="seg" role="group" aria-label="${i + 1}番">${SEATK.filter(([k]) => !(i === 0 && k === 'off')).map(([k, l]) => `<button type="button" data-sk="${i}" data-k="${k}" aria-pressed="${s.k === k}">${l}</button>`).join('')}</span></div>`).join('');
+  $('#lens').innerHTML = Object.entries(LENS).map(([k, L]) => `<button type="button" class="len" data-len="${k}" aria-pressed="${setup.len === k}">${L.n}<small>${L.d}</small></button>`).join('');
+  const sv = LS.get('jinsei_save', null), c = $('#cont');
+  let okSave = false;
+  try { okSave = !!(sv && sv.G && sv.G.bv === BV && sv.G.ph !== 'over' && LENS[sv.G.len] && Array.isArray(sv.G.pl) && sv.G.pl.length >= 2 && sv.G.pl.every(p => p.pos >= 0 && p.pos < boardFor(sv.G.len).length)); } catch (e) { okSave = false; }
+  if (okSave) {
+    c.hidden = false;
+    c.innerHTML = `<button class="go" type="button" id="bCont" style="margin-top:18px">つづきから（${sv.G.round}周目・${sv.G.pl.map(p => esc(p.n)).join('・')}）</button>`;
+    $('#bCont').onclick = () => startLocal(sv.G);
+  } else { c.hidden = true; c.innerHTML = ''; }
+  $('#rulesTxt').innerHTML = RULES;
+  const n = setup.seats.filter(s => s.k !== 'off').length;
+  $('#bStart').disabled = n < 1;
+}
+$('#seats').addEventListener('input', e => { const i = e.target.dataset.sn; if (i != null) { setup.seats[+i].n = e.target.value; LS.set('jinsei_setup', setup); } });
+$('#seats').addEventListener('click', e => {
+  const b = e.target.closest('[data-sk]'); if (!b) return;
+  const i = +b.dataset.sk, k = b.dataset.k, s = setup.seats[i];
+  if (k === 'cpu' && s.k !== 'cpu' && (!s.n || s.n === 'あなた' || /^プレイヤー/.test(s.n))) s.n = CPUN[(i + 2) % 3];
+  if (k === 'hum' && s.k === 'cpu') s.n = i === 0 ? 'あなた' : `プレイヤー${i + 1}`;
+  s.k = k; LS.set('jinsei_setup', setup); renderHome();
+});
+$('#lens').addEventListener('click', e => { const b = e.target.closest('[data-len]'); if (!b) return; setup.len = b.dataset.len; LS.set('jinsei_setup', setup); renderHome(); });
+$('#bStart').onclick = () => {
+  const seats = setup.seats.filter(s => s.k !== 'off').map((s, i) => ({ k: s.k, n: (s.n || '').trim() || (s.k === 'cpu' ? CPUN[i % 3] : `プレイヤー${i + 1}`) }));
+  if (!seats.length) return;
+  if (seats.length === 1) seats.push({ k: 'cpu', n: 'つばめ' });   // 1人のときは CPU と
+  startLocal(newGame(seats, setup.len, false));
+};
+
+// ---- ゲームをはじめる（この端末） ----
+function startLocal(g) {
+  leaveNet();
+  V.mode = 'local'; V.myPeer = null;
+  enterGame(g);
+}
+function enterGame(g) {
+  G = g; V.es = g.ev ? g.ev.s : 0; V.busy = false; V.q = null;
+  V.pos = g.pl.map(p => p.pos); V.m = g.pl.map(p => p.m);
+  V.laid = ''; V.cardOpen = false; $('#card').hidden = true;
+  show('game');
+  layoutBoard(true);
+  renderAll();
+  if (g.ph === 'over') { showResult(); return; }
+  if (g.ev) showCard(g.ev, true);
+  afterState();
+}
+// 自分（この端末）が動かせる人か
+function mine(pi) {
+  const p = G && G.pl[pi]; if (!p) return false;
+  if (V.mode === 'guest') return !!p.peer && p.peer === V.myPeer;
+  return p.k === 'hum';
+}
+// 操作：ホスト・この端末はそのまま、ゲストはホストへ
+function send(a) {
+  if (!G) return;
+  if (V.mode === 'guest') { netAct(a); return; }
+  if (act(G, G.turn, a)) commit();
+}
+function commit() {
+  if (V.mode === 'local') { if (G.ph === 'over') LS.del('jinsei_save'); else LS.set('jinsei_save', { G }); }
+  if (V.mode === 'host') netPush();
+  onState(G);
+}
+// あたらしい状態：うごき（ルーレット・すすむ・きっぷ）を順に見せる
+function onState(g) {
+  V.q = g;
+  if (!V.busy) pump();
+}
+async function pump() {
+  while (V.q) {
+    const g = V.q; V.q = null;
+    const prev = G; G = g;
+    if (!prev || prev.pl.length !== g.pl.length || prev.len !== g.len) { V.pos = g.pl.map(p => p.pos); V.m = g.pl.map(p => p.m); layoutBoard(true); }
+    const ev = g.ev;
+    if (ev && ev.s !== V.es) {
+      V.busy = true; updDock();
+      const jump = ev.s > V.es + 1 && V.es !== 0 && !ev.path.length;
+      V.es = ev.s;
+      if (!jump) await play(ev);
+      V.busy = false;
+    }
+    V.pos = G.pl.map(p => p.pos);
+    renderAll();
+    syncMoney();
+  }
+  afterState();
+}
+// ルーレット → すすむ → きっぷ
+async function play(ev) {
+  const p = G.pl[ev.p];
+  if (ev.n != null) {
+    $('#card').hidden = true; V.cardOpen = false;
+    led1(`${p.n}：発車！`); led2('');
+    beep(SFX.go);
+    await rollLed(ev.n);
+    led2(`${ev.n}駅すすむ`);
+    const N = bd(G);
+    for (const id of ev.path) {
+      V.pos[ev.p] = id; placeTokens(); follow(N[id], RM() ? 'auto' : 'smooth');
+      if (!RM()) beep(SFX.hop);
+      await sleep(RM() ? 0 : 230);
+    }
+  }
+  V.pos[ev.p] = ev.at != null ? ev.at : G.pl[ev.p].pos;
+  placeTokens();
+  showCard(ev, false);
+  const big = ev.fx.find(f => f[2] === 'win'), pay = ev.fx.find(f => f[2] === 'pay'), bad = ev.fx.find(f => f[1] < -49);
+  beep(big ? SFX.win : pay ? SFX.pay : bad ? SFX.bad : null);
+  syncMoney();
+  await sleep(ev.n != null ? 650 : 300);
+}
+async function rollLed(n) {
+  const el = $('#ledNum'); el.classList.remove('idle');
+  if (!RM()) { const t0 = performance.now(); while (performance.now() - t0 < 700) { el.textContent = rnd10(); await sleep(55); } }
+  el.textContent = n;
+}
+function led1(t) { $('#led1').textContent = t; }
+function led2(t) { $('#led2').textContent = t; }
+// おわったあと：CPU の番・けっか
+function afterState() {
+  updDock();
+  if (!G) return;
+  if (G.ph === 'over') { setTimeout(showResult, TEST ? 0 : 900); return; }
+  clearTimeout(V.cpuT);
+  if (V.mode === 'guest' || V.busy) return;
+  const p = G.pl[G.turn];
+  if (p && p.k === 'cpu') {
+    const ver = G.ver;
+    V.cpuT = setTimeout(() => {
+      if (!G || G.ver !== ver || V.busy || G.ph === 'over') return;
+      const a = cpuMove(G, G.turn);
+      if (a && act(G, G.turn, a)) commit();
+    }, TEST ? 0 : (G.ph === 'pick' ? 1100 : 900));
+  }
+}
+
+// ---- 盤面（路線図）----
+function layoutBoard(force) {
+  if (!G) return;
+  const box = $('#board'), W = Math.max(300, Math.min(620, $('#bw').clientWidth || 360)), key = G.len + ':' + W;
+  if (!force && V.laid === key) return;
+  V.laid = key;
+  const N = bd(G), rowH = 60, x0 = 34, xB = Math.round(Math.max(176, W * 0.53)), pos = new Array(N.length), laneT = [];
+  let y = 44;
+  for (let i = 0; i < N.length; i++) {
+    const n = N[i]; if (n.laneOf != null) continue;
+    pos[i] = { x: x0, y, w: W - x0 - 34 }; y += rowH;
+    if (n.k === 'br' && n.lanes) {
+      const ys = y - rowH, Lm = Math.max(...n.lanes.map(l => l.length)), span = (Lm + 1) * (W < 480 ? 76 : rowH);   // 2本ならぶところは、せまい画面だと字が2〜3行になるので すこし広く
+      n.lanes.forEach((ids, li) => {
+        const gap = span / (ids.length + 1), x = li ? xB : x0;
+        ids.forEach((id, k) => { pos[id] = { x, y: ys + gap * (k + 1), w: li ? W - xB - 30 : xB - x0 - 40 }; });
+        laneT.push({ x: li ? xB : x0, y: ys + gap * 0.5 + 2, line: FORKS[n.fork].o[li].line });
+      });
+      y = ys + span + rowH;
+    }
+  }
+  const H = y + 30;
+  V.layout = { pos, W, H };
+  box.style.width = W + 'px'; box.style.height = H + 'px';
+  // 線（つぎの駅の線の色）
+  let paths = '';
+  for (const n of N) for (const m of n.next) {
+    const a = pos[n.id], b = pos[m]; if (!a || !b) continue;
+    const c = LINES[N[m].line].c, dy = b.y - a.y;
+    const d = a.x === b.x ? `M${a.x} ${a.y}L${b.x} ${b.y}` : `M${a.x} ${a.y}C${a.x} ${a.y + dy * 0.55},${b.x} ${b.y - dy * 0.55},${b.x} ${b.y}`;
+    paths += `<path d="${d}" stroke="${c}" stroke-width="8" fill="none" stroke-linecap="round"/>`;
+  }
+  const svg = $('#lines'); svg.setAttribute('width', W); svg.setAttribute('height', H); svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.innerHTML = paths;
+  $('#sts').innerHTML = N.map(n => {
+    const p = pos[n.id], L = LINES[n.line], stop = STOP.has(n.k);
+    return `<div class="st k-${n.k} ${stop ? 'stop' : ''}" style="left:${p.x}px;top:${p.y}px;--lc:${L.c};--lf:${L.f || '#fff'}" data-id="${n.id}">
+      <i class="mk"></i><div class="lb" style="width:${Math.max(90, p.w)}px"><span class="no">${stCode(n)}</span><b>${KIND[n.k] || ''} ${esc(n.t)}</b>${n.tag ? `<em class="tg" data-tag="${n.tag}">${TAGN[n.tag]}</em>` : ''}<small>${esc(hint(n))}</small></div></div>`;
+  }).join('') + laneT.map(t => `<span class="lane-t" style="left:${t.x}px;top:${t.y}px;background:${LINES[t.line].c}">${LINES[t.line].n}</span>`).join('');
+  placeTokens();
+  markTags();
+}
+const TOFF = [[-8, -8], [8, -8], [-8, 8], [8, 8]];
+function placeTokens() {
+  if (!G || !V.layout) return;
+  const box = $('#toks');
+  if (box.children.length !== G.pl.length) box.innerHTML = G.pl.map((p, i) => `<div class="tok" data-t="${i}" style="--pc:${PCOL[i]}">${i + 1}</div>`).join('');
+  G.pl.forEach((p, i) => {
+    const el = box.children[i], q = V.layout.pos[V.pos[i] != null ? V.pos[i] : p.pos]; if (!q) return;
+    el.style.transform = `translate(${q.x + TOFF[i][0]}px,${q.y + TOFF[i][1]}px)`;
+    el.classList.toggle('on', i === G.turn && G.ph !== 'over');
+  });
+}
+// 自分の「得意な分野」の駅をめだたせる（この端末で動かす人の しごと）
+function markTags() {
+  const tags = new Set(G ? G.pl.filter((p, i) => mine(i) && p.job).map(p => JOBS[p.job].tag) : []);
+  $$('#sts .tg').forEach(e => e.classList.toggle('me', tags.has(e.dataset.tag)));
+}
+function follow(n, behavior) {
+  if (!V.layout || !n) return;
+  const bw = $('#bw'), q = V.layout.pos[n.id]; if (!q) return;
+  const cardH = $('#card').hidden || innerWidth >= 880 ? 0 : $('#card').offsetHeight;
+  const vis = bw.clientHeight - cardH;
+  bw.scrollTo({ top: Math.max(0, q.y - vis * 0.4), behavior: behavior || 'smooth' });
+}
+
+// ---- 人の札（上）----
+function renderPlayers() {
+  if (!G) return;
+  $('#pls').innerHTML = G.pl.map((p, i) => {
+    const J = p.job ? JOBS[p.job] : null, ics = [J ? J.ic + J.n : 'しごとなし', p.co ? '🏢社長' : '', p.hs ? '🏠' : '', p.sp ? '💍' : '', p.kids ? '👶' + p.kids : '', p.tk ? '🎫' + p.tk : '', p.rest ? '⛔休み' : '', p.done ? '🏁' + p.done + '着' : ''].filter(Boolean).join(' ');
+    const tag = p.k === 'cpu' ? '（CPU）' : p.k === 'net' ? (V.mode === 'guest' && p.peer === V.myPeer ? '（あなた）' : '') : (V.mode !== 'local' ? '（ホスト）' : '');
+    return `<button type="button" class="pc ${i === G.turn && G.ph !== 'over' ? 'on' : ''} ${p.done ? 'out' : ''}" data-p="${i}" style="--pc:${PCOL[i]}">
+      <span class="tk" style="--pc:${PCOL[i]}">${i + 1}</span><span class="tx"><span class="nm">${esc(p.n)}<small class="muted">${tag}</small></span>
+      <span class="mo" data-mo="${i}">${fmtM(V.m[i] != null ? V.m[i] : p.m)}${p.debt ? `<small class="muted">（借金${fmtM(p.debt).replace('円', '')}）</small>` : ''}</span><span class="ics">${esc(ics)}</span></span></button>`;
+  }).join('');
+}
+$('#pls').addEventListener('click', e => { const b = e.target.closest('[data-p]'); if (b) showPlayer(+b.dataset.p); });
+function showPlayer(i) {
+  const p = G.pl[i], J = p.job ? JOBS[p.job] : null, h = p.hs ? houseOf(p.hs) : null;
+  const st = CO.filter(c => p.st[c.k]).map(c => `${c.ic} ${c.n} ${p.st[c.k]}株（いま 1株 ${G.pr[c.k]}万）`).join('<br>') || 'なし';
+  sheet(`${i + 1}番 ${p.n}`, `<div class="kv">
+    <b>お金</b><span>${fmtM(p.m)}</span><b>借金</b><span>${p.debt ? fmtM(p.debt) + '（給料日に お金があれば返す。のこりは おわりに1.2倍）' : 'なし'}</span>
+    <b>しごと</b><span>${J ? `${J.ic} ${esc(J.n)}<br><small class="muted">給料 ${jobSal(J)}・得意な分野：${TAGN[J.tag]}</small>` : 'まだない'}</span>
+    <b>会社</b><span>${p.co ? '🏢 社長（給料日に 会社の利益 ルーレット×7万円）' : 'なし'}</span>
+    <b>家</b><span>${h ? `${h.ic} ${esc(h.n)}（${h.p}万円）` : 'なし'}</span><b>株</b><span>${st}</span>
+    <b>家族</b><span>${p.sp ? '結婚している' : '独身'}・こども ${p.kids}人</span>
+    <b>保険</b><span>${[p.ins.h ? 'すまいの保険' : '', p.ins.m ? '医療保険' : ''].filter(Boolean).join('・') || 'なし'}</span>
+    <b>くじ</b><span>${p.tk ? `風の芽ジャンボ ${p.tk}番` : 'なし'}</span>
+    <b>いる駅</b><span>${esc(stCode(bd(G)[p.pos]) + ' ' + bd(G)[p.pos].t)}</span></div>
+    <p class="small muted">株価：${CO.map(c => `${c.n} ${G.pr[c.k]}万`).join('・')}</p>`);
+}
+// お金のうごき（+ − を札の上に）
+function syncMoney() {
+  if (!G) return;
+  G.pl.forEach((p, i) => {
+    const old = V.m[i]; V.m[i] = p.m;
+    const d = p.m - (old == null ? p.m : old), el = $(`[data-mo="${i}"]`);
+    if (el) { el.firstChild && (el.firstChild.textContent = fmtM(p.m)); if (d && !RM()) popAt(el, d); }
+  });
+}
+function popAt(el, d) {
+  const r = el.getBoundingClientRect(), e = document.createElement('div');
+  e.className = 'pop ' + (d > 0 ? 'p' : 'n'); e.textContent = fmtD(d);
+  e.style.left = Math.round(r.left) + 'px'; e.style.top = Math.round(r.top - 6) + 'px';
+  document.body.appendChild(e); setTimeout(() => e.remove(), 1500);
+}
+
+// ---- 下（発車標）----
+function updDock() {
+  const b = $('#bFire');
+  if (!G) { b.disabled = true; return; }
+  if (G.ph === 'over') { led1('ぜんいん引退しました'); led2('けっか発表'); b.disabled = true; return; }
+  const p = G.pl[G.turn], my = mine(G.turn);
+  b.disabled = !(G.ph === 'spin' && my && !V.busy && !V.wait);
+  if (V.busy) return;
+  const who = p.k === 'cpu' ? `${p.n}（CPU）` : p.n;
+  if (G.ph === 'spin' && G.ev && G.ev.ag && G.ev.p === G.turn) led1(`${who}：もう1回 発車！`);
+  else led1(G.ph === 'pick' ? (my ? `${who}の番です` : `${who}が えらんでいます`) : `つぎは ${who}`);
+  if (G.ph === 'spin') led2(my ? '「発車」をおすと ルーレットがまわります' : p.k === 'cpu' ? 'CPU が発車します' : `${p.n} が発車するのを待っています`);
+  else led2(my ? 'きっぷから えらんでください' : 'えらぶのを待っています');
+  const n = $('#ledNum'); if (G.ph === 'spin') { n.classList.add('idle'); n.textContent = '-'; }
+}
+$('#bFire').onclick = () => { if (!$('#bFire').disabled) { $('#card').hidden = true; V.cardOpen = false; send({ k: 'spin' }); } };
+document.addEventListener('keydown', e => {
+  if ($('#game').hidden || !$('#sheet').hidden || e.target.closest('input,textarea,select')) return;
+  if ((e.key === ' ' || e.key === 'Enter') && !$('#bFire').disabled && !e.target.closest('button')) { e.preventDefault(); $('#bFire').click(); return; }
+  if (/^[1-9]$/.test(e.key)) { const o = $(`#card [data-o="${e.key}"]`); if (o && !o.disabled) { e.preventDefault(); o.click(); } }
+});
+$('#bLog').onclick = () => {
+  if (!G) return;
+  sheet('記録', `<div class="logl">${G.log.slice().reverse().map(([pi, t]) => `<div><i style="--pc:${pi >= 0 ? PCOL[pi] : '#999'}"></i><span>${esc(t)}</span></div>`).join('')}</div>`);
+};
+$('#bQuit').onclick = () => {
+  if (V.mode === 'local') { if (!confirm('ホームにもどりますか？（この端末のゲームは「つづきから」でもどれます）')) return; }
+  else if (!confirm('部屋から ぬけますか？')) return;
+  clearTimeout(V.cpuT); leaveNet(); G = null; show('home'); renderHome();
+};
+
+// ---- きっぷ（できごと・えらぶ）----
+function showCard(ev, quiet) {
+  if (!G || !ev) return;
+  const N = bd(G), p = G.pl[ev.p], nd = N[ev.at != null ? ev.at : p.pos], L = LINES[nd.line];
+  const pend = G.ph === 'pick' && G.turn === ev.p ? G.pend : null, my = pend && mine(ev.p);
+  const fx = ev.fx.map(([t, d, c]) => `<div class="fx ${c || ''}"><span>${esc(t)}</span>${d ? `<span class="d ${d > 0 ? 'p' : 'n'}">${fmtD(d)}</span>` : ''}</div>`).join('');
+  const el = $('#card');
+  el.style.setProperty('--lc', L.c);
+  el.innerHTML = `<div class="card-h"><span class="tk who" style="--pc:${PCOL[ev.p]}">${ev.p + 1}</span><div class="tt"><small>${esc(p.n)}${ev.n != null ? `・ルーレット ${ev.n}` : ''}・${L.n} ${stCode(nd)}</small><b>${KIND[nd.k] || ''} ${esc(nd.t)}</b></div>${pend ? '' : '<button class="x" type="button" data-cx aria-label="とじる">×</button>'}</div>
+    <div class="card-b">${fx || (pend ? '' : '<div class="fx info"><span>なにもおきなかった</span></div>')}${pend ? pendHTML(G, ev.p, my) : ''}</div>`;
+  el.hidden = false; V.cardOpen = true;
+  const cx = el.querySelector('[data-cx]'); if (cx) cx.onclick = () => { el.hidden = true; V.cardOpen = false; };
+  el.querySelectorAll('[data-v]').forEach(b => b.onclick = () => { if (b.disabled) return; el.querySelectorAll('[data-v]').forEach(x => { x.disabled = true; }); send({ k: 'pick', v: Number(b.dataset.v) }); });
+  if (!quiet) { setDockH(); follow(nd, RM() ? 'auto' : 'smooth'); }
+  if (my && !quiet) { const f = el.querySelector('[data-v]'); if (f && matchMedia('(hover:hover)').matches) f.focus({ preventScroll: true }); }
+}
+function opt(i, v, title, sub, dis, pre) { return `<button type="button" class="opt" data-v="${v}" data-o="${i}" ${dis ? 'disabled' : ''}><span class="n">${i}</span><span class="ot">${pre || ''}${title}${sub ? `<small>${sub}</small>` : ''}</span></button>`; }
+function pendHTML(G, pi, my) {
+  const P = G.pend, p = G.pl[pi], N = bd(G), nd = N[p.pos], dis = !my;
+  const wait = my ? '' : `<p class="wait">${esc(p.n)}${p.k === 'cpu' ? '（CPU）' : ''}が えらんでいます…</p>`;
+  let h = '', i = 0;
+  switch (P.t) {
+    case 'br': h = `<p class="ask">${FORKS[P.f].q}</p><div class="opts">${FORKS[P.f].o.map((o, v) => opt(++i, v, LINES[o.line].n, o.d, dis, `<span class="lc" style="background:${LINES[o.line].c}"></span>`)).join('')}</div>`; break;
+    case 'job': case 'jobc':
+      h = `<p class="ask">${P.t === 'job' ? 'しごとをえらぶ' : 'しごとを変える？'}</p><div class="opts">${P.o.map((k, v) => { const J = JOBS[k]; return opt(++i, v, `${J.ic} ${J.n}`, `給料 ${jobSal(J)}・得意な分野：${TAGN[J.tag]}`, dis); }).join('')}${P.t === 'jobc' ? opt(++i, -1, 'いまのしごとをつづける', p.job ? `${JOBS[p.job].n}（給料 ${jobSal(JOBS[p.job])}）` : '', dis) : ''}</div>`;
+      break;
+    case 'house': {
+      const off = tagOK(p, nd) ? 0.8 : 1;
+      h = `<p class="ask">家をえらぶ（いま ${fmtM(p.m)}。足りない分は借金）</p><div class="opts">${HOUSES.map((x, v) => opt(++i, v, `${x.ic} ${x.n}`, `${fmtM(Math.round(x.p * off))}${off < 1 ? '（2割びき）' : ''}・おわりに 0.7〜1.6倍で売る`, dis)).join('')}${opt(++i, -1, '買わない', '', dis)}</div>`;
+      break;
+    }
+    case 'stock':
+      h = `<p class="ask">株を買う（1株ずつ・あと${5 - P.n}株まで。いま ${fmtM(p.m)}）</p><div class="opts">${CO.map((c, v) => opt(++i, v, `${c.ic} ${c.n}`, `1株 ${G.pr[c.k]}万円・持っている ${p.st[c.k] || 0}株`, dis)).join('')}${opt(++i, -1, P.n ? 'もう買わない' : '買わない', '', dis)}</div>`;
+      break;
+    case 'keiba':
+      if (P.s === 1) h = `<p class="ask">馬券を買う？（1〜10番の馬。このあと まわすルーレットの数が1着）</p><div class="opts">${BETS.map((b, v) => opt(++i, v, `${b}万円 賭ける`, `同じ数なら ${b * 6}万円・となりの数なら もどる`, dis)).join('')}${opt(++i, -1, '買わない', '', dis)}</div>`;
+      else h = `<p class="ask">馬番をえらぶ（${P.b}万円）</p><div class="nums">${Array.from({ length: 10 }, (_, k) => `<button type="button" data-v="${k + 1}" ${dis ? 'disabled' : ''}>${k + 1}</button>`).join('')}</div>`;
+      break;
+    case 'pickp': h = `<p class="ask">だれから ${P.a}万円もらう？</p><div class="opts">${G.pl.map((q, v) => q === p ? '' : opt(++i, v, `${v + 1}番 ${esc(q.n)}`, `いま ${fmtM(q.m)}${q.debt ? `・借金 ${fmtM(q.debt)}` : ''}`, dis, `<span class="lc" style="background:${PCOL[v]}"></span>`)).join('')}</div>`; break;
+    case 'lotto': h = `<p class="ask">風の芽ジャンボの番号（1枚5万円。つぎの抽せんで当たると +200万円）</p><div class="nums">${Array.from({ length: 10 }, (_, k) => `<button type="button" data-v="${k + 1}" ${dis ? 'disabled' : ''}>${k + 1}</button>`).join('')}</div><div class="opts">${opt(1, -1, '買わない', '', dis)}</div>`; break;
+    case 'ins': {
+      const o = [];
+      if (!p.ins.h) o.push([0, 'すまいの保険（30万円）', '家のこわれる駅で はらわなくてよい']);
+      if (!p.ins.m) o.push([1, '医療保険（20万円）', '入院の駅で はらわなくてよい']);
+      if (!p.ins.h && !p.ins.m) o.push([2, '両方（50万円）', '']);
+      h = `<p class="ask">保険に入る？</p><div class="opts">${o.map(([v, t, s]) => opt(++i, v, t, s, dis)).join('')}${opt(++i, -1, '入らない', '', dis)}</div>`;
+      break;
+    }
+  }
+  return h + wait;
+}
+function setDockH() { document.documentElement.style.setProperty('--dockh', $('#dock').offsetHeight + 'px'); }
+
+function renderAll() {
+  if (!G) return;
+  $('#barT').textContent = `${LENS[G.len].n}・${G.round}周目`;
+  renderPlayers(); placeTokens(); markTags(); updDock(); setDockH();
+  if (G.ph === 'pick' && G.ev && G.ev.p === G.turn) showCard(G.ev, true);
+}
+addEventListener('resize', () => { clearTimeout(layoutBoard.t); layoutBoard.t = setTimeout(() => { if (G && !$('#game').hidden) { layoutBoard(false); setDockH(); } }, 150); });
+
+// ---- けっか ----
+function showResult() {
+  if (!G || G.ph !== 'over' || !G.rk) return;
+  show('result');
+  $('#barT').textContent = 'けっか';
+  const rk = G.rk;
+  const part = (t, v, neg) => `<span>${t} ${neg ? '−' : ''}${fmtM(v)}</span>`;
+  $('#resIn').innerHTML = `<div class="sign rsign" role="img" aria-label="駅名標：引退ターミナル（終点）">
+      <div class="sign-kana">いんたいターミナル</div><h1 class="sign-name">引退ターミナル</h1><div class="sign-en">Intai Terminal</div>
+      <div class="sign-bar">${['ko', 'da', 'si', 'ki', 'ka', 'fu', 'yu'].map(k => `<i style="background:${LINES[k].c}"></i>`).join('')}</div>
+      <div class="sign-ends"><span>◀ ゆうやけ線<small>Yuyake Line</small></span><span>終点<small>Terminal</small></span></div></div>
+    <p class="muted small" style="margin:14px 2px 4px">お金＋家（売った値段）＋株＋家族（1人30万円）−借金（1.2倍）</p>
+    ${rk.map((r, o) => { const p = G.pl[r.i], h = p.hs ? houseOf(p.hs) : null;
+      return `<div class="rk"><span class="o">${o + 1}</span><span class="tk" style="--pc:${PCOL[r.i]}">${r.i + 1}</span>
+        <span class="nm">${o === 0 ? '🏆 ' : ''}${esc(p.n)}${p.k === 'cpu' ? '<small class="muted">（CPU）</small>' : ''}<small class="muted jb">${p.job ? esc(JOBS[p.job].n) : 'しごとなし'}${p.co ? '・社長' : ''}・${p.done}番目に引退</small></span>
+        <span class="tot">${fmtM(r.tot)}</span>
+        <span class="bk">${part('お金', r.m)}${h ? `<span>＋ 家 ${fmtM(r.hv)}（${esc(h.n)}・ルーレット ${r.hr}）</span>` : ''}${r.sv ? `<span>＋ 株 ${fmtM(r.sv)}</span>` : ''}${r.fam ? `<span>＋ 家族 ${fmtM(r.fam)}</span>` : ''}${r.dp ? `<span>− 借金 ${fmtM(r.dp)}</span>` : ''}</span></div>`; }).join('')}
+    <button class="go" type="button" id="bAgain">${V.mode === 'guest' ? '部屋で つぎを待つ' : V.mode === 'host' ? '部屋にもどる（もう一回）' : 'もう一回'}</button><button class="sub" type="button" id="bHome">ホームへ</button>`;
+  $('#bAgain').onclick = () => {
+    if (V.mode === 'guest') { V.dismissed = G.gid; G = null; V.q = null; guestLobby(); return; }
+    if (V.mode === 'host') { hostLobby(); return; }
+    startLocal(newGame(G.pl.map(p => ({ k: p.k === 'net' ? 'cpu' : p.k, n: p.n })), G.len, false));
+  };
+  $('#bHome').onclick = () => { leaveNet(); G = null; show('home'); renderHome(); };
+}
+
+/* ================= ネット対戦（ホストがすすめる）=================
+   ホスト：presence = {h:1, n, lob:{len, cpu, mem:[{peer,n}]}, g: ゲームの状態}
+   ゲスト：presence = {n, a:{s, k, v}}（操作。ホストが番号 s の新しいものだけ使う） */
+const NET = { room: null, code: '', host: false, peers: [], first: new Map(), seen: new Map(), aseq: 0, lob: null, off: null, gone: new Map(), lastHost: 0 };
+const CODEC = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+async function getRoomApi() {
+  if (!(window.claude && typeof window.claude.use === 'function')) throw new Error('ネット対戦の部品が読みこめませんでした（ページを読みなおしてください）');
+  return window.claude.use('room');
+}
+function myName() { return ((setup.seats[0] && setup.seats[0].n) || 'あなた').trim().slice(0, 12) || 'あなた'; }
+async function hostCreate() {
+  const code = Array.from({ length: 4 }, () => CODEC[Math.floor(Math.random() * CODEC.length)]).join('');
+  await joinRoom(code, true);
+}
+async function joinRoom(code, host) {
+  code = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
+  if (code.length !== 4) { toast('部屋番号は4文字です'); return; }
+  leaveNet();
+  toast('部屋につないでいます…', 8000);
+  let api, room;
+  try { api = await getRoomApi(); room = await api.join('js' + code.toLowerCase()); }
+  catch (e) { toast(e && e.message ? e.message : 'つながりませんでした'); return; }
+  $('#toast').hidden = true;
+  NET.room = room; NET.code = code; NET.host = host; NET.first = new Map(); NET.seen = new Map(); NET.aseq = 0; NET.gone = new Map(); NET.lastHost = Date.now(); NET.t0 = Date.now(); NET.hostSeen = 0; NET.noHost = 0; NET.hostLob = null;
+  V.mode = host ? 'host' : 'guest';
+  const me = room.peers().find(p => p.isMe); V.myPeer = me ? me.peer : null;
+  if (host) { NET.lob = { len: setup.len, cpu: 1 }; const L = lobState(); NET.lobJ = JSON.stringify(L); await room.presence({ h: 1, n: myName(), lob: L, g: null }); }
+  else await room.presence({ n: myName(), a: null });
+  NET.off = room.onPeers(({ peers }) => netPeers(peers));
+  netPeers(room.peers());
+  clearInterval(NET.tick); NET.tick = setInterval(netTick, 2000);
+  if (host) hostLobby(); else guestLobby();
+  try { history.replaceState(null, '', `?room=${code}`); } catch (e) {}
+}
+function leaveNet() {
+  clearInterval(NET.tick);
+  if (NET.off) { try { NET.off(); } catch (e) {} NET.off = null; }
+  if (NET.room) { try { NET.room.leave(); } catch (e) {} NET.room = null; }
+  NET.peers = []; NET.code = '';
+  if (V.mode !== 'local') { V.mode = 'local'; V.myPeer = null; }
+  if (/[?&]room=/.test(location.search)) { try { history.replaceState(null, '', location.pathname); } catch (e) {} }
+}
+// 部屋にいる人（ゲスト）。入った順
+function guests() {
+  return NET.peers.filter(p => !p.isMe && p.presence && !p.presence.h).map(p => { if (!NET.first.has(p.peer)) NET.first.set(p.peer, Date.now()); return p; })
+    .sort((a, b) => NET.first.get(a.peer) - NET.first.get(b.peer));
+}
+function lobState() {
+  const gs = guests().slice(0, 3);
+  const cpu = Math.max(0, Math.min(NET.lob.cpu, 3 - gs.length));
+  return { len: NET.lob.len, cpu, mem: [{ peer: V.myPeer, n: myName(), h: 1 }, ...gs.map(p => ({ peer: p.peer, n: String((p.presence && p.presence.n) || 'ゲスト').slice(0, 12) }))] };
+}
+// 部屋の設定（ホスト）：かわったときだけ流す。かわったら true
+function lobPush() {
+  if (!NET.room || !NET.host) return false;
+  const L = lobState(), j = JSON.stringify(L);
+  if (j === NET.lobJ) return false;
+  NET.lobJ = j; NET.room.presence({ lob: L }); return true;
+}
+function netPeers(peers) {
+  NET.peers = peers || [];
+  if (!NET.room) return;
+  if (NET.host) {
+    if ((!G || $('#game').hidden && $('#result').hidden) && lobPush() && !$('#lobby').hidden) hostLobby();
+    // ゲストの操作（ホストの G はいつも最新。うごきを見せている最中でも、すぐ使う）
+    if (G && G.ph !== 'over') {
+      for (const p of NET.peers) {
+        if (p.isMe || !p.presence || !p.presence.a) continue;
+        const a = p.presence.a, s = Number(a.s) || 0;
+        if (s <= (NET.seen.get(p.peer) || 0)) continue;
+        NET.seen.set(p.peer, s);
+        if (a.g !== G.gid) continue;   // 前のゲームの操作
+        const pi = G.pl.findIndex(q => q.k === 'net' && q.peer === p.peer);
+        if (pi < 0 || pi !== G.turn) continue;
+        if (act(G, pi, { k: a.k, v: a.v })) commit();
+      }
+    }
+  } else {
+    const h = NET.peers.find(p => !p.isMe && p.presence && p.presence.h);
+    if (!h) return;
+    NET.lastHost = Date.now(); NET.hostSeen = 1;
+    const g = h.presence.g;
+    if (g && Array.isArray(g.pl)) {
+      if (g.ph === 'over' && V.dismissed === g.gid) { if (G) { G = null; V.q = null; } guestLobby(); return; }
+      if (!G || G.gid !== g.gid || $('#game').hidden && $('#result').hidden) { V.mode = 'guest'; V.qv = g.ver; V.wait = 0; enterGame(g); }
+      else if (g.ver > (V.qv || 0)) { V.qv = g.ver; V.wait = 0; onState(g); }
+    } else {
+      NET.hostLob = h.presence.lob;
+      if (G) { clearTimeout(V.cpuT); G = null; V.q = null; }
+      guestLobby();
+    }
+  }
+}
+// 2秒ごと：ぬけた人は CPU に（ホスト）・ホストがいなくなった（ゲスト）
+function netTick() {
+  if (!NET.room) return;
+  const now = Date.now(), peers = NET.room.peers(), here = new Set(peers.map(p => p.peer));
+  if (NET.host && G && G.ph !== 'over') {
+    let ch = false;
+    G.pl.forEach((p, i) => {
+      if (p.k !== 'net') return;
+      if (here.has(p.peer)) { NET.gone.delete(p.peer); return; }
+      if (!NET.gone.has(p.peer)) NET.gone.set(p.peer, now);
+      else if (now - NET.gone.get(p.peer) > 10000) { p.k = 'cpu'; log(G, i, `${p.n}：通信が切れたので CPU がかわります`); p.n = p.n + '（CPU）'; ch = true; }
+    });
+    if (ch) { G.ver++; commit(); }
+  }
+  if (!NET.host) {
+    if (peers.some(p => !p.isMe && p.presence && p.presence.h)) NET.lastHost = now;
+    if (NET.hostSeen && now - NET.lastHost > 10000) {
+      toast('ホストとの通信が切れました。ホームにもどります', 4000);
+      leaveNet(); G = null; show('home'); renderHome(); return;
+    }
+    if (!NET.hostSeen && now - NET.t0 > 9000 && !$('#lobby').hidden && !NET.noHost) { NET.noHost = 1; guestLobby(); }
+  }
+}
+function netPush() { if (NET.room && NET.host) NET.room.presence({ g: G, lob: null }); }
+function netAct(a) {
+  if (!NET.room) return;
+  NET.aseq = Math.max(Date.now(), NET.aseq + 1);
+  NET.room.presence({ a: { s: NET.aseq, g: G.gid, k: a.k, v: a.v == null ? null : a.v } });
+  V.wait = Date.now(); updDock();
+  clearTimeout(V.waitT); V.waitT = setTimeout(() => { if (V.wait && Date.now() - V.wait >= 4000) { V.wait = 0; if (G) { updDock(); if (G.ph === 'pick' && G.ev) showCard(G.ev, true); } } }, 4100);
+}
+function lobHead() {
+  return `<div class="ledbox"><div class="lt">部屋番号</div><div class="big">${esc(NET.code)}</div><div class="lt">友だちは「部屋に入る」に この番号を入れます</div></div>
+    <button class="sub" type="button" id="bCopy">招待のリンクをコピー</button>`;
+}
+function bindCopy() {
+  const b = $('#bCopy'); if (!b) return;
+  b.onclick = async () => {
+    const url = `${location.origin}${location.pathname}?room=${NET.code}`;
+    try { await navigator.clipboard.writeText(url); toast('リンクをコピーしました'); } catch (e) { prompt('このリンクを送ってください', url); }
+  };
+}
+function hostLobby() {
+  if (G) { clearTimeout(V.cpuT); G = null; V.q = null; if (NET.room) { const L = lobState(); NET.lobJ = JSON.stringify(L); NET.room.presence({ g: null, lob: L }); } }
+  show('lobby');
+  $('#barT').textContent = 'ネット対戦';
+  const L = lobState(), n = L.mem.length + L.cpu;
+  $('#lobIn').innerHTML = `${lobHead()}
+    <section class="sec"><h2>あそぶ人（${n}人）</h2>
+    ${L.mem.map((m, i) => `<div class="mem"><span class="tk" style="--pc:${PCOL[i]}">${i + 1}</span>${esc(m.n)}<small>${m.h ? 'ホスト（あなた）' : 'ネット'}</small></div>`).join('')}
+    ${Array.from({ length: L.cpu }, (_, k) => `<div class="mem"><span class="tk" style="--pc:${PCOL[L.mem.length + k]}">${L.mem.length + k + 1}</span>${CPUN[k]}<small>CPU</small></div>`).join('')}
+    <div class="cpuc"><span class="small">CPU</span><button type="button" id="cpuM" aria-label="CPU をへらす">−</button><b>${L.cpu}</b><button type="button" id="cpuP" aria-label="CPU をふやす">＋</button><span class="small muted">（4人まで）</span></div></section>
+    <section class="sec"><h2>長さ</h2><div class="lens">${Object.entries(LENS).map(([k, x]) => `<button type="button" class="len" data-l="${k}" aria-pressed="${NET.lob.len === k}">${x.n}<small>${x.d}</small></button>`).join('')}</div></section>
+    <button class="go" type="button" id="bGo" ${n < 2 ? 'disabled' : ''}>出発する</button>
+    <p class="small muted" style="margin-top:10px">${n < 2 ? '2人から出発できます（CPU を入れるか、友だちを待つ）' : '友だちが入ったら、ここにならびます'}</p>
+    <button class="sub" type="button" id="bLeave">部屋をとじる</button>`;
+  bindCopy();
+  $('#cpuM').onclick = () => { NET.lob.cpu = Math.max(0, NET.lob.cpu - 1); lobPush(); hostLobby(); };
+  $('#cpuP').onclick = () => { NET.lob.cpu = Math.min(3, NET.lob.cpu + 1); lobPush(); hostLobby(); };
+  $$('#lobIn [data-l]').forEach(b => b.onclick = () => { NET.lob.len = b.dataset.l; lobPush(); hostLobby(); });
+  $('#bGo').onclick = () => {
+    const L2 = lobState(); if (L2.mem.length + L2.cpu < 2) return;
+    const seats = [{ k: 'hum', n: myName() }, ...L2.mem.slice(1).map(m => ({ k: 'net', n: m.n, peer: m.peer })), ...Array.from({ length: L2.cpu }, (_, k) => ({ k: 'cpu', n: CPUN[k] }))];
+    NET.seen = new Map();
+    for (const p of NET.peers) if (p.presence && p.presence.a) NET.seen.set(p.peer, Number(p.presence.a.s) || 0);   // 前の操作は使わない
+    const g = newGame(seats, L2.len, true);
+    G = null; enterGame(g); netPush();
+  };
+  $('#bLeave').onclick = () => { leaveNet(); show('home'); renderHome(); };
+}
+function guestLobby() {
+  show('lobby');
+  $('#barT').textContent = 'ネット対戦';
+  const L = NET.hostLob;
+  $('#lobIn').innerHTML = `${lobHead()}
+    <section class="sec"><h2>あそぶ人</h2>${L ? L.mem.map((m, i) => `<div class="mem"><span class="tk" style="--pc:${PCOL[i]}">${i + 1}</span>${esc(m.n)}<small>${m.h ? 'ホスト' : m.peer === V.myPeer ? 'あなた' : 'ネット'}</small></div>`).join('')
+      + Array.from({ length: L.cpu }, (_, k) => `<div class="mem"><span class="tk" style="--pc:${PCOL[L.mem.length + k]}">${L.mem.length + k + 1}</span>${CPUN[k]}<small>CPU</small></div>`).join('') : `<p class="muted">${NET.noHost ? 'この番号の部屋が見つかりません。番号をたしかめてください（ホストが部屋をつくってから入ります）' : NET.hostSeen ? 'ホストが つぎのゲームを用意するのを待っています…' : 'ホストをさがしています…'}</p>`}
+    ${L && !L.mem.some(m => m.peer === V.myPeer) ? '<p class="small muted">満員なので、見学になります</p>' : ''}</section>
+    <p class="small muted">${L ? `長さ：${LENS[L.len] ? LENS[L.len].n : ''}。ホストが出発するのを待っています` : ''}</p>
+    <button class="sub" type="button" id="bLeave">部屋から ぬける</button>`;
+  bindCopy();
+  $('#bLeave').onclick = () => { leaveNet(); show('home'); renderHome(); };
+}
+$('#bHost').onclick = () => hostCreate();
+$('#bJoin').onclick = () => joinRoom($('#codeIn').value, false);
+$('#codeIn').addEventListener('keydown', e => { if (e.key === 'Enter') $('#bJoin').click(); });
+
+/* ================= はじめ ================= */
+$('#bRule').onclick = () => sheet('あそびかた', `<div class="rules" style="margin:0">${RULES}</div>`);
+$('#bSnd').onclick = () => { SND = SND ? 0 : 1; LS.set('jinsei_snd', SND); sndBtn(); if (SND) beep(SFX.pay); };
+sndBtn();
+renderHome();
+show('home');
+{ const rc = (QS.get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4); if (rc.length === 4) { $('#codeIn').value = rc; $('#bJoin').scrollIntoView({ block: 'center' }); toast('部屋番号が入っています。「部屋に入る」をおしてください', 4000); } }
+if (TEST) window.JS_T = { get G() { return G; }, V, act, cpuMove, newGame, boardFor, NET, startLocal, send, mine };
+})();
+</script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../config.js?v=20261101"></script>
+<script>try { const C = window.AILINAX_CONFIG || {}; if (window.supabase && C.url && C.anonKey) window.KZ_SB = window.supabase.createClient(C.url, C.anonKey); } catch (e) {}</script>
+<script src="room.js?v=1"></script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+# 入れたあとで中身を書きかえた更新（supabase/migrations）。update.sh は、ここにある書きかえだけを通す
+#   1行に「ファイルの名前 前の sha256（入れたときのもの） いまの sha256」
+#   DB の中身は変えない（書きかえるのは、説明やコメント・GitHub に出したくない名前など、もう入れた DB には関係ないところだけ）
+20261102-71_cars_more.sql 2ea3e4ecb76d2158d15b0a6554b65ac7693d756eb770413d66318e54ac37d935 bc085e3033048a7175ee3ebf864b882e98e55edae4c7b3f5639e42f207dbb5c6
+20261103-72_cars_real.sql 0451733833e30d093ec61105ebaef88db8c4e104b7341ffed09bc36f1a7ca130 5f0f904b1378ed7eeb6dc015eeb115dafab15af03eb959bd84a2b2267e43ee2f
+20261103-74_cars_fictional.sql 79c00afb11642b67cc35c5309e42bd2af891256de08a813a11230f4909f8c8a3 cc5bfe4cea6ce3dd20239ae1c41776151284dfe468ddecdb0f9c545ed1d5c6ad

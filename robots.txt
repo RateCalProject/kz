@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /supabase/
+Disallow: /server/
+
+Sitemap: https://a-ruri.com/sitemap.xml
