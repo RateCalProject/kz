@@ -18003,7 +18003,7 @@ create table if not exists public.mp_fsets (      -- 編成のプリセット（
   unique (u, name)
 );
 alter table public.mp_fsets enable row level security;
--- 系列・形式（DB の更新72・74・76。名前とコードは架空）
+-- 系列・形式（DB の更新72・74・76・78。名前とコードは架空。客車のプリセットは機関車なし）
 insert into public.mp_series(code, name, kind, note, ord, grp, yr, sets) values
   ('E178', '178系', 'emu', '交直流特急形電車（1960年代）。最高120km/h・リクライニングシート・冷房・トイレ。Mp17800（パンタグラフ）と M17800 で1組（ユニット）。グリーン車（Ts17800）・食堂車（Td17800）も', 20, null, 1968, '[{"n":"6両","t":["E178-Tc17800","E178-Mp17800","E178-M17800","E178-Mp17800","E178-M17800","E178-Tc17800"]},{"n":"9両（グリーン1）","t":["E178-Tc17800","E178-Mp17800","E178-M17800","E178-Ts17800","E178-Mp17800","E178-M17800","E178-Mp17800","E178-M17800","E178-Tc17800"]},{"n":"11両（グリーン2・食堂）","t":["E178-Tc17800","E178-Mp17800","E178-M17800","E178-Ts17800","E178-Ts17800","E178-Td17800","E178-Mp17800","E178-M17800","E178-Mp17800","E178-M17800","E178-Tc17800"]},{"n":"12両（グリーン・食堂）","t":["E178-Tc17800","E178-Mp17800","E178-M17800","E178-Mp17800","E178-M17800","E178-Ts17800","E178-Td17800","E178-Mp17800","E178-M17800","E178-Mp17800","E178-M17800","E178-Tc17800"]}]'::jsonb),
   ('E378', '378系', 'emu', '交直流特急形電車（2000年代・VVVF）。最高130km/h・リクライニングシート・冷房・トイレ。パンタグラフは付随車（Tp37800・Tpc37800）にのり、となりの電動車と1組', 21, null, 2001, '[{"n":"基本6両","t":["E378-Tsc37800","E378-Tp37800","E378-M37800","E378-T37800","E378-Tp37800","E378-Mc37800"]},{"n":"付属3両","t":["E378-Tpc37800","E378-M37800","E378-Tc37800"]},{"n":"9両（6＋3）","t":["E378-Tsc37800","E378-Tp37800","E378-M37800","E378-T37800","E378-Tp37800","E378-Mc37800","E378-Tpc37800","E378-M37800","E378-Tc37800"]},{"n":"12両（6＋3＋3）","t":["E378-Tsc37800","E378-Tp37800","E378-M37800","E378-T37800","E378-Tp37800","E378-Mc37800","E378-Tpc37800","E378-M37800","E378-Tc37800","E378-Tpc37800","E378-M37800","E378-Tc37800"]}]'::jsonb),
@@ -18015,10 +18015,10 @@ insert into public.mp_series(code, name, kind, note, ord, grp, yr, sets) values
   ('DKH116', 'キハ116系', 'dmu', '急行形気動車（1990年代・急行むけ）。最高100km/h・回転リクライニングシート・冷房。電化していない線も走れる', 61, null, 1990, '[{"n":"1両","t":["DKH116-Kiha116"]},{"n":"2両","t":["DKH116-Kiha117","DKH116-Kiha118"]},{"n":"急行3両","t":["DKH116-Kiha116","DKH116-Kiha117","DKH116-Kiha118"]},{"n":"4両","t":["DKH116-Kiha117","DKH116-Kiha118","DKH116-Kiha117","DKH116-Kiha118"]}]'::jsonb),
   ('DKH44', 'キハ44系', 'dmu', '一般形気動車（1970年代）。エンジン1基 220PS・最高95km/h・セミクロスシート。電化していない線も走れる。キハ44は1両でも走れる。キハ62系ともつなげる', 70, 'DKH62', 1977, '[{"n":"1両","t":["DKH44-Kiha44"]},{"n":"2両（両開き扉）","t":["DKH44-Kiha49","DKH44-Kiha49-1000"]},{"n":"2両（デッキつき）","t":["DKH44-Kiha49-500","DKH44-Kiha49-1500"]},{"n":"3両","t":["DKH44-Kiha49","DKH44-Kiha44","DKH44-Kiha49-1000"]}]'::jsonb),
   ('DKH128', 'キハ128形', 'dmu', '一般形気動車（1990年代・ローカル線のワンマン）。長さ16.3mの小さな両運転台・最高95km/h・冷房。電化していない線も走れる', 71, null, 1992, '[{"n":"1両","t":["DKH128-Kiha128"]},{"n":"2両","t":["DKH128-Kiha128","DKH128-Kiha128"]}]'::jsonb),
-  ('P18', '18系客車', 'pc', '軽量客車（1950年代・急行と普通むけ）。座席車・寝台車（B寝台は3段・A寝台は2段のプルマン式）・食堂車・サロンカー・郵便車。最高95km/h。冷房は改造した形式だけ。機関車がひっぱる', 40, null, 1955, '[{"n":"普通4両","t":["@L","P18-Nahafu18","P18-Naha18","P18-Naha18","P18-Nahafu18"]},{"n":"急行（座席9両・グリーン1）","t":["@L","P18-Nahafu19","P18-Naha19","P18-Naha19","P18-Naha19","P18-Naro18","P18-Naha19","P18-Naha19","P18-Naha19","P18-Nahafu19"]},{"n":"寝台急行10両（郵便・A寝台・食堂）","t":["@L","P18-Oyu18","P18-Orone18","P18-Nahane19","P18-Nahane19","P18-Nahane19","P18-Nahane19","P18-Oshi18","P18-Naha19","P18-Nahafu19"]},{"n":"寝台急行12両（冷房）","t":["@L","P18-Ohanefu18","P18-Orone18","P18-Orone18","P18-Ohane19","P18-Ohane19","P18-Ohane19","P18-Suhane18","P18-Suhane18","P18-Oshi19","P18-Oro18","P18-Naha19","P18-Nahafu19"]}]'::jsonb),
-  ('P28', '28系客車', 'pc', '寝台特急（ブルートレイン）の客車（1950年代の終わりから）。全車冷房・空気ばね。電源車（マニ28・カニ28 など）から電気をもらうので、電源車がいる。最高110km/h', 41, null, 1958, '[{"n":"寝台特急8両","t":["@L","P28-Kani28","P28-Narone29","P28-Nashi28","P28-Nahane28","P28-Nahane28","P28-Nahane28","P28-Nahane28","P28-Nahanefu28"]},{"n":"寝台特急15両（座席車つき）","t":["@L","P28-Kani29","P28-Narone27","P28-Naro28","P28-Nahane28","P28-Nahane28","P28-Nahane28","P28-Nashi28","P28-Nahanefu26","P28-Narone29","P28-Nahane28","P28-Nahane28","P28-Nahane28","P28-Nahane28","P28-Nahane28","P28-Nahanefu28"]},{"n":"寝台特急15両（個室・A寝台が多い）","t":["@L","P28-Kani28","P28-Narone28","P28-Narone27","P28-Narone29","P28-Narone29","P28-Narone29","P28-Nahane28","P28-Naro28","P28-Nashi28","P28-Nahane28","P28-Nahane28","P28-Nahane28","P28-Nahane28","P28-Nahane28","P28-Nahanefu28"]}]'::jsonb),
-  ('P52', '52系客車', 'pc', '普通列車むけの客車（1970年代・赤い車体）。自動扉・セミクロスシート。最高95km/h・冷房なし。トイレは緩急車だけ', 42, null, 1977, '[{"n":"普通3両","t":["@L","P52-Ohafu52","P52-Oha52","P52-Ohafu52"]},{"n":"普通4両","t":["@L","P52-Ohafu52","P52-Oha52","P52-Oha52","P52-Ohafu52"]},{"n":"荷物・郵便つき6両","t":["@L","P52-Mani52","P52-Suyuni52","P52-Ohafu52","P52-Oha52","P52-Oha52","P52-Ohafu52"]},{"n":"寒い地方の普通4両","t":["@L","P52-Ohafu53","P52-Oha53","P52-Oha53","P52-Ohafu53"]}]'::jsonb),
-  ('TENP', '展望車・特ロ', 'pc', '1等展望車と特別2等車（特ロ）。特急で18系とつないで走った。展望車は最後尾に。最高95km/h', 43, null, 1938, '[{"n":"特急10両（展望車つき）","t":["@L","P18-Nahafu19","P18-Naha19","P18-Naha19","P18-Naha19","P18-Oshi18","TENP-Suro56","TENP-Suro56","P18-Naro18","TENP-Maite56"]},{"n":"特急9両（展望車つき）","t":["@L","P18-Nahafu18","P18-Naha18","P18-Naha18","P18-Naha18","P18-Oshi18","TENP-Suro58","TENP-Suro58","TENP-Maite47"]}]'::jsonb)
+  ('P18', '18系客車', 'pc', '軽量客車（1950年代・急行と普通むけ）。座席車・寝台車（B寝台は3段・A寝台は2段のプルマン式）・食堂車・サロンカー・郵便車。最高95km/h。冷房は改造した形式だけ。機関車がひっぱる', 40, null, 1955, '[{"n":"普通4両","t":["P18-Nahafu18","P18-Naha18","P18-Naha18","P18-Nahafu18"]},{"n":"急行（座席9両・グリーン1）","t":["P18-Nahafu19","P18-Naha19","P18-Naha19","P18-Naha19","P18-Naro18","P18-Naha19","P18-Naha19","P18-Naha19","P18-Nahafu19"]},{"n":"寝台急行10両（郵便・A寝台・食堂）","t":["P18-Oyu18","P18-Orone18","P18-Nahane19","P18-Nahane19","P18-Nahane19","P18-Nahane19","P18-Oshi18","P18-Naha19","P18-Nahafu19"]},{"n":"寝台急行12両（冷房）","t":["P18-Ohanefu18","P18-Orone18","P18-Orone18","P18-Ohane19","P18-Ohane19","P18-Ohane19","P18-Suhane18","P18-Suhane18","P18-Oshi19","P18-Oro18","P18-Naha19","P18-Nahafu19"]}]'::jsonb),
+  ('P28', '28系客車', 'pc', '寝台特急（ブルートレイン）の客車（1950年代の終わりから）。全車冷房・空気ばね。電源車（マニ28・カニ28 など）から電気をもらうので、電源車がいる。最高110km/h', 41, null, 1958, '[{"n":"寝台特急8両","t":["P28-Kani28","P28-Narone29","P28-Nashi28","P28-Nahane28","P28-Nahane28","P28-Nahane28","P28-Nahane28","P28-Nahanefu28"]},{"n":"寝台特急15両（座席車つき）","t":["P28-Kani29","P28-Narone27","P28-Naro28","P28-Nahane28","P28-Nahane28","P28-Nahane28","P28-Nashi28","P28-Nahanefu26","P28-Narone29","P28-Nahane28","P28-Nahane28","P28-Nahane28","P28-Nahane28","P28-Nahane28","P28-Nahanefu28"]},{"n":"寝台特急15両（個室・A寝台が多い）","t":["P28-Kani28","P28-Narone28","P28-Narone27","P28-Narone29","P28-Narone29","P28-Narone29","P28-Nahane28","P28-Naro28","P28-Nashi28","P28-Nahane28","P28-Nahane28","P28-Nahane28","P28-Nahane28","P28-Nahane28","P28-Nahanefu28"]}]'::jsonb),
+  ('P52', '52系客車', 'pc', '普通列車むけの客車（1970年代・赤い車体）。自動扉・セミクロスシート。最高95km/h・冷房なし。トイレは緩急車だけ', 42, null, 1977, '[{"n":"普通3両","t":["P52-Ohafu52","P52-Oha52","P52-Ohafu52"]},{"n":"普通4両","t":["P52-Ohafu52","P52-Oha52","P52-Oha52","P52-Ohafu52"]},{"n":"荷物・郵便つき6両","t":["P52-Mani52","P52-Suyuni52","P52-Ohafu52","P52-Oha52","P52-Oha52","P52-Ohafu52"]},{"n":"寒い地方の普通4両","t":["P52-Ohafu53","P52-Oha53","P52-Oha53","P52-Ohafu53"]}]'::jsonb),
+  ('TENP', '展望車・特ロ', 'pc', '1等展望車と特別2等車（特ロ）。特急で18系とつないで走った。展望車は最後尾に。最高95km/h', 43, null, 1938, '[{"n":"特急10両（展望車つき）","t":["P18-Nahafu19","P18-Naha19","P18-Naha19","P18-Naha19","P18-Oshi18","TENP-Suro56","TENP-Suro56","P18-Naro18","TENP-Maite56"]},{"n":"特急9両（展望車つき）","t":["P18-Nahafu18","P18-Naha18","P18-Naha18","P18-Naha18","P18-Oshi18","TENP-Suro58","TENP-Suro58","TENP-Maite47"]}]'::jsonb)
 on conflict (code) do nothing;
 insert into public.mp_types(code, series, label, role, face, num_from, num_to, len, cap, seats, mass, power, panto, cab, vmax, acc, dec, elec, heat, ac, toilet, price, upkeep, life, note, ord, nbase, cls, rooms, fn, npad) values
   ('E178-Tc17800', 'E178', 'Tc17800', 'Tc', '', 1, 1999, 21.6, 56, 56, 41.0, 0, 0, true, 120, 1.6, 4.0, true, true, true, true, 75000000, 20000, 365, '制御車（運転台・トイレ。編成に電気を送る発電機つき）。0001〜', 3010, '178', '', 0, '{}', 4),
@@ -18109,6 +18109,22 @@ insert into public.mp_types(code, series, label, role, face, num_from, num_to, l
   ('TENP-Maite56', 'TENP', 'マイテ56', 'P', '緩急車', 1, 999, 20.0, 17, 17, 45.0, 0, 0, false, 95, null, 3.0, false, true, false, true, 95000000, 23000, 365, '1等展望車（1930年代）。開放室と区分室・展望室・車掌室', 3860, 'マイテ56', 'G', 0, '{obs}', 1),
   ('TENP-Suro56', 'TENP', 'スロ56', 'P', '', 1, 999, 20.0, 48, 48, 37.0, 0, 0, false, 95, null, 3.0, false, true, false, true, 45000000, 10000, 365, '特別2等車（1950年代）。リクライニングシート。18系の急行にもよくつないだ', 3870, 'スロ56', 'G', 0, '{}', 1),
   ('TENP-Suro58', 'TENP', 'スロ58', 'P', '', 1, 999, 20.0, 44, 44, 37.0, 0, 0, false, 95, null, 3.0, false, true, false, true, 42000000, 10000, 365, '特別2等車（1950年）。リクライニングシートの客車', 3880, 'スロ58', 'G', 0, '{}', 1)
+on conflict (code) do nothing;
+
+-- 蒸気機関車（DB の更新78。名前は架空）：小形タンク機・古い小形機・旅客用・貨物用・大形の急行用。水と石炭は、給水・給炭できる駅で補給する
+insert into public.mp_series(code, name, kind, note, ord, grp, yr, sets) values
+  ('LC46', 'C46形', 'loco', '小形タンク機関車（1930年代）。水と石炭を車体にのせる（水で約60km・石炭で約140km 走れる）。最高85km/h。電化していない線も走れる', 52, null, 1932, '[]'::jsonb),
+  ('L7660', '7660形', 'loco', '古い小形の蒸気機関車（1910年代・テンダー機）。軽くて扱いやすい。水で約90km・石炭で約220km。最高95km/h', 53, null, 1914, '[]'::jsonb),
+  ('LC64', 'C64形', 'loco', '旅客用の蒸気機関車（1930年代・テンダー機）。速くて軽い。水で約140km・石炭で約320km。最高100km/h', 54, null, 1937, '[]'::jsonb),
+  ('LD55', 'D55形', 'loco', '貨物用の蒸気機関車（1930年代・テンダー機）。動輪が4軸で力もち。水で約120km・石炭で約280km。最高85km/h', 55, null, 1936, '[]'::jsonb),
+  ('LC66', 'C66形', 'loco', '大形の急行用蒸気機関車（1940年代・テンダー機）。いちばん速く、力も大きい。水で約160km・石炭で約360km。最高110km/h', 56, null, 1948, '[]'::jsonb)
+on conflict (code) do nothing;
+insert into public.mp_types(code, series, label, role, face, num_from, num_to, len, cap, seats, mass, power, panto, cab, vmax, acc, dec, elec, heat, ac, toilet, price, upkeep, life, note, ord, nbase, cls, rooms, fn, npad, wkm, ckm) values
+  ('LC46-C46', 'LC46', 'C46', 'L', '', 1, 999, 12.6, 0, 0, 66.0, 450, 0, true, 85, 1.0, 2.5, false, true, false, false, 140000000, 70000, 365, 'タンク機（1C2）。短い支線や入れかえむけ', 3251, 'C46', '', 0, '{stm}', 1, 60, 140),
+  ('L7660-7660', 'L7660', '7660', 'L', '', 1, 999, 16.8, 0, 0, 85.0, 460, 0, true, 95, 0.9, 2.5, false, true, false, false, 110000000, 65000, 365, 'テンダー機（1C）。ローカル線の旅客列車むけ', 3252, '7660', '', 0, '{stm}', 1, 90, 220),
+  ('LC64-C64', 'LC64', 'C64', 'L', '', 1, 999, 20.3, 0, 0, 115.0, 950, 0, true, 100, 1.0, 2.5, false, true, false, false, 210000000, 85000, 365, 'テンダー機（2C1）。急行・普通の旅客列車むけ', 3253, 'C64', '', 0, '{stm}', 1, 140, 320),
+  ('LD55-D55', 'LD55', 'D55', 'L', '', 1, 999, 19.7, 0, 0, 125.0, 940, 0, true, 85, 0.9, 2.5, false, true, false, false, 220000000, 90000, 365, 'テンダー機（1D1）。重い列車・坂の多い線むけ', 3254, 'D55', '', 0, '{stm}', 1, 120, 280),
+  ('LC66-C66', 'LC66', 'C66', 'L', '', 1, 999, 21.5, 0, 0, 145.0, 1190, 0, true, 110, 1.0, 2.5, false, true, false, false, 260000000, 100000, 365, 'テンダー機（2C2）。特急・急行むけ', 3255, 'C66', '', 0, '{stm}', 1, 160, 360)
 on conflict (code) do nothing;
 
 /* ---------- 設定（管理者が app_settings の mp_rates で変えられる） ---------- */
@@ -18590,6 +18606,7 @@ begin
                   'mine', coalesce(s.own_u = u or s.own_c = any(me_cs), false), 'o', case when s.own_u is not null then 'u:' || s.own_u when s.own_c is not null then 'c:' || s.own_c else 'gov' end,
                   'rt', (select coalesce(jsonb_agg(jsonb_build_object('id', ro.id, 'c', ro.color, 'n', ro.name)), '[]'::jsonb) from mp_routes ro where s.id = any(ro.stops)))
                   || case when s.melt then jsonb_build_object('ml', 1) else '{}'::jsonb end
+                  || case when s.water then jsonb_build_object('wt', 1) else '{}'::jsonb end || case when s.coal then jsonb_build_object('cl', 1) else '{}'::jsonb end   -- 給水・給炭（DB の更新78）
                   || coalesce((select jsonb_build_object('sn', round(sn.dep)) from mp_snow sn where sn.sta = s.id and sn.dep >= 1), '{}'::jsonb)
                   || case when s.kind = 'rail' then coalesce((select jsonb_build_object('zl', v) from (select _mp_sta_lv(s.seg, s.at, s.x, s.y) v) q where v is not null), '{}'::jsonb) else '{}'::jsonb end), '[]'::jsonb)
                from mp_stations s where s.x between (p_x0 - 5) * 100 and (p_x1 + 5) * 100 and s.y between (p_y0 - 5) * 100 and (p_y1 + 5) * 100 and (p_lod < 2 or s.kind in ('rail', 'air'))),
@@ -18628,7 +18645,7 @@ begin
                union select distinct 'c:' || pa.own_c, (select name from companies where id = pa.own_c) from mp_parcels pa where p_lod = 0 and pa.own_c is not null and pa.bb && box(point(p_x0 * 5, p_y0 * 5), point(p_x1 * 5, p_y1 * 5))
                union select distinct 'u:' || s.own_u, (select nickname from profiles where id = s.own_u) from mp_segs s where s.own_u is not null and s.bb && b
                union select distinct 'c:' || s.own_c, (select name from companies where id = s.own_c) from mp_segs s where s.own_c is not null and s.bb && b) z where v is not null),
-    'ver', coalesce((select max(ver) from mp_changes), 0), 'snow', 1, 'hgt', 1) into r;
+    'ver', coalesce((select max(ver) from mp_changes), 0), 'snow', 1, 'hgt', 1, 'sup', 1) into r;   -- sup：給水・給炭のあるサーバー（DB の更新78）
   return r;
 end $$;
 -- 変わったもの（共同編集）。なければ空。多すぎたら reload
@@ -19534,11 +19551,15 @@ begin
          bool_or(c.busy_until > now()) busy, min(t.series) series, bool_and(t.role not in ('Bus', 'Truck', 'Ship', 'Air')) israil, sum(t.upkeep) upkeep,
          bool_or(t.role = 'Ship') isship, sum(t.load) load, bool_or(t.role = 'Air') isair, max(t.rwy) rwy,
          -- 加速につかえる力（DB の更新71）：気動車はエンジンの力が液体変速機で6割、機関車は重い客車をひくので 電気45%・ディーゼル40%
-         sum(t.power * case when t.role in ('Dc', 'D') then 0.6 when t.role = 'L' then case when t.elec then 0.45 else 0.4 end else 1 end) epw,
+         --   蒸気機関車は 50%（低い速さで力が出る。DB の更新78）
+         sum(t.power * case when t.role in ('Dc', 'D') then 0.6 when t.role = 'L' then case when t.elec then 0.45 when 'stm' = any(t.fn) then 0.5 else 0.4 end else 1 end) epw,
          -- 料金の席と設備（DB の更新72）：グリーン席・A寝台・B寝台・個室の数・食堂車（ビュフェ）・ラウンジ・展望車・荷物車と郵便車の両数・電源車
          sum(case when t.cls = 'G' then t.cap else 0 end) xg, sum(case when t.cls = 'A' then t.cap else 0 end) xa, sum(case when t.cls = 'B' then t.cap else 0 end) xb, sum(t.rooms) xrm,
          bool_or(t.fn && array['din', 'buf']) xdin, bool_or('lng' = any(t.fn)) xlng, bool_or('obs' = any(t.fn)) xobs,
-         count(*) filter (where t.fn && array['bag', 'mail']) xbag, bool_or('pow' = any(t.fn)) xpow
+         count(*) filter (where t.fn && array['bag', 'mail']) xbag, bool_or('pow' = any(t.fn)) xpow,
+         -- 機関車と客車の両数・蒸気機関車（水と石炭で走れる km。重連なら短いほう。DB の更新78）
+         count(*) filter (where t.role = 'L') xnl, count(*) filter (where t.role = 'P') xnp,
+         min(t.wkm) filter (where 'stm' = any(t.fn)) xwkm, min(t.ckm) filter (where 'stm' = any(t.fn)) xckm
     into r from mp_cars c join mp_types t on t.code = c.type where c.form = fid;
   if r.n = 0 then return null; end if;
   rail := r.israil;
@@ -19550,10 +19571,11 @@ begin
     'cond', round(r.cond::numeric), 'busy', coalesce(r.busy, false), 'series', r.series, 'rail', rail, 'upkeep', r.upkeep,
     'ship', coalesce(r.isship, false), 'load', coalesce(r.load, 0), 'air', coalesce(r.isair, false), 'rwy', r.rwy)
     || jsonb_strip_nulls(jsonb_build_object('g', nullif(r.xg, 0), 'a', nullif(r.xa, 0), 'b', nullif(r.xb, 0), 'rooms', nullif(r.xrm, 0),
-         'din', nullif(r.xdin, false), 'lng', nullif(r.xlng, false), 'obs', nullif(r.xobs, false), 'bag', nullif(r.xbag, 0), 'pow', nullif(r.xpow, false)));
+         'din', nullif(r.xdin, false), 'lng', nullif(r.xlng, false), 'obs', nullif(r.xobs, false), 'bag', nullif(r.xbag, 0), 'pow', nullif(r.xpow, false),
+         'nl', nullif(r.xnl, 0), 'np', nullif(r.xnp, 0), 'wkm', r.xwkm, 'ckm', r.xckm));
 end $$;
 -- 編成のきまりを見る（形式の列。先頭から順に。よければ null、だめならわけ）
-create or replace function public._mp_form_rule_t(tps text[]) returns text
+create or replace function public._mp_form_rule_x(tps text[], p_run boolean) returns text
 language plpgsql stable set search_path = public as $$
 declare n int := coalesce(array_length(tps, 1), 0); a mp_types; b mp_types; nm int; nmp int; nmo int; ns int; nbus int; ks text[]; nl int; np int; nf int;
 begin
@@ -19574,8 +19596,9 @@ begin
     if not ks <@ array['loco', 'pc'] then return '機関車・客車には、電車や気動車をつなげません'; end if;
     select count(*) filter (where t.role = 'L'), count(*) filter (where t.role = 'P'), count(*) filter (where t.role = 'P' and t.face = '緩急車') into nl, np, nf
       from unnest(tps) x join mp_types t on t.code = x;
-    if nl = 0 then return '客車だけでは走れません。機関車（L）を1両以上つないでください'; end if;
-    if a.role <> 'L' and b.role <> 'L' then return '機関車（L）は先頭か最後につないでください'; end if;
+    -- 客車だけの編成（DB の更新78）：持てるが、機関車をつなぐまで走れない（運用に入れられない）
+    if nl = 0 and p_run then return '客車だけでは走れません。機関車（L）をつないでください（入れ替え枠の機関車を「🚂 機関車をつなぐ」で）'; end if;
+    if nl > 0 and a.role <> 'L' and b.role <> 'L' then return '機関車（L）は先頭か最後につないでください'; end if;
     if np > 0 and nf = 0 then return '客車には緩急車（車掌室つき。スハフ・オハフなど）を1両以上つないでください'; end if;
     -- 電源車（DB の更新72）：28系などは、冷房や電灯の電気を電源車（マニ28・カニ28 など）からもらう
     if exists (select 1 from unnest(tps) x join mp_types t on t.code = x where 'np' = any(t.fn))
@@ -19607,6 +19630,14 @@ begin
   if nm > nmp then return format('M（%s両）が、パンタグラフのある車（Mp・Tp %s両）より多いです。M はパンタグラフのある車と組で使います', nm, nmp); end if;
   return null;
 end $$;
+create or replace function public._mp_form_rule_t(tps text[]) returns text
+language sql stable set search_path = public as $$ select _mp_form_rule_x(tps, true) $$;
+create or replace function public._mp_form_rule_s(tps text[]) returns text
+language sql stable set search_path = public as $$ select _mp_form_rule_x(tps, false) $$;
+create or replace function public._mp_form_srule(cars bigint[]) returns text
+language sql stable set search_path = public as $$
+  select _mp_form_rule_s(array(select c.type from unnest(cars) with ordinality z(id, o) join mp_cars c on c.id = z.id order by z.o))
+$$;
 -- 編成のきまりを見る（車両の列）
 create or replace function public._mp_form_rule(cars bigint[]) returns text
 language sql stable set search_path = public as $$
@@ -19718,7 +19749,8 @@ begin
                                  or (d.kind = 'air' and d.bld is not null and _mp_gov_term(d.bld))),   -- 国の空港の駐機場（みんなで使う。t54q）
     'types', (select coalesce(jsonb_agg(to_jsonb(t) order by t.ord), '[]'::jsonb) from mp_types t where t.on_sale),
     'series', (select coalesce(jsonb_agg(to_jsonb(s) order by s.ord), '[]'::jsonb) from mp_series s),
-    'fsets', _mp_fset_json(u));   -- 編成のプリセット（DB の更新72）
+    'fsets', _mp_fset_json(u),   -- 編成のプリセット（DB の更新72）
+    'lsplit', true);   -- 機関車と客車を別に注文する（DB の更新78）
 end $$;
 -- 編成のプリセット（自分で保存した形式のならび。ログインした人ごと・30こまで）
 create or replace function public._mp_fset_json(uid uuid) returns jsonb
@@ -19768,7 +19800,7 @@ begin
   if nd > 1 then raise exception 'ちがう車庫の車両はつなげません（先に転属を）'; end if;
   select count(*) into nbusy from mp_cars where id = any(p_cars) and busy_until > now() and busy_kind <> 'deliver';
   if nbusy > 0 then raise exception '検査・改造・転属中の車両があります'; end if;
-  why := _mp_form_rule(p_cars);
+  why := _mp_form_srule(p_cars);   -- 客車だけの編成も組める（機関車をつなぐまで走れない。DB の更新78）
   if why is not null then raise exception '%', why; end if;
   -- 編成番号（持ち主ごとに1つずつ）
   if p_form is null and trim(coalesce(p_name, '')) = '' then raise exception '編成番号を入れてください'; end if;
@@ -19795,6 +19827,10 @@ begin
   -- 空になった編成・きまりに合わなくなった編成は、運用と列車からはずす
   perform _mp_form_drop(array(select x.id from mp_forms x where x.own_u is not distinct from pa.pu and x.own_c is not distinct from pa.pc and x.id <> f.id
                       and _mp_form_rule(array(select c.id from mp_cars c where c.form = x.id order by c.pos)) is not null), '編成が組みかわったので、運用からはずれました');
+  -- この編成が走れなくなったら（機関車をはずした など）、運用からはずす（DB の更新78）
+  if _mp_form_rule(array(select c.id from mp_cars c where c.form = f.id order by c.pos)) is not null then
+    perform _mp_form_drop(array[f.id], '機関車がないので、運用からはずれました（機関車をつなぐと、運用にもどせます）');
+  end if;
   delete from mp_forms x where x.own_u is not distinct from pa.pu and x.own_c is not distinct from pa.pc and not exists (select 1 from mp_cars c where c.form = x.id);
   -- 組みかえた編成の列車（運用）は、時刻を計算しなおす（長さ・性能が変わる）
   perform _mp_resched(rr) from _mp_form_routes(f.id) rr;
@@ -20595,7 +20631,7 @@ language plpgsql set search_path = public as $$
 begin
   if ci = 0 then
     update mp_trains set bad = w is not null,
-           warn = nullif(concat_ws(' / ', nullif(regexp_replace(coalesce(warn, ''), '( / )?【編成】[^/]*', '', 'g'), ''), w), '') where id = tid;
+           warn = nullif(concat_ws(' / ', nullif(regexp_replace(coalesce(warn, ''), '( / )?【(編成|補給)】[^/]*', '', 'g'), ''), w), '') where id = tid;
   else
     update mp_trains set cplx = jsonb_set(cplx, array[(ci - 1)::text], (cplx -> (ci - 1)) || jsonb_build_object('ok', w is null, 'w', w))
      where id = tid and jsonb_array_length(cplx) >= ci;
@@ -20773,9 +20809,94 @@ end $$;
 -- 系統のぜんぶの列車を計算しなおして、ぶつかりを見る（番線・単線のすれちがい・編成のつながり）
 --   番線は、同じ駅に止まるほかの系統（乗り入れてくる他社の系統もふくむ）の列車とも見る
 --   臨時列車（day）は、毎日の列車と同じ日の臨時列車とだけぶつかりを見る
+-- 蒸気機関車の補給（DB の更新78）：編成の蒸気機関車が、水と石炭で走れる km（重連なら短いほう）。蒸気機関車がなければ null
+create or replace function public._mp_form_steam(fid bigint) returns jsonb
+language sql stable set search_path = public as $$
+  select case when count(*) > 0 then jsonb_build_object('w', min(t.wkm), 'c', min(t.ckm)) end
+    from mp_cars c join mp_types t on t.code = c.type where c.form = fid and 'stm' = any(t.fn)
+$$;
+-- 1つの走り（列車、または連結：fs で つないで es で切りはなす）を、止まる駅の順に見る。給水・給炭できる駅で満タンにする。
+--   wl・cl：走りのはじめに のこっている km。たりなくなれば w にわけ、たりれば のこりの wl・cl を返す
+create or replace function public._mp_steam_run(tid bigint, fs bigint, es bigint, wkm real, ckm real, wl real, cl real) returns jsonb
+language plpgsql stable set search_path = public as $$
+declare t mp_trains; r mp_routes; n int; cum real[]; e jsonb; sid bigint; idx int; pidx int; psid bigint; d real; on_ boolean := false; st record; k int := 0;
+begin
+  if wkm is null or ckm is null then return jsonb_build_object('wl', wl, 'cl', cl); end if;
+  select * into t from mp_trains where id = tid;
+  select * into r from mp_routes where id = t.route;
+  n := coalesce(array_length(r.stops, 1), 0);
+  if n < 2 or r.kind <> 'rail' then return jsonb_build_object('wl', wl, 'cl', cl); end if;
+  cum := array(select coalesce((select sum((l ->> 'd')::real) from jsonb_array_elements(r.legs) with ordinality q(l, kq) where kq < o), 0) / 1000 from generate_series(1, n) o);   -- 系統の駅の km
+  for e in select s.v from jsonb_array_elements(t.sched) with ordinality s(v, so) order by s.so loop
+    sid := (e ->> 0)::bigint;
+    if not on_ then if sid = fs then on_ := true; else continue; end if; end if;   -- この走りの はじめの駅から
+    -- 系統の何番目か（走る向きで、前に止まった駅のつぎ。環状線は同じ駅が2回ある）
+    if pidx is null then idx := _mp_rpos(r.stops, t.dir, sid, false);
+    elsif t.dir = 1 then idx := (select min(z.o) from unnest(r.stops) with ordinality z(s, o) where z.s = sid and z.o > pidx);
+    else idx := (select max(z.o) from unnest(r.stops) with ordinality z(s, o) where z.s = sid and z.o < pidx); end if;
+    if idx is null then exit; end if;
+    if pidx is not null then
+      d := abs(cum[idx] - cum[pidx]);
+      if wl - d < 0 then
+        return jsonb_build_object('w', format('【補給】%s〜%s で水がなくなります（水で走れるのは %skm。とちゅうの止まる駅に給水設備をつくるか、止まる駅をふやしてください）',
+                                              (select name from mp_stations where id = psid), (select name from mp_stations where id = sid), round(wkm)), 'wl', wl, 'cl', cl);
+      end if;
+      if cl - d < 0 then
+        return jsonb_build_object('w', format('【補給】%s〜%s で石炭がなくなります（石炭で走れるのは %skm。とちゅうの止まる駅に給炭設備をつくるか、止まる駅をふやしてください）',
+                                              (select name from mp_stations where id = psid), (select name from mp_stations where id = sid), round(ckm)), 'wl', wl, 'cl', cl);
+      end if;
+      wl := wl - d; cl := cl - d;
+    end if;
+    select s.water, s.coal into st from mp_stations s where s.id = sid;   -- この駅で補給
+    if coalesce(st.water, false) then wl := wkm; end if;
+    if coalesce(st.coal, false) then cl := ckm; end if;
+    pidx := idx; psid := sid;
+    if sid = es and k > 0 then exit; end if;   -- 走りの おわりの駅（環状線は、はじめの駅にもどったところ）
+    k := k + 1;
+  end loop;
+  return jsonb_build_object('wl', wl, 'cl', cl);
+end $$;
+-- 駅の給水・給炭の設備（蒸気機関車の補給。DB の更新78）：p_kind 'water' 給水（3,000万 X）・'coal' 給炭（6,000万 X）。
+--   p_on = false ではずす（返金なし）。この駅を通る系統で、蒸気機関車の列車があれば時刻とわけを見なおす
+create or replace function public.mp_sta_sup(p_id bigint, p_kind text, p_on boolean, p_dry boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); s mp_stations; me_cs int[]; gv boolean; cost bigint; nm text; bx box; has boolean; rid bigint; nr int := 0;
+begin
+  perform _mp_ok(u);
+  if p_kind is null or p_kind not in ('water', 'coal') then raise exception '給水（water）か給炭（coal）をえらんでください'; end if;
+  select * into s from mp_stations where id = p_id for update;
+  if not found or s.kind <> 'rail' then raise exception '鉄道の駅をえらんでください'; end if;
+  me_cs := array(select id from companies where owner = u);
+  gv := s.own_u is null and s.own_c is null;
+  if not coalesce(s.own_u = u or s.own_c = any(me_cs) or (gv and _is_admin(u)), false) then raise exception 'あなたの駅ではありません'; end if;
+  nm := case p_kind when 'water' then '給水設備' else '給炭設備' end;
+  has := case p_kind when 'water' then s.water else s.coal end;
+  if coalesce(p_on, true) then
+    if has then raise exception 'もう%があります', nm; end if;
+    cost := case p_kind when 'water' then 30000000 else 60000000 end;
+  else
+    if not has then raise exception '%はありません', nm; end if;
+    cost := 0;
+  end if;
+  if not coalesce(p_dry, false) then
+    perform _mp_lock(s.own_u, s.own_c);
+    if cost > 0 then perform _mp_pay(s.own_u, s.own_c, gv, cost, 'sta', format('%s（%s駅）', nm, s.name)); end if;
+    if p_kind = 'water' then update mp_stations set water = coalesce(p_on, true) where id = p_id;
+    else update mp_stations set coal = coalesce(p_on, true) where id = p_id; end if;
+    bx := box(point(s.x / 100.0 - 3, s.y / 100.0 - 3), point(s.x / 100.0 + 3, s.y / 100.0 + 3));
+    perform _mp_chg('sta', p_id, 'set', bx);
+    for rid in select ro.id from mp_routes ro where ro.kind = 'rail' and p_id = any(ro.stops)
+                 and exists (select 1 from mp_trains t join mp_cars c on c.form = t.form join mp_types y on y.code = c.type where t.route = ro.id and 'stm' = any(y.fn)) loop
+      perform _mp_resched(rid); nr := nr + 1;
+    end loop;
+  end if;
+  return jsonb_build_object('on', coalesce(p_on, true), 'kind', p_kind, 'cost', cost, 'routes', nr);
+end $$;
+
 create or replace function public._mp_resched(rid bigint) returns void
 language plpgsql set search_path = public as $$
 declare tr mp_trains; a record; b record; r mp_routes; w text; fid bigint; lsta bigint; lt int; lnum text; dd date; ldated bigint; ldci int; pass int;
+        sk jsonb; wl real; cl real; sr jsonb; stw boolean;   -- 蒸気機関車の補給（DB の更新78）
 begin
   perform _mp_dispatch(rid);   -- 時刻（待避・続行もふくめて）
   select * into r from mp_routes where id = rid;
@@ -20840,28 +20961,44 @@ begin
                 order by z.f loop
       -- 毎日の列車
       lsta := null; lt := null; lnum := null;
+      sk := _mp_form_steam(fid); wl := (sk ->> 'w')::real; cl := (sk ->> 'c')::real;   -- 蒸気機関車（DB の更新78）：1日のはじめは水も石炭も満タン
       for a in select * from _mp_form_runs(fid) x where x.day is null order by x.ft, x.tid, x.ci loop
         if a.ci > 0 and a.hb then perform _mp_run_mark(a.tid, a.ci, 'この列車が走らないので、連結しません'); continue; end if;
         w := _mp_run_check(lsta, lt, lnum, a.fs, a.ft, a.ci > 0);
+        if w is null and sk is not null then   -- 補給（DB の更新78）：止まる駅の給水・給炭で、駅のあいだを走りきれるか
+          sr := _mp_steam_run(a.tid, a.fs, a.es, (sk ->> 'w')::real, (sk ->> 'c')::real, wl, cl);
+          w := sr ->> 'w';
+          if w is null then wl := (sr ->> 'wl')::real; cl := (sr ->> 'cl')::real;
+          elsif a.ci > 0 then w := replace(w, '【補給】', '') || '（連結しません）'; end if;
+        end if;
         perform _mp_run_mark(a.tid, a.ci, w);
         if w is null then lsta := a.es; lt := a.et; lnum := a.num; end if;
       end loop;
       -- 臨時列車：その日の毎日の列車とあわせて見る。臨時列車のせいで毎日の列車がまにあわなくなるときは、臨時列車のほうが走れない（連結しない）
       for dd in select distinct x.day from _mp_form_runs(fid) x where x.day is not null loop
         lsta := null; lt := null; lnum := null; ldated := null; ldci := null;
+        wl := (sk ->> 'w')::real; cl := (sk ->> 'c')::real;   -- 蒸気機関車：その日のはじめは満タン（DB の更新78）
         for a in select * from _mp_form_runs(fid) x where x.day is null or x.day = dd order by x.ft, x.tid, x.ci loop
           if a.day is null and not a.ok then continue; end if;   -- 毎日の走りで走れないもの（つながないもの）は、とばす
           if a.ci > 0 and a.hb then perform _mp_run_mark(a.tid, a.ci, 'この列車が走らないので、連結しません'); continue; end if;
-          w := _mp_run_check(lsta, lt, lnum, a.fs, a.ft, a.ci > 0);
+          w := _mp_run_check(lsta, lt, lnum, a.fs, a.ft, a.ci > 0); stw := false;
+          if w is null and sk is not null then   -- 補給（DB の更新78）
+            sr := _mp_steam_run(a.tid, a.fs, a.es, (sk ->> 'w')::real, (sk ->> 'c')::real, wl, cl);
+            if sr ->> 'w' is not null then
+              stw := true;
+              w := case when a.day is not null and a.ci > 0 then replace(sr ->> 'w', '【補給】', '') || '（連結しません）' else sr ->> 'w' end;
+            else wl := (sr ->> 'wl')::real; cl := (sr ->> 'cl')::real; end if;
+          end if;
           if a.day is not null then
             perform _mp_run_mark(a.tid, a.ci, w);
             if w is null then lsta := a.es; lt := a.et; lnum := a.num; ldated := a.tid; ldci := a.ci; end if;
           else
             if w is not null and ldated is not null then
-              perform _mp_run_mark(ldated, ldci, format(case when ldci > 0 then 'この臨時列車のあと、%s にまにあいません（連結しません）'
-                                                             else '【編成】この臨時列車のあと、%s にまにあいません（走れません）' end, a.num));
+              perform _mp_run_mark(ldated, ldci, format(case when ldci > 0 then case when stw then 'この臨時列車のあと、%s の水か石炭がたりなくなります（連結しません）' else 'この臨時列車のあと、%s にまにあいません（連結しません）' end
+                                                             else case when stw then '【補給】この臨時列車のあと、%s の水か石炭がたりなくなります（走れません）' else '【編成】この臨時列車のあと、%s にまにあいません（走れません）' end end, a.num));
             end if;
             lsta := a.es; lt := a.et; lnum := a.num; ldated := null;
+            if stw then wl := (sk ->> 'w')::real; cl := (sk ->> 'c')::real; end if;   -- 毎日の列車は走るので、そのあとは ふだんどおりに（満タンとみる）
           end if;
         end loop;
       end loop;
@@ -24309,7 +24446,7 @@ begin
   if nc = 0 then raise exception '形式をえらんでください'; end if;
   if exists (select 1 from unnest(p_types) x where not exists (select 1 from mp_types y where y.code = x and y.on_sale)) then raise exception 'その形式は注文できません'; end if;
   if exists (select 1 from unnest(p_types) x join mp_types y on y.code = x where y.role in ('Bus', 'Truck', 'Ship', 'Air')) then raise exception 'バス・トラック・船・飛行機は1台ずつ注文してください'; end if;
-  why := _mp_form_rule_t(p_types);
+  why := _mp_form_rule_s(p_types);   -- 客車だけの編成も注文できる（機関車はあとでつなぐ。DB の更新78）
   if why is not null then raise exception '%', why; end if;
   if nm = '' then raise exception '編成番号を入れてください'; end if;
   if exists (select 1 from mp_forms f where f.own_u is not distinct from pa.pu and f.own_c is not distinct from pa.pc and f.name = nm) then raise exception '編成番号「%」はもうあります', nm; end if;
@@ -24416,7 +24553,7 @@ end $$;
 -- 運用をつくる・直す（運用番号・編成・メモ）。編成を変えると、その運用の列車ぜんぶの編成が変わる。ほかの運用に入っていた編成は、そちらからはずれる
 create or replace function public.mp_op_save(p_id bigint, p_num text, p_form bigint, p_note text, p_kind text, p_as text) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); pa record; o mp_ops; nm text := left(trim(coalesce(p_num, '')), 12); kd text; f mp_forms; other bigint; othernum text; oid_ bigint; rids bigint[];
+declare u uuid := _me(); pa record; o mp_ops; nm text := left(trim(coalesce(p_num, '')), 12); kd text; f mp_forms; other bigint; othernum text; oid_ bigint; rids bigint[]; why text;
 begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
@@ -24436,7 +24573,8 @@ begin
     if _mp_form_kind(p_form) <> kd then   -- t54o：船の運用には船だけ
       raise exception '%', case kd when 'rail' then '鉄道の運用には電車だけを入れられます' when 'ship' then '船の運用には船だけを入れられます' when 'air' then '飛行機の運用には飛行機だけを入れられます' else 'バスの運用にはバスだけを入れられます' end;
     end if;
-    if _mp_form_rule(array(select c.id from mp_cars c where c.form = p_form order by c.pos)) is not null then raise exception '編成のきまりに合っていません（組みなおしてください）'; end if;
+    why := _mp_form_rule(array(select c.id from mp_cars c where c.form = p_form order by c.pos));   -- わけも出す（DB の更新78）
+    if why is not null then raise exception '編成のきまりに合っていません：%', why; end if;
     select id, num into other, othernum from mp_ops where form = p_form and id is distinct from p_id;
     if other is not null then
       update mp_ops set form = null where id = other;
@@ -28998,6 +29136,10 @@ end $$;
    車両の雪の対策・融雪器・防雪柵とスノーシェッド・除雪車・補助金（1/3・1/2・2/3）・雪の運休の補助金・維持費 ---------- */
 alter table public.mp_cars add column if not exists snow boolean not null default false;      -- 雪の対策：耐雪改造（鉄道）・冬用タイヤとチェーン（バス・トラック）
 alter table public.mp_stations add column if not exists melt boolean not null default false;  -- 融雪器（鉄道の駅のポイント）
+alter table public.mp_types add column if not exists wkm int;   -- 蒸気機関車：水で走れる km（DB の更新78）
+alter table public.mp_types add column if not exists ckm int;   -- 蒸気機関車：石炭で走れる km
+alter table public.mp_stations add column if not exists water boolean not null default false;   -- 給水設備（蒸気機関車の補給。DB の更新78）
+alter table public.mp_stations add column if not exists coal boolean not null default false;    -- 給炭設備
 alter table public.mp_segs add column if not exists snowp smallint not null default 0;        -- 線路の雪よけ：0 なし・1 防雪柵・2 スノーシェッド
 alter table public.mp_depots add column if not exists plows int not null default 0;           -- 除雪車（鉄道の車庫：ラッセル車・バスの車庫：除雪トラック）
 create table if not exists public.mp_snow (                -- 駅・バス停の積雪（3時間ごと。走っている系統の駅だけ）
@@ -30675,7 +30817,7 @@ begin
             'mp_admin_airport','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_lvset','mp_admin_place_at','mp_admin_rates','mp_admin_rename','mp_admin_state',
             'mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote','mp_bld_set',
             'mp_boot','mp_car_log','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_gone','mp_cars_list',
-            'mp_cho_get','mp_chunk_get','mp_dep_build','mp_dep_edit','mp_dia','mp_dia_fix','mp_dia_undo','mp_route_xwait','mp_route_branch','mp_dia_import','_mp_fset_json','mp_fset_save','mp_fset_del','_mp_unko_off','mp_unko_opt','mp_ops_bulk','mp_form_order_many','mp_find','mp_form_del',
+            'mp_cho_get','mp_chunk_get','mp_dep_build','mp_dep_edit','mp_dia','mp_dia_fix','mp_dia_undo','mp_route_xwait','mp_route_branch','mp_dia_import','_mp_fset_json','mp_fset_save','mp_fset_del','_mp_unko_off','mp_unko_opt','_mp_form_rule_x','_mp_form_rule_s','_mp_form_srule','_mp_form_steam','_mp_steam_run','mp_sta_sup','mp_ops_bulk','mp_form_order_many','mp_find','mp_form_del',
             'mp_form_order','mp_form_set','mp_home_clear','mp_home_get','mp_home_set','mp_jm_cert','mp_jm_file','mp_jm_get',
             'mp_jm_mine','mp_jm_residents','mp_jm_seal','mp_kinds_list','mp_kinds_set','mp_land_buy','mp_land_decide','mp_land_req',
             'mp_land_req_del','mp_land_reqs','mp_ledger_days','mp_ledger_page','mp_makers','mp_op_del','mp_op_export','mp_op_import',
@@ -30728,3 +30870,5 @@ alter function public.mp_dia_fix(bigint, text, text, boolean, boolean) set state
 -- 支線・ダイヤの取りこみ（DB の更新70）も、時刻を組みなおすので60秒まで
 alter function public.mp_route_branch(bigint, bigint, text) set statement_timeout = '60s';
 alter function public.mp_dia_import(bigint, jsonb, boolean, boolean, text) set statement_timeout = '60s';
+-- 給水・給炭（DB の更新78）も、通る系統の時刻を見なおすので60秒まで
+alter function public.mp_sta_sup(bigint, text, boolean, boolean) set statement_timeout = '60s';
