@@ -5292,7 +5292,7 @@ const kindL = k => k === '普通' ? '各停' : k;   // 種別の見せ方（デ�
 async function openDia(rid) {
   const m = modal(['系統', '<p class="muted small">読みこんでいます…</p>'], null, 'mp-wide');
   let D = null, tab = 'dia';
-  const lf = { kinds: new Set(), sers: new Set(), dirs: new Set(), sort: 'dep' };   // 列車一覧の絞り込み（空はぜんぶ）・並べ替え
+  const lf = { kinds: new Set(), sers: new Set(), dirs: new Set(), sort: 'dep', err: false, sel: null };   // 列車一覧の絞り込み（空はぜんぶ）・並べ替え・エラーだけ・えらんで消す（sel：えらんだ列車）
   const load = async () => { D = await api('mp_dia', { p_route: rid }); if (!D) return m.close(); S.routeHi = { legs: D.legs, color: D.color, kind: D.kind }; S.dirty = true; draw(); };
   m.onclose = () => { S.routeHi = null; S.dirty = true; };
   const draw = () => {
@@ -5320,11 +5320,14 @@ async function openDia(rid) {
       const sers = [...new Set(D.trains.map(serOf))].sort((a, b) => (a === '') - (b === '') || a.localeCompare(b, 'ja', { numeric: true }));
       for (const k of [...lf.kinds]) if (!kinds.includes(k)) lf.kinds.delete(k);
       for (const k of [...lf.sers]) if (!sers.includes(k)) lf.sers.delete(k);
+      const isErr = t => !!(t.bad || t.warn || !t.fname);   // エラーの列車：走れない・注意がある・編成がない
       const pass = t => (!lf.kinds.size || lf.kinds.has(t.kind)) && (!lf.sers.size || lf.sers.has(serOf(t))) && (!lf.dirs.size || lf.dirs.has(t.dir));
+      const passL = t => pass(t) && (!lf.err || isErr(t));   // 一覧は「エラーだけ」でもしぼる
+      if (lf.sel) for (const id of [...lf.sel]) if (!D.trains.some(t => t.id === id)) lf.sel.delete(id);
       const byNum = (a, b) => String(a.num).localeCompare(String(b.num), 'ja', { numeric: true });
       const cmp = { dep: (a, b) => a.dep - b.dep || byNum(a, b), num: (a, b) => byNum(a, b) || a.dep - b.dep, kind: (a, b) => ko(a.kind) - ko(b.kind) || a.dep - b.dep,
                     ser: (a, b) => (serOf(a) === '') - (serOf(b) === '') || serOf(a).localeCompare(serOf(b), 'ja', { numeric: true }) || a.dep - b.dep }[lf.sort];
-      const L = D.trains.filter(pass).sort(cmp);
+      const L = D.trains.filter(passL).sort(cmp), nErr = D.trains.filter(isErr).length;
       const chip = (g, v, label, on) => `<button data-${g}="${esc(String(v))}" class="${on ? 'on' : ''}">${label}</button>`;
       const row = (title, g, all, items) => `<div class="mp-row small" style="align-items:center"><span style="min-width:3.5em">${title}</span><span class="mp-seg" style="flex-wrap:wrap">${chip(g, '*', 'すべて', !all.size)}${items.join('')}</span></div>`;
       const D2 = Object.assign({}, D, { trains: D.trains.filter(tab === 'tt1' || tab === 'tt2' ? (t => (!lf.kinds.size || lf.kinds.has(t.kind)) && (!lf.sers.size || lf.sers.has(serOf(t)))) : pass) });   // 時刻表は向きのタブなので、向きでは しぼらない
@@ -5339,14 +5342,36 @@ async function openDia(rid) {
       if (tab === 'tt1' || tab === 'tt2') pane.innerHTML = ttTable(D2, tab === 'tt1' ? 1 : -1);
       if (tab === 'list') {
         pane.innerHTML = `${row('向き', 'fd', lf.dirs, [chip('fd', 1, '下り', lf.dirs.has(1)), chip('fd', -1, '上り', lf.dirs.has(-1))])}
+          ${row('エラー', 'fe', new Set(lf.err ? ['1'] : []), [chip('fe', 1, `<span>エラーだけ</span><span>（${nErr}本）</span>`, lf.err)])}
+          ${D.mine ? (lf.sel ? `<div class="mp-row small" style="align-items:center"><b>${T(`えらんだ列車：${lf.sel.size}本`)}</b>
+              <button class="btn" style="flex:none" data-sall="err" ${nErr ? '' : 'disabled'}>${T(`エラーの列車をぜんぶえらぶ（${nErr}本）`)}</button>
+              <button class="btn" style="flex:none" data-sall="list" ${L.length ? '' : 'disabled'}>${T(`表示中をぜんぶえらぶ（${L.length}本）`)}</button>
+              <button class="btn" style="flex:none" data-sall="none" ${lf.sel.size ? '' : 'disabled'}>えらびなおす</button>
+              <button class="btn main" style="flex:none" data-sdel ${lf.sel.size ? '' : 'disabled'}>${T(`えらんだ ${lf.sel.size}本を消す`)}</button>
+              <button class="btn" style="flex:none" data-soff>やめる</button></div>`
+            : `<div class="mp-row small" style="align-items:center"><button class="btn" style="flex:none" data-son>☑ えらんで消す</button><span class="muted">エラーの出た列車などを、まとめてえらんで消せます</span></div>`) : ''}
           <div class="mp-row small" style="align-items:center"><span style="min-width:3.5em">並べかえ</span><select class="mp-inp" style="width:auto" data-sort>${[['dep', '発車時刻'], ['num', '列車番号'], ['kind', '種別'], ['ser', '形式']].map(o => `<option value="${o[0]}" ${lf.sort === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}</select>
             <span class="muted">${L.length} / ${D.trains.length}本</span></div>
-          <div class="mp-list">${L.map(t => `<button class="mp-item" style="text-align:left" data-t="${t.id}"><b>${esc(t.num)}</b> <span>${esc(kindL(t.kind))}・${t.dir === 1 ? '下り' : '上り'}・${hms(t.dep)}発</span>${t.day ? ` <small class="mp-tag"><span>臨時</span> <span>${mdL(t.day)}</span></small>` : ''}・${t.onum ? `<small class="muted"><span>運用</span> <span>${esc(t.onum)}</span></small> ` : ''}${t.fname ? `<span>${esc(t.fname)}</span>${t.fser ? `<small class="muted">（${serH(serOf(t))}）</small>` : ''}` : `<span class="mp-warn">${t.onum ? '運用に編成なし' : '編成なし'}</span>`}${cplL(t, D)}${taiL(t, D)}${t.warn ? `<br><small class="mp-warn">${warnH(t.warn)}</small>` : ''}${Array.isArray(t.wk) ? `<br><small class="mp-warn">🔧 <span>${esc(runShopT(t))}は運休</span></small>` : ''}</button>`).join('')
+          <div class="mp-list">${L.map(t => `<button class="mp-item${lf.sel && lf.sel.has(t.id) ? ' on' : ''}" style="text-align:left" data-t="${t.id}">${lf.sel ? (lf.sel.has(t.id) ? '☑ ' : '☐ ') : ''}<b>${esc(t.num)}</b>${t.bad ? ' <small class="mp-warn">走れない</small>' : ''} <span>${esc(kindL(t.kind))}・${t.dir === 1 ? '下り' : '上り'}・${hms(t.dep)}発</span>${t.day ? ` <small class="mp-tag"><span>臨時</span> <span>${mdL(t.day)}</span></small>` : ''}・${t.onum ? `<small class="muted"><span>運用</span> <span>${esc(t.onum)}</span></small> ` : ''}${t.fname ? `<span>${esc(t.fname)}</span>${t.fser ? `<small class="muted">（${serH(serOf(t))}）</small>` : ''}` : `<span class="mp-warn">${t.onum ? '運用に編成なし' : '編成なし'}</span>`}${cplL(t, D)}${taiL(t, D)}${t.warn ? `<br><small class="mp-warn">${warnH(t.warn)}</small>` : ''}${Array.isArray(t.wk) ? `<br><small class="mp-warn">🔧 <span>${esc(runShopT(t))}は運休</span></small>` : ''}</button>`).join('')
             || `<p class="muted small">${D.trains.length ? '条件にあう列車はありません' : '列車はまだありません'}</p>`}</div>`;
         const tog = (set, v) => { if (v === '*') set.clear(); else if (set.has(v)) set.delete(v); else set.add(v); draw(); };
         pane.querySelectorAll('[data-fd]').forEach(x => x.onclick = () => tog(lf.dirs, x.dataset.fd === '*' ? '*' : Number(x.dataset.fd)));
         pane.querySelector('[data-sort]').onchange = e => { lf.sort = e.target.value; draw(); };
-        pane.querySelectorAll('[data-t]').forEach(x => x.onclick = () => trainEdit(D, D.trains.find(t => t.id === Number(x.dataset.t)), load));
+        pane.querySelectorAll('[data-t]').forEach(x => x.onclick = () => {
+          const id = Number(x.dataset.t);
+          if (lf.sel) { if (lf.sel.has(id)) lf.sel.delete(id); else lf.sel.add(id); draw(); return; }   // えらんで消す：タップでえらぶ
+          trainEdit(D, D.trains.find(t => t.id === id), load); });
+        pane.querySelectorAll('[data-fe]').forEach(x => x.onclick = () => { lf.err = x.dataset.fe === '*' ? false : !lf.err; draw(); });
+        const pq = k => pane.querySelector(k);
+        if (pq('[data-son]')) pq('[data-son]').onclick = () => { lf.sel = new Set(); draw(); };
+        if (pq('[data-soff]')) pq('[data-soff]').onclick = () => { lf.sel = null; draw(); };
+        pane.querySelectorAll('[data-sall]').forEach(x => x.onclick = () => {
+          const k = x.dataset.sall; if (k === 'none') lf.sel.clear(); else (k === 'err' ? D.trains.filter(isErr) : L).forEach(t => lf.sel.add(t.id)); draw(); });
+        if (pq('[data-sdel]')) pq('[data-sdel]').onclick = async () => {
+          const ids = [...lf.sel], n = ids.length; if (!n) return;
+          if (!await confirm2(T(`えらんだ ${n}本の${D.kind === 'ship' || D.kind === 'air' ? '便' : '列車'}を消しますか？`), { what: T(`${n}本`), q: '本当に消しますか？', ok: '消す', note: '消したあとでも、すぐ下の「↶ 取り消す」でもどせます。' })) return;
+          if (await api('mp_train_del', { p_ids: ids, p_as: S.as }, T(`${n}本 消しました`))) { lf.sel = null; runListStale(); load(); }
+        };
       }
       const q = k => b.querySelector(k);
       if (q('[data-add]')) q('[data-add]').onclick = () => trainEdit(D, null, load);
