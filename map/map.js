@@ -30,7 +30,7 @@ const S = {
   cho: new Map(), choPend: new Set(), choQ: [], choBusy: 0,   // 町字（チャンクごと：k・kp・kq）
   cells: new Map(), cellBusy: 0, ver: 0, pollT: 0,
   ov: null, ovInfo: null, ovMore: [], ovHi: [], seaInfo: null, seaMask: null,
-  layer: { zone: false, own: true, label: true, run: false, wxmap: false, track: false, snowz: false, jam: false, er: false },   // run：列車・バスの走行位置（t61）・wxmap：天気図（t62）・track：非電化・単線を強く出す（2026-10-29）
+  layer: { zone: false, own: true, label: true, run: false, wxmap: false, track: false, snowz: false, jam: false, er: false, elev: false },   // elev：高低差（標高の色・陰）・run：列車・バスの走行位置（t61）・wxmap：天気図（t62）・track：非電化・単線を強く出す（2026-10-29）
   wxOff: 0, wxMode: 'rain', wxPlay: 0,   // 天気図：何時間後・雨と雪／気温・うごかす
   inertia: false, v3names: true, glide: null,   // 惰性・3D の建物の名前（t61）
   wx: true,   // 天気と気温（t62。map/wx.js）
@@ -408,6 +408,48 @@ function chunkZone(c) {
   }
   g.putImageData(im, 0, 0); return cv;
 }
+// 層「⛰ 高低差」：標高の色（低い うすい → 高い こい茶色）と、北西から光を当てた陰。近いときはチャンクごと（海・湖・川はぬらない）、遠いときは絵
+const ELV = { src: 'map/elev.png?v=1', x0: -7680, y0: -10112, x1: 7680, y1: 11328, img: null, loading: false };   // 遠くから見た絵（16マス＝1画素）
+const ELV_E = [0, 20, 50, 100, 200, 400, 700, 1200, 2000];
+const ELV_C = ['#ffebd6', '#f9cba2', '#ecad7a', '#dd8f56', '#c9723b', '#b15929', '#934524', '#743420', '#55251a'].map(h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)));
+function elvCol(e) {
+  if (e <= ELV_E[0]) return ELV_C[0];
+  for (let i = 1; i < ELV_E.length; i++) if (e < ELV_E[i]) { const f = (e - ELV_E[i - 1]) / (ELV_E[i] - ELV_E[i - 1]), a = ELV_C[i - 1], b = ELV_C[i]; return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f]; }
+  return ELV_C[ELV_C.length - 1];
+}
+function elvLegend() {
+  return '<b>標高</b>' + ELV_E.map((e, i) => i).reverse().map(i => `<span><i style="background:rgb(${ELV_C[i].join(',')})"></i>${fmt(ELV_E[i])}m${i === ELV_E.length - 1 ? '〜' : ''}</span>`).join('');
+}
+function chunkElev(c, cx, cy) {
+  const M = 2, N = CS + 2 * M, ev = new Float32Array(N * N), tmp = new Float32Array(N * N);
+  const eAt = (cc, x, y) => Math.max(0, EDEC[B64I[cc.e.charCodeAt((y & 63) * 64 + (x & 63))]]);
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {   // まわりのチャンクも（なければ、このチャンクのふち）
+    const x = cx * CS + i - M, y = cy * CS + j - M, ox = x >> 6, oy = y >> 6;
+    const cc = ox === cx && oy === cy ? c : S.chunks.get(ckey(ox, oy));
+    ev[j * N + i] = cc && !cc.sea && cc.e ? eAt(cc, x, y) : eAt(c, cx * CS + clamp(i - M, 0, CS - 1), cy * CS + clamp(j - M, 0, CS - 1));
+  }
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { let a = 0, n = 0; for (let d = -2; d <= 2; d++) { const k = i + d; if (k >= 0 && k < N) { a += ev[j * N + k]; n++; } } tmp[j * N + i] = a / n; }   // 5×5 の平均（標高の段をならす。陰だけ）
+  const sm = new Float32Array(N * N);
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) { let a = 0, n = 0; for (let d = -2; d <= 2; d++) { const k = j + d; if (k >= 0 && k < N) { a += tmp[k * N + i]; n++; } } sm[j * N + i] = a / n; }
+  const cv = document.createElement('canvas'); cv.width = cv.height = CS;
+  const g = cv.getContext('2d'), im = g.createImageData(CS, CS), d = im.data, ca = Math.cos(Math.PI / 4), sa = Math.sin(Math.PI / 4), zf = 1.5;
+  for (let k = 0; k < CS * CS; k++) {
+    const t = c.t[k]; if (t === 'S' || t === 'D' || t === 'R' || t === 'L') continue;
+    const i = (k & 63) + M, j = (k >> 6) + M;
+    const dzdx = (sm[j * N + i + 1] - sm[j * N + i - 1]) / 100 * zf, dzdy = (sm[(j + 1) * N + i] - sm[(j - 1) * N + i]) / 100 * zf;
+    const sl = Math.atan(Math.hypot(dzdx, dzdy)), asp = Math.atan2(dzdy, -dzdx);
+    const sh = ca * Math.sin(sl) * Math.cos(Math.PI * 1.25 - asp) + sa * Math.cos(sl), f = clamp(0.6 + 0.55 * sh, 0.55, 1.25), col = elvCol(ev[j * N + i]);
+    d[k * 4] = clamp(Math.round(col[0] * f), 0, 255); d[k * 4 + 1] = clamp(Math.round(col[1] * f), 0, 255); d[k * 4 + 2] = clamp(Math.round(col[2] * f), 0, 255); d[k * 4 + 3] = 205;
+  }
+  g.putImageData(im, 0, 0); return cv;
+}
+function drawElevFar(g, z) {
+  if (!ELV.img) {
+    if (!ELV.loading) { ELV.loading = true; const im = new Image(); im.onload = () => { ELV.img = im; S.dirty = true; }; im.onerror = () => { ELV.loading = false; }; im.src = ELV.src; }
+    return;
+  }
+  g.imageSmoothingEnabled = true; g.drawImage(ELV.img, sx(ELV.x0), sy(ELV.y0), (ELV.x1 - ELV.x0) * z, (ELV.y1 - ELV.y0) * z);
+}
 
 /* ---------- 地図の上のもの（道路・線路・駅など）：範囲（セル）ごとに読む ---------- */
 // ズームで細かさ（lod）とセルの大きさを決める
@@ -470,6 +512,7 @@ function prepArea(d) {
   if (d.snow) S.snowOK = true;   // 雪の対策（DB の更新57）のあるサーバー
   if (d.hgt) S.hgtOK = true;     // 高さ（DB の更新59）のあるサーバー
   if (d.sup) S.supOK = true;     // 給水・給炭（DB の更新78）のあるサーバー
+  if (d.hgt2) S.hgt2 = true;     // 平坦・高さを決める・勾配の上限・駅の高さ（DB の更新84）のあるサーバー
   for (const s of d.segs) prepSeg(s);
   for (const s of d.stas) { s.fx = s.x / 100; s.fy = s.y / 100; }
   for (const s of d.deps) { s.fx = s.x / 100; s.fy = s.y / 100; }
@@ -707,11 +750,13 @@ function render() {
       g.drawImage(img, Math.floor(sx(cx * CS)), Math.floor(sy(cy * CS)), Math.ceil(CS * z) + 1, Math.ceil(CS * z) + 1);
       if (S.layer.zone) { if (!c.zc) c.zc = chunkZone(c); g.imageSmoothingEnabled = false; g.drawImage(c.zc, sx(cx * CS), sy(cy * CS), CS * z, CS * z); }
       if (S.layer.snowz) { if (!c.sz) c.sz = chunkSnow(c, cy); g.imageSmoothingEnabled = false; g.drawImage(c.sz, sx(cx * CS), sy(cy * CS), CS * z, CS * z); }   // 雪の地域（t108）
+      if (S.layer.elev) { if (!c.ev) c.ev = chunkElev(c, cx, cy); g.imageSmoothingEnabled = false; g.drawImage(c.ev, sx(cx * CS), sy(cy * CS), CS * z, CS * z); }   // 高低差
       if (LIC.pick && LIC.pickSet && LIC.pickSet.size) { if (c.lkKey !== LIC.pickKey) { c.lk = chunkLic(c, LIC.pickSet); c.lkKey = LIC.pickKey; } g.imageSmoothingEnabled = false; g.drawImage(c.lk, sx(cx * CS), sy(cy * CS), CS * z, CS * z); }   // 免許の申請でえらんだ市区町村
     }
     if (made >= 6) S.dirty = true;   // 次のフレームで続きを
   }
   if (S.layer.snowz && !chOn) drawSnowZ(g, z);   // 雪の地域（t108）：遠いときは絵
+  if (S.layer.elev && !chOn) drawElevFar(g, z);   // 高低差：遠いときは絵
   // 川（線で）
   if (z >= 1.2 && window.MapGen) {
     const i0 = Math.floor(v.x0 / 256), j0 = Math.floor(v.y0 / 256), i1 = Math.floor(v.x1 / 256), j1 = Math.floor(v.y1 / 256);
@@ -2612,6 +2657,12 @@ const CSS = `
 .mp-wxpl{min-width:34px}
 .mp-wxleg{display:flex;gap:8px;flex-wrap:wrap;align-items:center;color:#444;font-size:11.5px}
 .mp-wxleg i{display:inline-block;width:12px;height:10px;border-radius:3px;margin-right:3px;vertical-align:-1px;border:1px solid rgba(0,0,0,.12)}
+.mp-eleg{position:absolute;right:6px;bottom:62px;background:rgba(255,255,255,.94);color:#333;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.18);padding:6px 7px;font-size:10.5px;line-height:1.3;display:flex;flex-direction:column;gap:1px;font-variant-numeric:tabular-nums;pointer-events:none}
+.mp-eleg[hidden]{display:none}
+.mp-wrap.mp-wxon .mp-eleg{bottom:166px}
+.mp-eleg b{font-size:11px;margin-bottom:2px}
+.mp-eleg span{display:flex;align-items:center;gap:4px;white-space:nowrap}
+.mp-eleg i{display:inline-block;width:12px;height:10px;border-radius:2px;border:1px solid rgba(0,0,0,.12)}
 .mp-wxgr{display:block;height:9px;border-radius:5px;flex:1 1 100%}
 .mp-wxsc{display:flex;justify-content:space-between;flex:1 1 100%;font-variant-numeric:tabular-nums;margin-top:-4px}
 .mp-wxnow{display:flex;align-items:baseline;gap:10px;margin:8px 0 2px}
@@ -2700,6 +2751,7 @@ function optSync() {
   S.wrap.querySelectorAll('[data-lay]').forEach(b => b.classList.toggle('on', !!S.layer[b.dataset.lay]));
   const v3x = S.wrap.querySelector('[data-v3x]'); if (v3x) v3x.classList.toggle('on', !!S.v3x);
   S.wrap.querySelectorAll('.mp-cfg [data-o]').forEach(c => { const k = c.dataset.o; c.checked = !!(k in S.layer ? S.layer[k] : S[k]); });
+  const el = S.wrap.querySelector('.mp-eleg'); if (el) el.hidden = !S.layer.elev || !!S.v3;   // 高低差の色の見かた（3D のときは出さない）
 }
 function build(root) {
   if (!document.getElementById('mpCss')) { const st = document.createElement('style'); st.id = 'mpCss'; st.textContent = CSS; document.head.appendChild(st); }
@@ -2707,7 +2759,7 @@ function build(root) {
     <canvas class="mp-cv"></canvas><canvas class="mp-cvr"></canvas>
     <div class="mp-top">
       <div class="mp-topb"><select class="mp-as" title="だれの名前で"></select>
-      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-lay="track" title="非電化はオレンジ・単線はむらさきの点線">非電化・単線</button><button data-lay="run" title="列車・バスの走行位置">🚃 走行</button><button data-lay="wxmap" title="天気図（等圧線・高気圧と低気圧・雨と雪・気温）">🌤 天気図</button><button data-lay="jam" title="道路の混みぐあい（オレンジ 混雑・赤 渋滞・黒 通行止め）" hidden>🚗 渋滞</button><button data-lay="er" title="救急車（いま出ているもの）" hidden>🚑 救急</button><button data-lay="snowz" title="雪の地域（雪国・豪雪地帯・特別豪雪地帯。雪の対策の補助金）">❄ 雪の地域</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button><button data-v3 title="ななめから立体に見る">🗻 3D</button><button data-v3x hidden title="横に回す向きを反対にする（2本指でひねる・右ドラッグ）">⇄ 左右反転</button></div>
+      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-lay="track" title="非電化はオレンジ・単線はむらさきの点線">非電化・単線</button><button data-lay="run" title="列車・バスの走行位置">🚃 走行</button><button data-lay="wxmap" title="天気図（等圧線・高気圧と低気圧・雨と雪・気温）">🌤 天気図</button><button data-lay="jam" title="道路の混みぐあい（オレンジ 混雑・赤 渋滞・黒 通行止め）" hidden>🚗 渋滞</button><button data-lay="er" title="救急車（いま出ているもの）" hidden>🚑 救急</button><button data-lay="snowz" title="雪の地域（雪国・豪雪地帯・特別豪雪地帯。雪の対策の補助金）">❄ 雪の地域</button><button data-lay="elev" title="高低差（標高を色で。北西から光を当てた陰つき）">⛰ 高低差</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button><button data-v3 title="ななめから立体に見る">🗻 3D</button><button data-v3x hidden title="横に回す向きを反対にする（2本指でひねる・右ドラッグ）">⇄ 左右反転</button></div>
       <span class="mp-addr" translate="no" hidden></span>
     </div>
     <div class="mp-zoom"><button data-find title="さがす">🔍</button><button data-full title="大きく">⤢</button><button data-zin>＋</button><button data-zout>－</button><button data-home title="瑠璃市役所">⌂</button><button data-opt title="地図の設定">⚙</button></div>
@@ -2732,6 +2784,7 @@ function build(root) {
       <small class="mp-qn">遠くまで見るほど、電池と通信を多く使います。「最高画質」はパソコン向けです。重いときは「省エネ」に。</small>
     </div>
     <div class="mp-hint" hidden></div>
+    <div class="mp-eleg" hidden></div>
     <button class="mp-wx" hidden title="天気"></button>
     <div class="mp-wxbar" hidden>
       <div class="mp-wxr"><b data-wxtime></b><span class="mp-seg"><button data-wxm="rain">雨・雪</button><button data-wxm="temp">気温</button></span><button class="mp-wxpl" data-wxplay title="うごかす（1時間ずつ）">▶</button></div>
@@ -2747,6 +2800,7 @@ function build(root) {
   S.wrap = root.querySelector('#mpWrap'); S.cv = S.wrap.querySelector('canvas'); S.ctx = S.cv.getContext('2d');
   S.cvr = S.wrap.querySelector('.mp-cvr'); S.ctxr = S.cvr.getContext('2d');   // 上がき（走行位置・3D の名前。t61）
   S.sheet = S.wrap.querySelector('.mp-sheet'); S.hint = S.wrap.querySelector('.mp-hint'); S.addr = S.wrap.querySelector('.mp-addr');
+  S.wrap.querySelector('.mp-eleg').innerHTML = elvLegend();   // 高低差の色の見かた
   // 上のボタンの段の高さ（スマホでは折り返して2〜3段になる）：運行情報・追跡のしるしと、道具のヒントは、その下に出す（重ならないように）
   { const top = S.wrap.querySelector('.mp-top'), setH = () => { if (top.offsetHeight) S.wrap.style.setProperty('--mp-top-h', top.offsetHeight + 'px'); };
     setH(); if (window.ResizeObserver) new ResizeObserver(setH).observe(top); else window.addEventListener('resize', setH); }
@@ -2787,7 +2841,7 @@ function build(root) {
     try { S.v3x = localStorage.getItem('mp_v3x') === '1'; } catch (e) { S.v3x = false; }
     v3x.classList.toggle('on', !!S.v3x);
     v3x.onclick = () => setOpt('v3x', !S.v3x);
-    v3.onclick = async () => { if (S.v3) m3Close(); else await m3Open(); v3.classList.toggle('on', !!S.v3); b25.hidden = !!S.v3; v3x.hidden = !S.v3; }; }
+    v3.onclick = async () => { if (S.v3) m3Close(); else await m3Open(); v3.classList.toggle('on', !!S.v3); b25.hidden = !!S.v3; v3x.hidden = !S.v3; optSync(); }; }
   S.wrap.querySelector('[data-full]').onclick = () => { S.wrap.classList.toggle('mp-full'); resize(); };
   S.wrap.querySelector('[data-find]').onclick = () => openFind();   // さがす（t59）
   S.wrap.querySelector('.mp-wx').onclick = () => { const [x, y] = wxCenter(); openWx(x, y); };   // 天気（t62）
@@ -3077,7 +3131,26 @@ const HOME = [-3.1, 2.9];
 const prefRoad = pref => /府$/.test(pref || '') ? '府道' : /都$/.test(pref || '') ? '都道' : /道$/.test(pref || '') ? '道道' : '県道';
 // 線の制限速度のグラフ（よこ：線にそった長さ・たて：速さ。カーブがきついところほど低い）。at：タップしたところ（m）
 /* ---------- 高さ（t108）：縦断の図・線の高さを変える。サーバーの更新（DB の更新59）の前は出さない（mp_area の hgt。S.hgtOK） ---------- */
-const HGT_MODE = { auto: '地形に合わせる', tn: 'トンネル優先', el: '高架', ug: '地下', man: '手で決めた高さ' };   // tn：出っぱった地形に上下を合わせず、トンネルでぬける（DB の更新81）
+const HGT_MODE = { auto: '地形に合わせる', tn: 'トンネル優先', fl: '平坦（地上）', tz: '高さを決める', el: '高架', ug: '地下', man: '手で決めた高さ' };   // tn：出っぱった地形に上下を合わせず、トンネルでぬける（DB の更新81）
+//   fl：地面の高さの範囲（8m 低い〜6m 高い）の中で いちばん平らに・tz：標高か地面からの高さ（m）に合わせる（DB の更新84。S.hgt2 のときだけ）
+const hgtModes = () => S.hgt2 ? ['auto', 'tn', 'fl', 'tz', 'el', 'ug'] : ['auto', 'tn', 'el', 'ug'];
+const hmName = (hm, ho) => hm === 'tz' && ho && ho.zt != null ? `${HGT_MODE.tz}（${ho.zr ? `地面から ${ho.zt > 0 ? '+' : ''}${ho.zt}m` : `標高 ${ho.zt}m`}）` : (HGT_MODE[hm] || '');
+// 高さを決める（tz）の高さ・勾配の上限の行（DB の更新84）。o：{hm, zt, zr, gm}
+function hgtOptHtml(o, kind, rack) {
+  if (!S.hgt2) return '';
+  const mx = kind === 'road' ? 80 : rack ? 70 : 35;
+  return (o.hm === 'tz' ? `<div class="mp-row small" style="align-items:center"><span>高さ</span><input class="mp-inp" type="number" inputmode="decimal" step="1" data-zt value="${o.zt != null ? o.zt : ''}" placeholder="30" style="width:5.5em;flex:none"><span>m</span>
+      <span class="mp-seg"><button data-zr="0" class="${!o.zr ? 'on' : ''}">標高</button><button data-zr="1" class="${o.zr ? 'on' : ''}">地面から</button></span></div>
+      ${o.zt == null ? '<p class="mp-warn small" style="margin:2px 0">高さ（m）を入れてください</p>' : ''}` : '')
+    + `<div class="mp-row small" style="align-items:center"><span>勾配の上限</span><input class="mp-inp" type="number" inputmode="numeric" step="1" min="5" max="${mx}" data-gm value="${o.gm != null ? o.gm : ''}" placeholder="${mx}" style="width:4.5em;flex:none"><span>‰</span><span class="muted">（空なら ${mx}‰ まで）</span></div>`;
+}
+function hgtOptBind(sh, o, changed) {
+  const zt = sh.querySelector('[data-zt]'); if (zt) zt.onchange = () => { const v = parseFloat(hw(zt.value).replace(/[－−]/g, '-')); o.zt = isFinite(v) ? v : null; changed(); };
+  sh.querySelectorAll('[data-zr]').forEach(b => b.onclick = () => { o.zr = b.dataset.zr === '1'; changed(); });
+  const gm = sh.querySelector('[data-gm]'); if (gm) gm.onchange = () => { const v = parseFloat(hw(gm.value)); o.gm = isFinite(v) && v > 0 ? Math.round(v) : null; changed(); };
+}
+const hgtOpt = o => ({ zt: o.hm === 'tz' ? o.zt : null, zr: !!o.zr, gm: o.gm != null ? o.gm : null });
+const hgtNoZ = o => S.hgt2 && o.hm === 'tz' && o.zt == null;   // 高さを決めるのに、高さがない
 // 縦断 pf（[s, z, …]）の s マスのところの高さ（m）
 function pfZ(pf, s) {
   const n = (pf || []).length / 2; if (!n) return 0;
@@ -3114,6 +3187,7 @@ function profChart(cv, d, o) {
   let lo = Infinity, hi = -Infinity;
   for (let i = 0; i < n; i++) { lo = Math.min(lo, pf[2 * i + 1]); hi = Math.max(hi, pf[2 * i + 1]); }
   for (const v of gs) if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+  if (o.cmp) for (let i = 1; i < o.cmp.length; i += 2) { lo = Math.min(lo, o.cmp[i]); hi = Math.max(hi, o.cmp[i]); }
   if (!isFinite(lo)) { lo = 0; hi = 10; }
   if (hi - lo < 20) { const m = (hi + lo) / 2; lo = m - 10; hi = m + 10; }
   lo -= 4; hi += 4;
@@ -3128,6 +3202,13 @@ function profChart(cv, d, o) {
     g.beginPath(); let first = true, lastX = L0;
     gs.forEach((v, k) => { if (v == null) return; const x = X(Math.min(k, len)); if (first) { g.moveTo(x, Y(lo)); first = false; } g.lineTo(x, Y(v)); lastX = x; });
     if (!first) { g.lineTo(lastX, Y(lo)); g.closePath(); g.fillStyle = '#efe3c6'; g.fill(); g.strokeStyle = '#b89f70'; g.lineWidth = 1; g.stroke(); }
+  }
+  // ホームのところ（青いおび）・いまの高さ（灰色の点線。駅の高さを変えるとき。DB の更新84）
+  if (o.mark) { const a = X(clamp(o.mark[0], 0, len)), b = X(clamp(o.mark[1], 0, len)); g.fillStyle = 'rgba(31,95,191,.14)'; g.fillRect(a, T0, Math.max(2, b - a), H - T0 - B0); }
+  if (o.cmp && o.cmp.length >= 4) {
+    g.strokeStyle = 'rgba(80,80,80,.6)'; g.lineWidth = 1.5; g.setLineDash([4, 3]); g.beginPath();
+    for (let i = 0; i < o.cmp.length / 2; i++) { const x = X(clamp(o.cmp[2 * i], 0, len)), y = Y(o.cmp[2 * i + 1]); if (i) g.lineTo(x, y); else g.moveTo(x, y); }
+    g.stroke(); g.setLineDash([]);
   }
   // 線の高さ（1マスごとのつくりの色）
   const st = d.st || '', col = { G: '#333', V: '#9a5b2e', T: '#666', B: '#1f6fbf' };
@@ -3174,6 +3255,7 @@ function profSum(q) {
 // 地下・高架をえらんだのに とどかないとき（はしが地面で、線が短い）
 function hgtShort(hm, q) {
   if (hm === 'tn' && q.hm && q.hm !== 'tn' && q.hm !== 'man') return '<p class="muted small" style="margin:2px 0">トンネル優先は、サーバーの更新（DB の更新81）のあとで使えます（いまは「地形に合わせる」で見つもりました）</p>';
+  if (hm === 'fl' && (q.tun || q.via)) return '<p class="muted small" style="margin:2px 0">地面の高さのままでは引けないところ（急な山・谷）は、トンネル・高架にしています</p>';
   if (hm === 'ug' && !q.tun) return '<p class="mp-warn small" style="margin:2px 0">はしが地面の高さなので、この長さでは地下にとどきません（はしの線も地下にするか、長く引いてください）</p>';
   if (hm === 'el' && !q.via && !q.brg) return '<p class="mp-warn small" style="margin:2px 0">はしが地面の高さなので、この長さでは高架にとどきません（はしの線も高架にするか、長く引いてください）</p>';
   return '';
@@ -3197,11 +3279,14 @@ const pinArr = pins => pins && pins.size ? [...pins].sort((a, b) => a[0] - b[0])
 const pinFind = (pf, v) => { if (v == null || !pf) return null; for (let i = 0; i < pf.length / 2; i++) if (Math.abs(pf[2 * i] - v) < 0.03) return i; return null; };
 // 線の高さを変える（線のシートから）：地形に合わせる・高架・地下・アプト式・点ごとに手で。見つもり → この高さにする
 function segHeight(s) {
-  const st = { hm: s.hm && s.hm !== 'man' ? s.hm : 'auto', rack: !!s.rk, pins: new Map(), q: null, err: null, quoting: false, seq: 0, sel: null, pv: null };
+  const st = { hm: s.hm && s.hm !== 'man' ? s.hm : 'auto', rack: !!s.rk, pins: new Map(), q: null, err: null, quoting: false, seq: 0, sel: null, pv: null,
+              zt: s.ho && s.ho.zt != null ? s.ho.zt : null, zr: !!(s.ho && s.ho.zr), gm: s.ho && s.ho.gm != null ? s.ho.gm : null };   // 高さ・勾配の上限（DB の更新84）
+  if (!hgtModes().includes(st.hm)) st.hm = 'auto';
+  const args = dry => ({ p_id: s.id, p_mode: st.hm, p_prof: pinArr(st.pins), p_rack: s.k === 'rail' ? st.rack : null, p_dry: dry, ...(S.hgt2 ? { p_opt: hgtOpt(st) } : {}) });
   const quote = async () => {
     const my = ++st.seq; st.quoting = true; st.err = null; draw();
     let q = null, err = null;
-    try { q = await call('mp_seg_height', { p_id: s.id, p_mode: st.hm, p_prof: pinArr(st.pins), p_rack: s.k === 'rail' ? st.rack : null, p_dry: true }); } catch (e) { err = e.message; }
+    try { q = await call('mp_seg_height', args(true)); } catch (e) { err = e.message; }
     if (st.seq !== my) return;
     st.quoting = false; st.q = q; st.err = err; st.sel = q ? pinFind(q.prof, st.pv) : null; draw();
   };
@@ -3209,16 +3294,18 @@ function segHeight(s) {
   const draw = () => {
     const q = st.q, cur = segProf(s);
     sheet(`<h4>${s.k === 'rail' ? '線路' : '道路'}の高さ</h4>
-      <p class="small muted" style="margin:0 0 4px">いま：${esc(HGT_MODE[s.hm] || '地面どおり')}${s.rk ? '・アプト式' : ''}。はしの高さは、つながっている線と同じです</p>
-      <div class="mp-row"><span class="mp-seg">${['auto', 'tn', 'el', 'ug'].map(m => `<button data-hm="${m}" class="${st.hm === m ? 'on' : ''}">${HGT_MODE[m]}</button>`).join('')}</span>
+      <p class="small muted" style="margin:0 0 4px">いま：${esc(hmName(s.hm, s.ho) || '地面どおり')}${s.ho && s.ho.gm ? `・勾配の上限 ${s.ho.gm}‰` : ''}${s.rk ? '・アプト式' : ''}。はしの高さは、つながっている線と同じです</p>
+      <div class="mp-row"><span class="mp-seg" style="flex-wrap:wrap">${hgtModes().map(m => `<button data-hm="${m}" class="${st.hm === m ? 'on' : ''}">${HGT_MODE[m]}</button>`).join('')}</span>
         ${s.k === 'rail' ? `<label class="small"><input type="checkbox" data-rack ${st.rack ? 'checked' : ''}> アプト式（急な坂 70‰ まで・30km/h まで）</label>` : ''}</div>
+      ${hgtOptHtml(st, s.k, st.rack)}
       <canvas class="mp-prof" data-prof></canvas>
       ${q ? `<p class="small" style="margin:2px 0">${profSum(q)}</p>${hgtShort(st.hm, q)}${pinRow(q.prof, st.sel, st.pins)}
         ${(q.stas || []).length ? `<p class="small" style="margin:2px 0">駅：${q.stas.map(x => `<span>${esc(x[0])}</span>（${{ G: '地上', U: '地下駅', E: '高架駅' }[x[1]]} → ${{ G: '地上', U: '地下駅', E: '高架駅' }[x[2]]}）`).join('・')}</p>` : ''}
         <div class="mp-row"><span class="mp-cost">工事費 ${X(q.cost)}</span><span class="small muted">${q.rack ? `制限速度 ${q.vlim} km/h まで` : ''}</span></div>`
         : st.err ? `<p class="mp-warn">${esc(st.err)}</p>` : st.quoting ? '<p class="muted small">見つもり中…</p>' : '<p class="muted small">図は、いまの高さです。えらんで「見つもる」を押すと、新しい高さと工事費が出ます</p>'}
-      <div class="mp-row"><button class="btn" data-est ${st.quoting ? 'disabled' : ''}>見つもる</button><button class="btn main" data-ok ${q ? '' : 'disabled'}>この高さにする</button></div>
+      <div class="mp-row"><button class="btn" data-est ${st.quoting || hgtNoZ(st) ? 'disabled' : ''}>見つもる</button><button class="btn main" data-ok ${q ? '' : 'disabled'}>この高さにする</button></div>
       <p class="muted small" style="margin:4px 0 0">工事費は、つくりが高くなるところ（地面 → 高架・トンネル・橋など）と、地下駅・高架駅になる駅の分。もどしても返金はありません</p>`, sh => {
+      hgtOptBind(sh, st, changed);
       const cv = sh.querySelector('[data-prof]');
       if (cv) profChart(cv, q ? { prof: q.prof, g: q.g, st: q.st, xs: q.xs, len: q.len } : cur, q ? { points: true, sel: st.sel, pins: st.pins, onPick: i => { st.sel = i; st.pv = q.prof[2 * i]; draw(); } } : {});
       sh.querySelectorAll('[data-hm]').forEach(b => b.onclick = () => { st.hm = b.dataset.hm; changed(); });
@@ -3231,7 +3318,7 @@ function segHeight(s) {
       });
       sh.querySelector('[data-est]').onclick = () => quote();
       sh.querySelector('[data-ok]').onclick = async () => {
-        const r = await api('mp_seg_height', { p_id: s.id, p_mode: st.hm, p_prof: pinArr(st.pins), p_rack: s.k === 'rail' ? st.rack : null, p_dry: false });
+        const r = await api('mp_seg_height', args(false));
         if (!r) return;
         toast(r.cost > 0 ? `高さを変えました（${fmt(r.cost)} X）` : '高さを変えました');
         refreshBox(...s.bb); sheet(null); S.sel = null; S.dirty = true;
@@ -3377,7 +3464,7 @@ function hgtLine(s) {
   if (!s.pf) return s.c === 'exp' ? '高さ：地面から 10m（高架）' : '高さ：地面どおり';
   const n = c => ((s.st || '').split(c).length - 1) * 50, ps = [];
   if (n('T')) ps.push(`トンネル・地下 ${fmt(n('T'))}m`); if (n('V')) ps.push(`高架 ${fmt(n('V'))}m`); if (n('B')) ps.push(`橋 ${fmt(n('B'))}m`);
-  return `高さ：${esc(HGT_MODE[s.hm] || '地形に合わせる')}${s.rk ? '・アプト式' : ''}${ps.length ? '（' + ps.join('・') + '）' : ''}`;
+  return `高さ：${esc(hmName(s.hm, s.ho) || '地形に合わせる')}${s.ho && s.ho.gm ? `・勾配の上限 ${s.ho.gm}‰` : ''}${s.rk ? '・アプト式' : ''}${ps.length ? '（' + ps.join('・') + '）' : ''}`;
 }
 // 住所をシートと上の帯に
 async function addrInto(x, y, still) {   // x, y：マス（50m）の座標。その場所の区画（10m）の住所
@@ -3461,6 +3548,7 @@ function showSta(s) {
     <div class="mp-kv"><b>持ち主</b><span><span>${s.o === 'gov' ? '国' : esc(S.vis.names[s.o] || '')}</span>${s.mine ? '<small>（あなた）</small>' : ''}</span>
       ${wxRow(s.fx, s.fy)}${snowStaRow(s)}
       ${s.k === 'rail' ? `<b>ホーム</b><span>${s.pl} m・${s.tr}番線まで</span>` : ''}
+      ${s.k === 'rail' && S.hgtOK ? `<b>高さ</b><span>${STA_LV[s.zl || 'G']}</span>` : ''}
       ${s.k === 'rail' && S.supOK ? `<b>補給</b><span>${s.wt || s.cl ? `<span>${[s.wt ? '💧 給水' : '', s.cl ? '⛏ 給炭' : ''].filter(Boolean).join('・')}</span><small class="muted">（蒸気機関車）</small>` : '<span class="muted">給水・給炭の設備はありません</span>'}</span>` : ''}
       ${s.k === 'rail' && s.tk ? `<b>発着番線</b><span>${s.tk.map((t, i) => `<span>${esc(trkL(t, i))}</span>`).join('<br>')}</span>` : ''}
       ${gov ? `<b>使用料</b><span>${s.ln != null ? `<span>空路に入れると 1路線・1日 ${X(s.ln)}（国庫へ）</span>` : '<span>いまは新しい空路に使えません</span>'}</span>`
@@ -3472,7 +3560,7 @@ function showSta(s) {
     ${gov ? `<div class="mp-row"><button class="btn main" data-slot>🛫 発着口・入札</button>${pdep ? '<button class="btn" data-cars>飛行機を見る・注文する</button>' : ''}<button class="btn" data-newr>＋ 空路</button>${adm ? '<button class="btn" data-ren>名前を変える</button><button class="btn" data-lend>使用料</button>' : ''}</div>
       <p class="muted small"><span>国の空港です。だれでも駐機場に飛行機を置いて（≡ →「車両と編成」）、空路に使えます。空路に入れると、1路線・1日の使用料を国にはらいます（使いはじめたときの値段のまま）。</span><span>この空港を出る便は、1時間に、持っている発着口の数まで（発着口の権利は入札で買います）</span></p>`
     : s.mine && port ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button><button class="btn" data-lend>貸し出し</button>${pdep ? (air ? '<button class="btn" data-cars>飛行機を見る</button>' : '<button class="btn" data-cars>船を見る</button>') : ''}${air ? '<button class="btn" data-newr>＋ 空路</button>' : '<button class="btn" data-newr>＋ 航路</button>'}</div>
-      <p class="muted small">${air ? '空港は、空港の建物をこわすとなくなります' : '港は、フェリーターミナルの建物をこわすとなくなります'}</p>` : s.mine ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button>${s.k === 'bus' ? '<button class="btn" data-lend>貸し出し</button>' : '<button class="btn" data-plat>ホーム・番線</button><button class="btn" data-trk>発着番線</button>'}${s.k === 'rail' && S.snowOK && (s.ml || snowZoneAt(s.fx, s.fy) > 0) ? `<button class="btn" data-melt>${s.ml ? '融雪器をはずす' : '❄ 融雪器をつける'}</button>` : ''}${s.k === 'rail' && S.supOK ? `<button class="btn" data-sup="water">${s.wt ? '給水設備をはずす' : '💧 給水設備をつくる'}</button><button class="btn" data-sup="coal">${s.cl ? '給炭設備をはずす' : '⛏ 給炭設備をつくる'}</button>` : ''}<button class="btn" data-del>こわす</button></div>` : ''}
+      <p class="muted small">${air ? '空港は、空港の建物をこわすとなくなります' : '港は、フェリーターミナルの建物をこわすとなくなります'}</p>` : s.mine ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button>${s.k === 'bus' ? '<button class="btn" data-lend>貸し出し</button>' : '<button class="btn" data-plat>ホーム・番線</button><button class="btn" data-trk>発着番線</button>' + (S.hgt2 ? '<button class="btn" data-sth>⛰ 駅の高さ</button>' : '')}${s.k === 'rail' && S.snowOK && (s.ml || snowZoneAt(s.fx, s.fy) > 0) ? `<button class="btn" data-melt>${s.ml ? '融雪器をはずす' : '❄ 融雪器をつける'}</button>` : ''}${s.k === 'rail' && S.supOK ? `<button class="btn" data-sup="water">${s.wt ? '給水設備をはずす' : '💧 給水設備をつくる'}</button><button class="btn" data-sup="coal">${s.cl ? '給炭設備をはずす' : '⛏ 給炭設備をつくる'}</button>` : ''}<button class="btn" data-del>こわす</button></div>` : ''}
     ${S.admin && (s.rt || []).length ? '<div class="mp-row"><button class="btn" data-unkomk>🚦 乱れを起こす（管理者）</button></div>' : ''}`, sh => {
     const cs = sh.querySelector('[data-cars]'); if (cs) cs.onclick = () => openCars(pdep.id);
     const um = sh.querySelector('[data-unkomk]'); if (um) um.onclick = () => unkoMake(s);   // t108
@@ -3484,6 +3572,7 @@ function showSta(s) {
     const th = sh.querySelector('[data-thru]'); if (th) th.onclick = () => thruReq({ sta: s.id }, () => { if (S.sel && S.sel.kind === 'sta' && S.sel.id === s.id) showSta(s); });
     const tk = sh.querySelector('[data-trk]'); if (tk) tk.onclick = () => trkEdit(s);
     const pl = sh.querySelector('[data-plat]'); if (pl) pl.onclick = () => staResize(s);
+    const sth = sh.querySelector('[data-sth]'); if (sth) sth.onclick = () => staHeight(s);   // 駅の高さ（DB の更新84）
     const ld = sh.querySelector('[data-lend]'); if (ld) ld.onclick = async () => {
       const v = prompt(gov ? T('国の空港の使用料（1路線・1日・X）。空にすると、新しい空路には使えなくなります（いまの空路は、そのまま使えます）') : T('ほかの人・会社に貸す使用料（1系統・1日・X）。空にすると貸しません（いま使っている系統は、そのまま使えます）'), s.ln != null ? String(s.ln) : '1000');
       if (v == null) return;
@@ -3497,6 +3586,49 @@ function showSta(s) {
   });
   addrInto(s.fx, s.fy, () => S.sel && S.sel.kind === 'sta' && S.sel.id === s.id);
   if (s.k === 'rail' && s.o !== myKey() && !thruFresh()) loadThru().then(() => { if (S.sel && S.sel.kind === 'sta' && S.sel.id === s.id) showSta(s); });
+}
+// 駅の高さを変える（DB の更新84）：地上駅・高架駅・地下駅。ホームの前後の線路の高さを決めなおす。見つもってから
+const STA_LV = { G: '地上駅', E: '高架駅', U: '地下駅' };
+function staHeight(s) {
+  const cur = s.zl || 'G', sg = S.vis && S.vis.segs.get(s.seg);
+  const st = { lv: cur === 'G' ? 'E' : 'G', q: null, err: null, quoting: false, seq: 0 };
+  S.sel = { kind: 'sta', id: s.id }; S.dirty = true;
+  const quote = async () => {
+    const my = ++st.seq; st.quoting = true; st.err = null; draw();
+    let q = null, err = null;
+    try { q = await call('mp_sta_height', { p_id: s.id, p_lv: st.lv, p_dry: true }); } catch (e) { err = errJa(e.message); }
+    if (st.seq !== my) return;
+    st.quoting = false; st.q = q; st.err = err; draw();
+  };
+  const changed = () => { st.seq++; st.quoting = false; st.q = null; st.err = null; draw(); };
+  const draw = () => {
+    const q = st.q;
+    sheet(`<h4>🚉 <span>${esc(s.n)}</span><span>駅の高さ</span></h4>
+      <p class="small muted" style="margin:0 0 4px">いま：<span>${STA_LV[cur]}</span></p>
+      <div class="mp-row"><span class="mp-seg">${['G', 'E', 'U'].map(k => `<button data-lv="${k}" class="${st.lv === k ? 'on' : ''}" ${k === cur ? 'disabled' : ''}>${STA_LV[k]}</button>`).join('')}</span></div>
+      <canvas class="mp-prof" data-prof></canvas>
+      ${q ? `<p class="small" style="margin:2px 0">${profSum(q)}</p>
+        <p class="small muted" style="margin:2px 0"><span>高さを決めなおす線路 約${fmt(q.m)}m</span>${q.segs > 1 ? `<span>（${q.segs}本の線）</span>` : ''}<span>・点線は いまの高さ</span></p>
+        <div class="mp-row"><span class="mp-cost">${q.cost > 0 ? '工事費 ' + X(q.cost) : '工事費なし'}</span></div>`
+        : st.err ? `<p class="mp-warn">${esc(st.err)}</p>` : st.quoting ? '<p class="muted small">見つもり中…</p>' : '<p class="muted small">図は、いまの線の高さです（青いところがホーム）。えらんで「見つもる」を押すと、新しい高さと工事費が出ます</p>'}
+      <div class="mp-row"><button class="btn" data-est ${st.quoting ? 'disabled' : ''}>見つもる</button><button class="btn main" data-ok ${q ? '' : 'disabled'}>この高さにする</button><button class="btn" data-back>もどる</button></div>
+      <p class="muted small" style="margin:4px 0 0">ホームの前後の線路の高さを決めなおします（ほかの駅・車庫のところは、いまの高さのまま）。工事費は、つくりが高くなるところ（地面 → 高架・トンネルなど）と、地下駅・高架駅の分。もどしても返金はありません</p>`, sh => {
+      const cv = sh.querySelector('[data-prof]');
+      if (cv && q) profChart(cv, { prof: q.prof, g: q.g, st: q.st, xs: q.xs, len: q.len }, { mark: q.sta, cmp: q.cur });
+      else if (cv && sg) profChart(cv, segProf(sg), { mark: [s.at - s.pl / 100, s.at + s.pl / 100] });
+      sh.querySelectorAll('[data-lv]').forEach(b => b.onclick = () => { st.lv = b.dataset.lv; changed(); });
+      sh.querySelector('[data-est]').onclick = () => quote();
+      sh.querySelector('[data-back]').onclick = () => showSta(s);
+      sh.querySelector('[data-ok]').onclick = async () => {
+        const r = await api('mp_sta_height', { p_id: s.id, p_lv: st.lv, p_dry: false });
+        if (!r) return;
+        toast(r.cost > 0 ? `駅の高さを変えました（${fmt(r.cost)} X）` : '駅の高さを変えました');
+        s.zl = st.lv === 'G' ? null : st.lv;
+        refreshBox(s.fx - 60, s.fy - 60, s.fx + 60, s.fy + 60); showSta(s);
+      };
+    });
+  };
+  draw();
 }
 // 駅のホームの長さ・番線の数を変える（まん中はそのまま、前後にのびちぢみ）。見つもってから
 function staResize(s) {
@@ -4033,7 +4165,7 @@ function drawArgs(st, dry) {
   if (st.edit) return { p_id: st.edit.id, p_ctl: toInts(st.ctrl), p_pts: toInts(st.curve), p_dry: dry };
   const o = st.opts;
   return { p_kind: st.kind, p_cls: st.kind === 'road' ? o.cls : null, p_ctl: st.mode === 'arc' ? null : toInts(st.ctrl), p_pts: toInts(st.curve),
-    p_opts: { dbl: o.dbl, elec: o.elec, name: o.name, lanes: o.lanes, ...(S.hgtOK ? { hm: o.hm || 'auto', rack: st.kind === 'rail' && !!o.rack, prof: pinArr(st.pins) } : {}) },
+    p_opts: { dbl: o.dbl, elec: o.elec, name: o.name, lanes: o.lanes, ...(S.hgtOK ? { hm: o.hm || 'auto', rack: st.kind === 'rail' && !!o.rack, prof: pinArr(st.pins) } : {}), ...(S.hgt2 ? hgtOpt({ ...o, hm: o.hm || 'auto' }) : {}) },
     p_as: S.as, p_from: st.A ? st.A.att : null, p_to: st.B ? st.B.att : null, p_dry: dry };
 }
 function drawSheet() {
@@ -4051,11 +4183,11 @@ function drawSheet() {
         <span class="mp-seg"><button data-e="0" class="${!o.elec ? 'on' : ''}">非電化</button><button data-e="1" class="${o.elec ? 'on' : ''}">電化</button></span></div>`
       : `<div class="mp-row">${gov ? `<select class="mp-inp" style="width:auto" data-cls>${[['exp', '高速道路'], ['nat', '国道'], ['pref', '府県道'], ['city', '市道'], ['lane', '細い道']].map(c => `<option value="${c[0]}" ${o.cls === c[0] ? 'selected' : ''}>${c[1]}</option>`).join('')}</select>` : ''}
         片側 <span class="mp-seg">${(gov ? [0, 1, 2, 3] : [0, 1, 2]).map(n => `<button data-l="${n}" class="${o.lanes === n ? 'on' : ''}">${n ? n + '車線' : '細い道'}</button>`).join('')}</span></div>`}
-    ${S.hgtOK && !st.edit ? `<div class="mp-row"><span>高さ</span> <span class="mp-seg">${['auto', 'tn', 'el', 'ug'].map(m => `<button data-hm="${m}" class="${(o.hm || 'auto') === m ? 'on' : ''}">${HGT_MODE[m]}</button>`).join('')}</span>${rail ? `<label class="small"><input type="checkbox" data-rack ${o.rack ? 'checked' : ''}> アプト式</label>` : ''}</div>` : ''}
+    ${S.hgtOK && !st.edit ? `<div class="mp-row"><span>高さ</span> <span class="mp-seg" style="flex-wrap:wrap">${hgtModes().map(m => `<button data-hm="${m}" class="${(o.hm || 'auto') === m ? 'on' : ''}">${HGT_MODE[m]}</button>`).join('')}</span>${rail ? `<label class="small"><input type="checkbox" data-rack ${o.rack ? 'checked' : ''}> アプト式</label>` : ''}</div>${hgtOptHtml({ ...o, hm: o.hm || 'auto' }, st.kind, !!o.rack)}` : ''}
     ${st.edit ? '' : `<div class="mp-row"><input class="mp-inp" data-nm placeholder="${rail ? '路線名（なくてもよい）' : '道路の名前（なくてもよい）'}" value="${esc(o.name)}"></div>`}
     <div class="mp-row">${q ? `${q.cost > 0 || S.as !== 'gov' ? `<span class="mp-cost">工事費 ${X(q.cost)}</span>` : '<span>工事費なし（国の工事は無料）</span>'}<span class="small"><span>使用料 1日 ${X(q.lease || 0)}</span>${q.tunnel ? `<span>・トンネル ${q.tunnel}マス</span>` : ''}${q.bridge ? `<span>・橋 ${q.bridge}マス</span>` : ''}${q.vtop != null && q.vtop !== q.vlim ? `<span>・制限速度 ${q.vlim}〜${q.vtop} km/h</span>` : `<span>・制限速度 ${q.vlim} km/h</span>`}</span>`
       : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>'
-      : st.curve.length > 2 ? `<button class="btn" data-est ${tight || st.geoBad ? 'disabled' : ''}>見つもる</button><span class="muted small">${gov ? '国の工事は無料です（見つもらずに、つくれます）' : '工事費を出してから、つくれます'}</span>` : st.mode === 'arc' ? '<span class="muted small">地図をタップして角の点をおいてください（2つ以上）。角には、えらんだ半径のカーブが入ります。線路のはしから始めると延長、まん中から始めると分岐です</span>' : '<span class="muted small">地図をタップして点をおいてください（2つ以上）。はしを線の近くにおくと、つながります</span>'}</div>
+      : st.curve.length > 2 ? `<button class="btn" data-est ${tight || st.geoBad || (!st.edit && hgtNoZ({ ...o, hm: o.hm || 'auto' })) ? 'disabled' : ''}>見つもる</button><span class="muted small">${gov ? '国の工事は無料です（見つもらずに、つくれます）' : '工事費を出してから、つくれます'}</span>` : st.mode === 'arc' ? '<span class="muted small">地図をタップして角の点をおいてください（2つ以上）。角には、えらんだ半径のカーブが入ります。線路のはしから始めると延長、まん中から始めると分岐です</span>' : '<span class="muted small">地図をタップして点をおいてください（2つ以上）。はしを線の近くにおくと、つながります</span>'}</div>
     ${q && q.prof ? `<canvas class="mp-prof" data-prof></canvas><p class="small" style="margin:2px 0">${profSum(q)}</p>${st.edit ? '' : hgtShort(o.hm, q) + pinRow(q.prof, st.psel, st.pins)}` : ''}
     ${q ? needH(q.need) : ''}
     <div class="mp-row"><button class="btn" data-undo ${st.ctrl.length ? '' : 'disabled'}>1つもどす</button><button class="btn" data-cancel>キャンセル</button>
@@ -4070,6 +4202,7 @@ function drawSheet() {
     // 高さ（t108）
     s.querySelectorAll('[data-hm]').forEach(b => b.onclick = () => { o.hm = b.dataset.hm; drawUpdate(); });
     { const r = s.querySelector('[data-rack]'); if (r) r.onchange = () => { o.rack = r.checked; drawUpdate(); }; }
+    hgtOptBind(s, o, () => drawUpdate());   // 高さ・勾配の上限（DB の更新84）
     { const cv = s.querySelector('[data-prof]'); if (cv && q) profChart(cv, { prof: q.prof, g: q.g, st: q.st, xs: q.xs, len: q.len }, st.edit ? {} : { points: true, sel: st.psel, pins: st.pins, onPick: i => { st.psel = i; st.pv = q.prof[2 * i]; drawSheet(); } }); }
     s.querySelectorAll('[data-pz]').forEach(b => b.onclick = async () => {   // だめなら（勾配がきつすぎるなど）、前にもどす
       const bk = new Map(st.pins), q0 = st.quote, sel0 = st.psel;

@@ -18738,7 +18738,8 @@ begin
                   'ctl', case when s.own_u = u or s.own_c = any(me_cs) or (s.gov and _is_admin(u)) then to_jsonb(s.ctl) end)
                   || case when s.snowp > 0 then jsonb_build_object('sp', s.snowp) else '{}'::jsonb end
                   || case when s.prof is not null and p_lod <= 1 then jsonb_build_object('pf', to_jsonb(s.prof), 'st', s.st) else '{}'::jsonb end   -- 高さ（t108）
-                  || case when s.rack then jsonb_build_object('rk', 1) else '{}'::jsonb end || case when s.hm is not null then jsonb_build_object('hm', s.hm) else '{}'::jsonb end), '[]'::jsonb)
+                  || case when s.rack then jsonb_build_object('rk', 1) else '{}'::jsonb end || case when s.hm is not null then jsonb_build_object('hm', s.hm) else '{}'::jsonb end
+                  || case when s.hopt is not null then jsonb_build_object('ho', s.hopt) else '{}'::jsonb end), '[]'::jsonb)   -- 高さの数値（DB の更新84）
                from mp_segs s where s.bb && b and (p_lod = 0 or s.kind = 'rail' or s.cls in ('exp', 'nat', 'pref') or (p_lod = 1 and s.art))
                  and (p_lod < 2 or s.kind = 'rail' or s.cls in ('exp', 'nat'))
                  and (p_lod < 3 or s.kind = 'rail' or s.cls = 'exp')),   -- lod 3（とても遠く。t108）：線路と高速だけ
@@ -18789,7 +18790,7 @@ begin
                union select distinct 'c:' || pa.own_c, (select name from companies where id = pa.own_c) from mp_parcels pa where p_lod = 0 and pa.own_c is not null and pa.bb && box(point(p_x0 * 5, p_y0 * 5), point(p_x1 * 5, p_y1 * 5))
                union select distinct 'u:' || s.own_u, (select nickname from profiles where id = s.own_u) from mp_segs s where s.own_u is not null and s.bb && b
                union select distinct 'c:' || s.own_c, (select name from companies where id = s.own_c) from mp_segs s where s.own_c is not null and s.bb && b) z where v is not null),
-    'ver', coalesce((select max(ver) from mp_changes), 0), 'snow', 1, 'hgt', 1, 'sup', 1) into r;   -- sup：給水・給炭のあるサーバー（DB の更新78）
+    'ver', coalesce((select max(ver) from mp_changes), 0), 'snow', 1, 'hgt', 1, 'sup', 1, 'hgt2', 1) into r;   -- sup：給水・給炭のあるサーバー（DB の更新78）・hgt2：平坦・高さを決める・勾配の上限・駅の高さ（DB の更新84）
   return r;
 end $$;
 -- 変わったもの（共同編集）。なければ空。多すぎたら reload
@@ -18891,10 +18892,10 @@ begin
   insert into mp_nodes(kind, x, y, z) values (sg.kind, round(q.x * 100), round(q.y * 100), case when sg.prof is not null then _mp_pz(sg.prof, s) end) returning id into nid;   -- 高さ（t108）
   pa := _mp_sub(sg.pts, 0, s); pb := _mp_sub(sg.pts, s, sg.len);
   fa := _mp_prof_sub(sg.prof, 0, s); fb := _mp_prof_sub(sg.prof, s, sg.len);   -- 縦断（なければ null）
-  insert into mp_segs(kind, cls, name, own_u, own_c, gov, ctl, pts, bb, len, w, lanes, dbl, elec, vlim, n0, n1, net, art, cost, color, snowp, prof, st, rack, hm)
+  insert into mp_segs(kind, cls, name, own_u, own_c, gov, ctl, pts, bb, len, w, lanes, dbl, elec, vlim, n0, n1, net, art, cost, color, snowp, prof, st, rack, hm, hopt)
   values (sg.kind, sg.cls, sg.name, sg.own_u, sg.own_c, sg.gov, null, pb, _mp_bb(pb), _mp_len(pb), sg.w, sg.lanes, sg.dbl, sg.elec,
           case when sg.kind = 'rail' then least(case when sg.rack then 30 else 300 end, _mp_vlim(_mp_minr(pb))) else sg.vlim end, nid, sg.n1, sg.net, sg.art, 0, sg.color,   -- color：路線カラーもそのまま（2026-10-29）
-          sg.snowp, fb, _mp_st_of(pb, fb), sg.rack, sg.hm)   -- 雪よけ・高さ・アプト式もそのまま（t108）
+          sg.snowp, fb, _mp_st_of(pb, fb), sg.rack, sg.hm, sg.hopt)   -- 雪よけ・高さ・アプト式もそのまま（t108）。高さの数値も（DB の更新84）
   returning id into bid;
   update mp_segs set pts = pa, ctl = null, bb = _mp_bb(pa), len = _mp_len(pa), vlim = case when kind = 'rail' then least(case when rack then 30 else 300 end, _mp_vlim(_mp_minr(pa))) else vlim end, n1 = nid,
                      prof = fa, st = _mp_st_of(pa, fa) where id = sid;
@@ -18993,7 +18994,8 @@ begin
   update mp_segs set pts = pm, ctl = null, bb = _mp_bb(pm), len = _mp_len(pm),
                      n0 = case when xr then x.n1 else x.n0 end, n1 = case when yr then y.n0 else y.n1 end,
                      name = case when x.name <> '' then x.name else y.name end, cost = x.cost + y.cost, color = coalesce(x.color, y.color),
-                     prof = fm, st = _mp_st_of(pm, fm), hm = case when fm is null then null when x.prof is null then y.hm when y.prof is null then x.hm when x.hm = y.hm then x.hm else 'man' end,
+                     prof = fm, st = _mp_st_of(pm, fm), hm = case when fm is null then null when x.prof is null then y.hm when y.prof is null then x.hm when x.hm = y.hm and x.hopt is not distinct from y.hopt then x.hm else 'man' end,
+                     hopt = case when fm is null then null when x.prof is null then y.hopt when y.prof is null then x.hopt when x.hm = y.hm and x.hopt is not distinct from y.hopt then x.hopt end,   -- 高さの数値（DB の更新84）
                      vlim = case when x.rack then least(30, _mp_vlim(_mp_minr(pm))) else _mp_vlim(_mp_minr(pm)) end
    where id = x.id;
   delete from mp_segs where id = y.id;
@@ -19058,7 +19060,7 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); pa record; tiles int[]; ters text[]; ln real; rmin real; cost numeric := 0; i int; lq record; n0 bigint; n1 bigint; sid bigint;
         dbl boolean := coalesce((p_opts ->> 'dbl')::boolean, false); elec boolean := coalesce((p_opts ->> 'elec')::boolean, false); nm text := left(coalesce(p_opts ->> 'name', ''), 30);
         cls text := coalesce(p_cls, 'priv'); base numeric; np int := array_length(p_pts, 1) / 2; bad text; ln_ int := (p_opts ->> 'lanes')::int; cells int[]; sw real; need jsonb;
-        md text := coalesce(p_opts ->> 'hm', 'auto'); rk boolean := coalesce((p_opts ->> 'rack')::boolean, false); upf real[]; pr jsonb; pf real[]; z0 real; z1 real; ea real; eb real; vl int; nhm text;
+        md text := coalesce(p_opts ->> 'hm', 'auto'); rk boolean := coalesce((p_opts ->> 'rack')::boolean, false); upf real[]; pr jsonb; pf real[]; z0 real; z1 real; ea real; eb real; vl int; nhm text; ho jsonb;
 begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
@@ -19090,13 +19092,15 @@ begin
   cells := _mp_seg_cells_arr(p_pts, p_kind, sw, dbl);
   -- 高さ（t108）：縦断を決める。交差する線（線路どうしは 10m 上か下。道路とは、どちらも地面なら踏切・交差点）・建物（屋根＋5m より上か、地面−15m より下）・
   --   駅のホーム・車庫・バス停（±10m）・滑走路（下だけ）は、上か下を通る（つなぐはしの 20m はのぞく）。はしの高さは、つなぐ先と同じ
-  if md not in ('auto', 'el', 'ug', 'tn') then md := 'auto'; end if;   -- tn：トンネル優先（DB の更新81）
+  if md not in ('auto', 'el', 'ug', 'tn', 'fl', 'tz') then md := 'auto'; end if;   -- tn：トンネル優先（DB の更新81）・fl：平坦（地上）・tz：高さを決める（DB の更新84）
   if p_kind <> 'rail' then rk := false; end if;
+  ho := _mp_hopt(md, p_opts, p_kind, rk);   -- 高さ・勾配の上限（DB の更新84）
+  if md = 'tz' and not coalesce(ho ? 'zt', false) then md := 'auto'; end if;
   if jsonb_typeof(p_opts -> 'prof') = 'array' then upf := array(select v::real from jsonb_array_elements_text(p_opts -> 'prof') v); end if;
   nhm := case when upf is not null then 'man' else md end;
   z0 := _mp_att_z(p_from, p_pts[1], p_pts[2]); z1 := _mp_att_z(p_to, p_pts[2 * np - 1], p_pts[2 * np]);
   ea := case when p_from is null then 0 else least(0.4, ln / 3) end; eb := case when p_to is null then ln else ln - least(0.4, ln / 3) end;
-  pr := _mp_prof_make(p_pts, p_kind, cls, z0, z1, md, rk, upf, cells, tiles, ea, eb, null::bigint[], false, null::real[]);
+  pr := _mp_prof_make2(p_pts, p_kind, cls, z0, z1, md, rk, upf, cells, tiles, ea, eb, null::bigint[], false, null::real[], ho);
   if not (pr ->> 'ok')::boolean then raise exception '%', pr ->> 'err'; end if;
   pf := array(select v::real from jsonb_array_elements_text(pr -> 'prof') v);
   -- 工事費：マスごとに、つくり（地面・高架・トンネル・橋）と地形の倍率 ×（1 ＋ まちの係数）。アプト式は 1.3倍
@@ -19114,16 +19118,16 @@ begin
       'tiles', array_length(tiles, 1) / 2, 'len_m', round(ln * 50), 'rmin_m', round(least(rmin, 99999) * 50),
       'vlim', vl, 'lanes', ln_,
       'vtop', case when p_kind = 'rail' then least(case when rk then 30 else 300 end, (select max((v ->> 1)::int) from jsonb_array_elements(_mp_vruns(p_pts, 0, ln)) v)) else _mp_road_v(cls, ln_) end,
-      'need', need, 'hm', nhm, 'rack', rk, 'z0', z0, 'z1', z1, 'len', round(ln::numeric, 2)) || (pr - 'ok' - 'ns');   -- 高さ（t108）：縦断・つくり・地面・勾配・トンネル・高架・橋・踏切・交差
+      'need', need, 'hm', nhm, 'ho', ho, 'rack', rk, 'z0', z0, 'z1', z1, 'len', round(ln::numeric, 2)) || (pr - 'ok' - 'ns');   -- 高さ（t108）：縦断・つくり・地面・勾配・トンネル・高架・橋・踏切・交差
   end if;
   perform _mp_land_stop(need);
   perform _mp_pay(pa.pu, pa.pc, pa.gv, cost::bigint, p_kind, format('%sの工事（%sm）', case when p_kind = 'rail' then '線路' else '道路' end, round(ln * 50)));
   n0 := _mp_end(p_kind, p_from, p_pts[1], p_pts[2], pa.pu, pa.pc, pa.gv);
   n1 := _mp_end(p_kind, p_to, p_pts[2 * np - 1], p_pts[2 * np], pa.pu, pa.pc, pa.gv);
-  insert into mp_segs(kind, cls, name, own_u, own_c, gov, ctl, pts, bb, len, w, lanes, dbl, elec, vlim, n0, n1, cost, prof, st, rack, hm)
+  insert into mp_segs(kind, cls, name, own_u, own_c, gov, ctl, pts, bb, len, w, lanes, dbl, elec, vlim, n0, n1, cost, prof, st, rack, hm, hopt)
   values (p_kind, cls, nm, pa.pu, pa.pc, pa.gv, p_ctl, p_pts, _mp_bb(p_pts), ln,
           sw, ln_,
-          dbl, elec, vl, n0, n1, cost, pf, pr ->> 'st', rk, nhm)
+          dbl, elec, vl, n0, n1, cost, pf, pr ->> 'st', rk, nhm, ho)
   returning id into sid;
   update mp_nodes set z = pf[2] where id = n0 and z is null;   -- はしの点の高さ（つないだ先は同じ高さ）
   update mp_nodes set z = pf[array_length(pf, 1)] where id = n1 and z is null;
@@ -19145,7 +19149,7 @@ create or replace function public.mp_seg_edit(p_id bigint, p_ctl int[], p_pts in
 language plpgsql security definer set search_path = public as $$
 #variable_conflict use_column
 declare u uuid := _me(); sg mp_segs; me_cs int[]; tiles int[]; old int[]; newt int[] := '{}'; ters text[]; ln real; rmin real; amt_ numeric := 0; mul real[]; i int; base numeric; lq record; a mp_nodes; b mp_nodes; np int := array_length(p_pts, 1) / 2; bad text;
-        ncells int[]; need jsonb; md text; pr jsonb; pf real[]; z0 real; z1 real; vl int;
+        ncells int[]; need jsonb; md text; pr jsonb; pf real[]; z0 real; z1 real; vl int; ho jsonb;
 begin
   perform _mp_ok(u);
   select * into sg from mp_segs where id = p_id for update;
@@ -19176,9 +19180,10 @@ begin
   if 'D' = any(ters) then raise exception '深い海には作れません'; end if;
   ncells := _mp_seg_cells_arr(p_pts, sg.kind, sg.w, sg.dbl);
   -- 高さ（t108）：縦断を決めなおす。交差する線・建物・駅のホーム・車庫・バス停・滑走路は、上か下を通る（はしの 20m はのぞく）
-  md := case when sg.hm in ('el', 'ug', 'tn') then sg.hm else 'auto' end;
+  md := case when sg.hm in ('el', 'ug', 'tn', 'fl') then sg.hm when sg.hm = 'tz' and coalesce(sg.hopt ? 'zt', false) then 'tz' else 'auto' end;   -- 平坦・高さを決める（DB の更新84）も
+  ho := nullif(case when md = 'tz' then sg.hopt else coalesce(sg.hopt, '{}'::jsonb) - 'zt' - 'zr' end, '{}'::jsonb);   -- 勾配の上限は そのまま
   z0 := _mp_end_z(sg.n0, p_id); z1 := _mp_end_z(sg.n1, p_id);
-  pr := _mp_prof_make(p_pts, sg.kind, sg.cls, z0, z1, md, sg.rack, null::real[], ncells, tiles, least(0.4, ln / 3)::real, (ln - least(0.4, ln / 3))::real, array[p_id], false, null::real[]);
+  pr := _mp_prof_make2(p_pts, sg.kind, sg.cls, z0, z1, md, sg.rack, null::real[], ncells, tiles, least(0.4, ln / 3)::real, (ln - least(0.4, ln / 3))::real, array[p_id], false, null::real[], ho);
   if not (pr ->> 'ok')::boolean then raise exception '%', pr ->> 'err'; end if;
   pf := array(select v::real from jsonb_array_elements_text(pr -> 'prof') v);
   -- 工事費：新しく通るマスはぜんぶ、前から通るマスは つくりが高くなった分だけ
@@ -19194,14 +19199,14 @@ begin
   need := _mp_land_need(ncells, sg.own_u, sg.own_c, sg.gov, _mp_seg_cells_arr(sg.pts, sg.kind, sg.w, sg.dbl));
   if p_dry then return jsonb_build_object('cost', amt_, 'lease', round(lq.fee), 'tiles', array_length(tiles, 1) / 2, 'new', coalesce(array_length(newt, 1), 0) / 2, 'len_m', round(ln * 50), 'rmin_m', round(least(rmin, 99999) * 50), 'vlim', vl,
     'vtop', least(case when sg.rack then 30 else 300 end, (select max((v ->> 1)::int) from jsonb_array_elements(_mp_vruns(p_pts, 0, ln)) v)), 'need', need,
-    'hm', md, 'rack', sg.rack, 'z0', z0, 'z1', z1, 'len', round(ln::numeric, 2)) || (pr - 'ok' - 'ns'); end if;
+    'hm', md, 'ho', ho, 'rack', sg.rack, 'z0', z0, 'z1', z1, 'len', round(ln::numeric, 2)) || (pr - 'ok' - 'ns'); end if;
   perform _mp_land_stop(need);
   perform _mp_pay(sg.own_u, sg.own_c, sg.gov, amt_::bigint, sg.kind, format('%sの引きなおし', case when sg.kind = 'rail' then '線路' else '道路' end));
   perform _mp_chg('seg', p_id, 'set', sg.bb);
   delete from mp_occ where what = sg.kind and ref = p_id;
   perform _mp_occ_set(p_id, sg.kind, tiles);
   update mp_segs set ctl = p_ctl, pts = p_pts, bb = _mp_bb(p_pts), len = ln, vlim = vl, cost = cost + amt_::bigint,
-                     prof = pf, st = pr ->> 'st', hm = md where id = p_id;
+                     prof = pf, st = pr ->> 'st', hm = md, hopt = ho where id = p_id;
   update mp_nodes set z = pf[2] where id = sg.n0 and (z is null or z0 is null);   -- はしの点の高さ（この線だけのはしは、決めた高さに）
   update mp_nodes set z = pf[array_length(pf, 1)] where id = sg.n1 and (z is null or z1 is null);
   -- 使用料は新しい形の区画で決めなおす
@@ -29829,6 +29834,7 @@ alter table public.mp_segs add column if not exists prof real[];   -- 縦断：[
 alter table public.mp_segs add column if not exists st text;       -- つくり（1マスごと）：G 地面・V 高架・T トンネル（地下）・B 橋（川・湖・海の上）。null は地面どおり
 alter table public.mp_segs add column if not exists rack boolean not null default false;   -- アプト式（急な坂を登れる。30km/h まで）
 alter table public.mp_segs add column if not exists hm text;       -- 高さのえらびかた：auto 地形に合わせる・el 高架・ug 地下・man 手で直した
+alter table public.mp_segs add column if not exists hopt jsonb;   -- 高さのえらびかたの数値（DB の更新84）：{zt: 高さ m, zr: 地面から, gm: 勾配の上限 ‰}
 alter table public.mp_nodes add column if not exists z real;       -- 点の高さ（m）。null は地面
 
 -- 地面の高さ（m。海・川・湖は 0）
@@ -30048,7 +30054,87 @@ $$;
 --   oseg：線そのもの（形を直す・高さを変えるとき。その線との交差・その線の駅・車庫はのぞく。いくつでも）・xonly：線路との交差だけ見る（前からある線を直すとき）・
 --   fx：決まった高さのところ [s0, s1, 下, 上, …]（車庫のところは地面 ±2.5m）
 --   答え：{ok, prof, st（1マスごとのつくり）, g（1マスごとの地面）, maxg（いちばん急な勾配 ‰）, tun・via・brg（m）, lx（踏切の数）, xs（交差・上下を通るもの [s, 'over'/'under'/'level', 名前]）, ns} か {ok: false, err}
-create or replace function public._mp_prof_make(p int[], kind text, cls text, z0 real, z1 real, mode text, rack boolean, upf real[], cells int[], tiles int[], ea real, eb real, oseg bigint[], xonly boolean, fx real[]) returns jsonb
+-- 縦断を いちばん平らに（DB の更新84）：点 cs ごとの範囲 lo〜hi を通る、いちばん短い折れ線（ぴんと張った糸）。勾配のいちばん急なところも、いちばんゆるくなる
+--   v0・v1：はしが自由なとき、そのはしの外のずっと遠くにおく点の高さ（null なら、そのはしは lo＝hi で決まっている）
+create or replace function public._mp_taut(cs real[], lo real[], hi real[], v0 real, v1 real) returns real[]
+language plpgsql immutable as $$
+declare n int := array_length(cs, 1); m int; s float8[] := '{}'; a float8[] := '{}'; b float8[] := '{}'; z float8[]; ee float8 := 1e5;
+        ap int; za float8; ub float8; lb float8; ju int; jl int; j int; su float8; sl float8; k int; off int := 0; out real[] := '{}';
+begin
+  if n is null or n < 2 then return lo; end if;
+  if v0 is not null then s := s || (cs[1] - ee); a := a || v0::float8; b := b || v0::float8; off := 1; end if;
+  for k in 1..n loop s := s || cs[k]::float8; a := a || lo[k]::float8; b := b || hi[k]::float8; end loop;
+  if v1 is not null then s := s || (cs[n] + ee); a := a || v1::float8; b := b || v1::float8; end if;
+  m := array_length(s, 1);
+  z := array_fill(0::float8, array[m]);
+  ap := 1; za := (a[1] + b[1]) / 2; z[1] := za;
+  while ap < m loop
+    ub := 'infinity'; lb := '-infinity'; ju := null; jl := null; j := ap + 1;
+    loop
+      su := (b[j] - za) / (s[j] - s[ap]); sl := (a[j] - za) / (s[j] - s[ap]);
+      if sl > ub + 1e-12 then   -- 上のふちの点 ju で折れる
+        for k in ap + 1..ju loop z[k] := za + ub * (s[k] - s[ap]); end loop;
+        ap := ju; za := b[ju]; z[ap] := za; exit;
+      end if;
+      if su < lb - 1e-12 then   -- 下のふちの点 jl で折れる
+        for k in ap + 1..jl loop z[k] := za + lb * (s[k] - s[ap]); end loop;
+        ap := jl; za := a[jl]; z[ap] := za; exit;
+      end if;
+      if su < ub then ub := su; ju := j; end if;
+      if sl > lb then lb := sl; jl := j; end if;
+      if j = m then   -- おわりまで まっすぐ（おわりは決まっているので lb＝ub）
+        for k in ap + 1..m loop z[k] := za + (lb + ub) / 2 * (s[k] - s[ap]); end loop;
+        ap := m; exit;
+      end if;
+      j := j + 1;
+    end loop;
+  end loop;
+  for k in 1..n loop out := out || least(hi[k], greatest(lo[k], z[k + off]))::real; end loop;
+  return out;
+end $$;
+-- 平坦（DB の更新84）：縦断 z（地形に合わせた答え）を、点ごとの「地面のまま」の範囲 blo〜bhi（z がそこから出ているところは z まで広げる）の中で いちばん平らに
+--   lo〜hi（はしの高さ・川の上の橋・車庫・手で決めた高さ・上下をよけるところ）はそのまま
+create or replace function public._mp_prof_flat(cs real[], z real[], lo real[], hi real[], blo real[], bhi real[]) returns real[]
+language plpgsql immutable as $$
+declare n int := array_length(cs, 1); k int; tl real[] := '{}'; th real[] := '{}';
+begin
+  for k in 1..n loop
+    tl := tl || greatest(lo[k], least(blo[k], z[k]));
+    th := th || least(hi[k], greatest(bhi[k], z[k]));
+  end loop;
+  return _mp_taut(cs, tl, th, case when th[1] - tl[1] < 0.01 then null else z[1] end, case when th[n] - tl[n] < 0.01 then null else z[n] end);
+end $$;
+-- 縦断の点をへらす（DB の更新84）：まっすぐ（2cm 以内）にならぶ点は1つの線に（64点ごとには のこす）
+create or replace function public._mp_prof_simp(pf real[]) returns real[]
+language plpgsql immutable as $$
+declare n int := coalesce(array_length(pf, 1), 0) / 2; out real[]; i int; j int; a int := 1; ok boolean; zj real;
+begin
+  if n <= 2 then return pf; end if;
+  out := array[pf[1], pf[2]];
+  for i in 2..n - 1 loop
+    ok := i + 1 - a <= 64;
+    if ok then
+      for j in a + 1..i loop
+        zj := pf[2 * a] + (pf[2 * i + 2] - pf[2 * a]) * (pf[2 * j - 1] - pf[2 * a - 1]) / greatest(1e-6, pf[2 * i + 1] - pf[2 * a - 1]);
+        if abs(zj - pf[2 * j]) > 0.02 then ok := false; exit; end if;
+      end loop;
+    end if;
+    if not ok then out := out || array[pf[2 * i - 1], pf[2 * i]]; a := i; end if;
+  end loop;
+  return out || array[pf[2 * n - 1], pf[2 * n]];
+end $$;
+-- 高さのえらびかたの数値（DB の更新84）：高さを決める（tz）の高さ zt（m。標高は −300〜4000・地面からは −150〜150）と zr（地面から）、
+--   勾配の上限 gm（‰。5 から、ふつうの上限（線路 35・アプト式 70・道路 80）より小さいときだけ）。なければ null
+create or replace function public._mp_hopt(md text, o jsonb, kind text, rk boolean) returns jsonb
+language sql immutable as $$
+  select nullif(jsonb_strip_nulls(jsonb_build_object(
+    'zt', case when md = 'tz' and jsonb_typeof(o -> 'zt') = 'number' then
+            case when o -> 'zr' = 'true'::jsonb then round(least(150, greatest(-150, (o ->> 'zt')::numeric)), 1) else round(least(4000, greatest(-300, (o ->> 'zt')::numeric)), 1) end end,
+    'zr', case when md = 'tz' and jsonb_typeof(o -> 'zt') = 'number' and o -> 'zr' = 'true'::jsonb then true end,
+    'gm', case when jsonb_typeof(o -> 'gm') = 'number' and (o ->> 'gm')::numeric < case when kind = 'road' then 80 when rk then 70 else 35 end
+               then round(greatest(5, (o ->> 'gm')::numeric)) end)), '{}'::jsonb)
+$$;
+create or replace function public._mp_prof_make2(p int[], kind text, cls text, z0 real, z1 real, mode text, rack boolean, upf real[], cells int[], tiles int[], ea real, eb real, oseg bigint[], xonly boolean, fx real[], opt jsonb) returns jsonb
 language plpgsql stable set search_path = public as $$
 declare sm record; ss real[] := '{}'; gg real[] := '{}'; tt text[] := '{}'; S real; ns int; n int; k int; j int; i int; it int;
         cs real[] := '{}'; an real[]; tg real[] := '{}'; lo real[]; hi real[]; d real[] := '{}'; z real[]; pf real[]; o record;
@@ -30057,11 +30143,17 @@ declare sm record; ss real[] := '{}'; gg real[] := '{}'; tt text[] := '{}'; S re
         za real; zb_ real; zm real; ka int; kb int; side text; sides text[]; z2 real[]; lo2 real[]; hi2 real[]; mg real := 0; st text := ''; zz real; lx int := 0; xs jsonb := '[]'::jsonb;
         tun int := 0; via int := 0; brg int := 0; acc real; cnt int; G real; off real; wr real[] := '{}'; w0 real; nu int;
         gb real[]; ge real[]; tw int := 20; wv real; jj int;
+        zt real := (opt ->> 'zt')::real; zr boolean := coalesce(opt -> 'zr' = 'true'::jsonb, false); gm real := (opt ->> 'gm')::real; gx real := (opt ->> 'gx')::real; tz boolean; fl boolean := mode = 'fl';
+        blo real[]; bhi real[]; gmx real; gmn real; wt boolean; al real; g0 real;
 begin
   -- 1マスごとの地面
   for sm in select * from _mp_gsamp(p) loop ss := ss || sm.s; gg := gg || sm.g; tt := tt || sm.t; end loop;
   ns := array_length(ss, 1); S := ss[ns];
-  G := case when kind = 'road' then 0.08 when rack then 0.07 else 0.035 end;
+  G := case when kind = 'road' then 0.08 when rack then 0.07 else 0.035 end; g0 := G;
+  if gm is not null then G := least(G, greatest(0.005, gm / 1000.0)::real); end if;   -- 勾配の上限（DB の更新84）
+  if gx is not null then G := greatest(G, least(0.15, gx / 1000.0)::real); end if;   -- いまの線の急さまで（駅の高さを変えるとき。地面どおりの古い線など。DB の更新84）
+  tz := mode = 'tz' and zt is not null; if mode = 'tz' and not tz then mode := 'auto'; end if;   -- tz：高さを決める（DB の更新84）
+  al := case when mode = 'tn' then 0 else 0.5 end;
   -- 通るもの：交差する線（線路どうしは 10m・道路とは 5m 上か下。どちらも地面なら踏切・交差点。前からの道路（高さを決めていない）は、まわりの高さを合わせるので どの高さでもよい）・
   --   建物・ホーム・車庫・バス停・滑走路
   for o in select x.s s0, x.s s1, x.oz - q.sep zb, x.oz + q.sep zt, x.og g, (kind = 'road' or x.okind = 'road') and abs(x.oz - x.og) <= 2.5 lvl,
@@ -30086,13 +30178,14 @@ begin
     an := array(select (S * gi / nu)::real from generate_series(0, nu) gi);
     for i in 1..no loop an := an || array[least(S, greatest(0, o_s0[i])), least(S, greatest(0, o_s1[i]))]; end loop;
     an := an || wr;
+    if fl then an := an || ss; end if;   -- 平坦（DB の更新84）：地面の点（1マスごと）も点にする
     for k in 1..coalesce(array_length(fx, 1), 0) / 4 loop an := an || array[least(S, greatest(0, fx[4 * k - 3])), least(S, greatest(0, fx[4 * k - 2]))]; end loop;
     for k in 1..coalesce(array_length(upf, 1), 0) / 2 loop an := an || least(S, greatest(0, upf[2 * k - 1])); end loop;
     for zz in select v from unnest(an) v order by v loop
       if array_length(cs, 1) is null or zz > cs[array_length(cs, 1)] + 0.02 then cs := cs || zz; end if;
     end loop;
     cs[1] := 0; cs[array_length(cs, 1)] := S; n := array_length(cs, 1);
-    off := case mode when 'el' then 10 when 'ug' then -20 else 0 end;
+    off := case mode when 'el' then 10 when 'ug' then -20 when 'tz' then case when zr then zt else 0 end else 0 end;   -- 高さを決める：地面からの高さ（標高のときは、目標がその高さ。DB の更新84）
     -- トンネル優先（DB の更新81）：目標にする地面は、まわり ±tw マスより細い出っぱり（丘・尾根）をけずったもの
     --   （オープニング：いちばん低いところ → いちばん高いところ。はしの外は、はしの地面がつづくとみる。坂・谷・ふつうの上り下りはそのまま）
     gb := gg;
@@ -30112,17 +30205,17 @@ begin
     for k in 1..n loop
       acc := 0; cnt := 0;
       for j in greatest(1, ceil(cs[k] - 1.5)::int + 1)..least(ns, floor(cs[k] + 1.5)::int + 2) loop if abs(ss[j] - cs[k]) <= 1.5 then acc := acc + gb[j]; cnt := cnt + 1; end if; end loop;
-      tg := tg || (round((acc / greatest(cnt, 1) + off)::numeric, 1))::real;
+      tg := tg || case when tz and not zr then zt else (round((acc / greatest(cnt, 1) + off)::numeric, 1))::real end;
     end loop;
     lo := array_fill(-1e9::real, array[n]); hi := array_fill(1e9::real, array[n]);
     if z0 is not null then lo[1] := z0; hi[1] := z0; end if;
     if z1 is not null then lo[n] := z1; hi[n] := z1; end if;
-    for k in 1..n - 1 loop d := d || _mp_hd(kind, rack, cs[k + 1] - cs[k]); end loop;
+    for k in 1..n - 1 loop d := d || (G * (cs[k + 1] - cs[k]) * 50)::real; end loop;   -- 勾配の上限（DB の更新84。決めなければ _mp_hd と同じ）
     -- 水の上：橋（2m より上）。地下（地下鉄）なら 川・海の下（−15m より下）
     for k in 1..coalesce(array_length(wr, 1), 0) / 2 loop
       for j in 1..n loop
         if cs[j] >= wr[2 * k - 1] - 0.02 and cs[j] <= wr[2 * k] + 0.02 then
-          if mode = 'ug' then hi[j] := least(hi[j], -15); else lo[j] := greatest(lo[j], 2); end if;
+          if mode = 'ug' or (tz and tg[j] <= -8) then hi[j] := least(hi[j], -15); else lo[j] := greatest(lo[j], 2); end if;   -- 高さを決める：目標が水の下なら下（DB の更新84）
         end if;
       end loop;
     end loop;
@@ -30147,12 +30240,30 @@ begin
       end loop;
       o_ka := o_ka || coalesce(ka, 0); o_kb := o_kb || coalesce(kb, -1);
     end loop;
+    -- 平坦（DB の更新84）：点ごとの「地面のまま」の範囲（まわり 1マスの地面より 8m 低い〜6m 高い。水の上は 2〜8m の低い橋）
+    if fl then
+      blo := array_fill(-1e9::real, array[n]); bhi := array_fill(1e9::real, array[n]);
+      for k in 1..n loop
+        gmx := -1e9; gmn := 1e9; wt := false;
+        for j in greatest(1, floor(cs[k])::int)..least(ns, floor(cs[k])::int + 2) loop
+          if abs(ss[j] - cs[k]) < 0.999 then
+            if tt[j] in ('S', 'R', 'L', 'D') then wt := true; else gmx := greatest(gmx, gg[j]); gmn := least(gmn, gg[j]); end if;
+          end if;
+        end loop;
+        if gmx > -1e8 then
+          blo[k] := gmx - 7.9; bhi[k] := gmn + 5.9;
+          if wt then blo[k] := greatest(blo[k], 2); bhi[k] := greatest(bhi[k], blo[k]); end if;
+          if blo[k] > bhi[k] then wv := (blo[k] + bhi[k]) / 2; blo[k] := wv; bhi[k] := wv; end if;
+        elsif wt then blo[k] := 2; bhi[k] := 8; end if;
+      end loop;
+    end if;
     ord := array(select gi from generate_series(1, no) gi order by o_lv[gi], o_s0[gi]);
     -- 解く。通るものにかかるところは、1つずつ上か下（か踏切）に決めて解きなおす（だめなら ほかの側。線路・建物などが先、踏切にできる道路はあと）
-    z := _mp_prof_solve_al(tg, lo, hi, d, case when mode = 'tn' then 0 else 0.5 end::real);   -- トンネル優先は、目標より下で いちばん近い線（DB の更新81）
+    z := _mp_prof_solve_al(tg, lo, hi, d, al);   -- トンネル優先は、目標より下で いちばん近い線（DB の更新81）
+    if fl and z is not null then z := _mp_prof_flat(cs, z, lo, hi, blo, bhi); end if;   -- 平坦（DB の更新84）
     if z is null then
       return jsonb_build_object('ok', false, 'err', case when z0 is not null and z1 is not null and abs(z1 - z0) > G * S * 50 then
-        format('勾配がきつすぎて、はしの高さどうしをつなげません（%s は %s‰ まで。高さの差 %sm・長さ %sm）', case when kind = 'road' then '道路' when rack then 'アプト式' else '線路' end,
+        format('勾配がきつすぎて、はしの高さどうしをつなげません（%s は %s‰ まで。高さの差 %sm・長さ %sm）', case when G < g0 then '勾配の上限' when kind = 'road' then '道路' when rack then 'アプト式' else '線路' end,
                round(G * 1000), round(abs(z1 - z0)::numeric), round((S * 50)::numeric))
         when upf is not null then '手で決めた高さでは、勾配がきつすぎます（はしの高さ・ほかの決めた高さ・川の上の橋・車庫のところとあいません）'
         else '勾配がきつすぎて、この形では引けません（川・海の上の橋や、車庫のところの高さがとれません）' end);
@@ -30170,7 +30281,7 @@ begin
       zm := (za + zb_) / 2;
       -- ためす順：滑走路は下だけ。地下・高架をえらんだら その側から。踏切にできて地面に近ければ踏切。トンネル優先は下から（DB の更新81）。高い建物（25m より上）は下から。ほかは近い側から
       sides := case when o_zt[fi] > 1e8 then array['under']
-                    when mode = 'ug' then array['under', 'over'] when mode = 'el' then array['over', 'under']
+                    when mode = 'ug' or (tz and tg[o_ka[fi]] < o_g[fi] - 8) then array['under', 'over'] when mode = 'el' or (tz and tg[o_ka[fi]] > o_g[fi] + 6) then array['over', 'under']
                     when o_lv[fi] and abs(zm - o_g[fi]) <= 7.5 then case when zm >= o_g[fi] and mode <> 'tn' then array['level', 'over', 'under'] else array['level', 'under', 'over'] end
                     when mode = 'tn' then array['under', 'over']
                     when o_k[fi] = 'b' and o_zt[fi] - o_g[fi] > 25 then array['under', 'over']
@@ -30184,7 +30295,8 @@ begin
           elsif side = 'under' then hi2[j] := least(hi2[j], o_zb[fi]);
           else lo2[j] := greatest(lo2[j], o_g[fi] - 2.5); hi2[j] := least(hi2[j], o_g[fi] + 2.5); end if;
         end loop;
-        z2 := _mp_prof_solve_al(tg, lo2, hi2, d, case when mode = 'tn' then 0 else 0.5 end::real);
+        z2 := _mp_prof_solve_al(tg, lo2, hi2, d, al);
+        if fl and z2 is not null then z2 := _mp_prof_flat(cs, z2, lo2, hi2, blo, bhi); end if;   -- 平坦（DB の更新84）
         exit when z2 is not null;
       end loop;
       if z2 is null then return jsonb_build_object('ok', false, 'err', '上下をよける高さがとれません（勾配がきつすぎます' || case when upf is not null then '。手で決めた高さも見なおしてください' else '' end || '）：' || o_nm[fi]); end if;
@@ -30192,6 +30304,7 @@ begin
     end loop;
     if fi is not null then return jsonb_build_object('ok', false, 'err', '上下をよける高さがとれません：' || o_nm[fi]); end if;
     pf := _mp_prof_pack(cs, z);
+    if fl or tz then pf := _mp_prof_simp(pf); end if;   -- まっすぐにならぶ点は まとめる（DB の更新84）
   end;
   -- いちばん急な勾配・1マスごとのつくり・踏切・交差
   for k in 1..n - 1 loop mg := greatest(mg, abs(z[k + 1] - z[k]) / greatest((cs[k + 1] - cs[k]) * 50, 1) * 1000); end loop;
@@ -30209,6 +30322,11 @@ begin
   return jsonb_build_object('ok', true, 'prof', to_jsonb(pf), 'st', st, 'g', (select jsonb_agg(round(v::numeric)) from unnest(gg) v), 'maxg', round(mg::numeric),
     'tun', tun, 'via', via, 'brg', brg, 'lx', lx, 'xs', xs, 'ns', ns);
 end $$;
+-- 縦断を決めて、しらべる（いままでの呼び出し。数値 opt なし。DB の更新84 から _mp_prof_make2 を呼ぶ）
+create or replace function public._mp_prof_make(p int[], kind text, cls text, z0 real, z1 real, mode text, rack boolean, upf real[], cells int[], tiles int[], ea real, eb real, oseg bigint[], xonly boolean, fx real[]) returns jsonb
+language sql stable set search_path = public as $$
+  select _mp_prof_make2(p, kind, cls, z0, z1, mode, rack, upf, cells, tiles, ea, eb, oseg, xonly, fx, null::jsonb)
+$$;
 -- s の列と z の列を、縦断 [s0, z0, s1, z1, …] に
 create or replace function public._mp_prof_pack(cs real[], z real[]) returns real[]
 language sql immutable as $$ select array_agg(v order by i, o) from generate_series(1, array_length(cs, 1)) i, lateral unnest(array[round(cs[i]::numeric, 2)::real, round(z[i]::numeric, 2)::real]) with ordinality u(v, o) $$;
@@ -30351,10 +30469,10 @@ $$;
 --   p_mode：auto・el・ug。p_prof：手で決めた高さ（[s, z, …]。その位置はその高さ、ほかは p_mode で自動）。p_rack：アプト式（線路だけ。null はいまのまま）
 --   はしの高さは、つながっている線と同じ（この線だけのはしは自由）
 --   工事費：つくりが高くなるマス（地面 → 高架・トンネル・橋など）の差の分と、地下駅・高架駅になる駅の差の分。もどしても返金なし
-create or replace function public.mp_seg_height(p_id bigint, p_mode text, p_prof real[], p_rack boolean, p_dry boolean) returns jsonb
+create or replace function public.mp_seg_height(p_id bigint, p_mode text, p_prof real[], p_rack boolean, p_dry boolean, p_opt jsonb default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); sg mp_segs; me_cs int[]; pr jsonb; rk boolean; md text; nhm text; tiles int[]; cells int[]; base numeric; amt numeric := 0; scost numeric := 0;
-        pf real[]; nw text; vl int; z0 real; z1 real; s record; g real; ozl text; nzl text; sts jsonb := '[]'::jsonb;
+        pf real[]; nw text; vl int; z0 real; z1 real; s record; g real; ozl text; nzl text; sts jsonb := '[]'::jsonb; ho jsonb;
 begin
   perform _mp_ok(u);
   select * into sg from mp_segs where id = p_id for update;
@@ -30362,14 +30480,16 @@ begin
   me_cs := array(select id from companies where owner = u);
   if not coalesce(sg.own_u = u or sg.own_c = any(me_cs) or (sg.gov and _is_admin(u)), false) then raise exception 'あなたの線ではありません'; end if;
   rk := sg.kind = 'rail' and coalesce(p_rack, sg.rack);
-  md := case when p_mode in ('auto', 'el', 'ug', 'tn') then p_mode else 'auto' end;   -- tn：トンネル優先（DB の更新81）
+  md := case when p_mode in ('auto', 'el', 'ug', 'tn', 'fl', 'tz') then p_mode else 'auto' end;   -- tn：トンネル優先（DB の更新81）・fl：平坦（地上）・tz：高さを決める（DB の更新84）
+  ho := _mp_hopt(md, coalesce(p_opt, '{}'::jsonb), sg.kind, rk);   -- 高さ・勾配の上限（DB の更新84）
+  if md = 'tz' and not coalesce(ho ? 'zt', false) then raise exception '高さ（m）を入れてください'; end if;
   nhm := case when p_prof is not null then 'man' else md end;
   if not p_dry then perform _mp_lock(sg.own_u, sg.own_c); end if;
   tiles := _mp_tiles(sg.pts);
   cells := _mp_seg_cells_arr(sg.pts, sg.kind, sg.w, sg.dbl);
   z0 := _mp_end_z(sg.n0, p_id); z1 := _mp_end_z(sg.n1, p_id);
-  pr := _mp_prof_make(sg.pts, sg.kind, sg.cls, z0, z1, md, rk, p_prof, cells, tiles, least(0.4, sg.len / 3)::real, (sg.len - least(0.4, sg.len / 3))::real, array[sg.id], false,
-                       _mp_dep_fx(sg.id, 0, false, sg.len));
+  pr := _mp_prof_make2(sg.pts, sg.kind, sg.cls, z0, z1, md, rk, p_prof, cells, tiles, least(0.4, sg.len / 3)::real, (sg.len - least(0.4, sg.len / 3))::real, array[sg.id], false,
+                       _mp_dep_fx(sg.id, 0, false, sg.len), ho);
   if not (pr ->> 'ok')::boolean then raise exception '%', pr ->> 'err'; end if;
   nw := pr ->> 'st';
   pf := array(select v::real from jsonb_array_elements_text(pr -> 'prof') v);
@@ -30389,13 +30509,13 @@ begin
   amt := round(amt);
   vl := case when sg.kind = 'rail' then case when rk then least(30, _mp_vlim(_mp_minr(sg.pts))) else _mp_vlim(_mp_minr(sg.pts)) end else sg.vlim end;
   if p_dry then
-    return (pr - 'ok' - 'ns') || jsonb_build_object('cost', amt, 'vlim', vl, 'rack', rk, 'hm', nhm, 'stas', sts, 'z0', z0, 'z1', z1, 'len', round(sg.len::numeric, 2));
+    return (pr - 'ok' - 'ns') || jsonb_build_object('cost', amt, 'vlim', vl, 'rack', rk, 'hm', nhm, 'ho', ho, 'stas', sts, 'z0', z0, 'z1', z1, 'len', round(sg.len::numeric, 2));
   end if;
   if amt > 0 then
     perform _mp_pay(sg.own_u, sg.own_c, sg.gov, amt::bigint, sg.kind, format('%sの高さ（%s）', case when sg.kind = 'rail' then '線路' else '道路' end,
-                    case nhm when 'man' then '高さを手で決めた' when 'el' then '高架' when 'ug' then '地下' else '地形に合わせる' end || case when rk and not sg.rack then '・アプト式' else '' end));
+                    case nhm when 'man' then '高さを手で決めた' when 'el' then '高架' when 'ug' then '地下' when 'tn' then 'トンネル優先' when 'fl' then '平坦' when 'tz' then '高さを決めた' else '地形に合わせる' end || case when rk and not sg.rack then '・アプト式' else '' end));
   end if;
-  update mp_segs set prof = pf, st = nw, rack = rk, hm = nhm, vlim = vl, cost = cost + amt::bigint where id = p_id;
+  update mp_segs set prof = pf, st = nw, rack = rk, hm = nhm, hopt = ho, vlim = vl, cost = cost + amt::bigint where id = p_id;
   update mp_nodes set z = pf[2] where id = sg.n0 and (z is null or z0 is null);
   update mp_nodes set z = pf[array_length(pf, 1)] where id = sg.n1 and (z is null or z1 is null);
   if sg.kind = 'rail' and vl is distinct from sg.vlim then perform _mp_routes_fix(sg.own_u, sg.own_c); end if;
@@ -30404,6 +30524,159 @@ begin
     perform _mp_chg('sta', s.id, 'set', box(point(s.x / 100.0 - 3, s.y / 100.0 - 3), point(s.x / 100.0 + 3, s.y / 100.0 + 3)));
   end loop;
   return jsonb_build_object('id', p_id, 'cost', amt);
+end $$;
+
+-- 駅の高さを変える（DB の更新84）：地上駅（G）・高架駅（E）・地下駅（U）。駅のホームの前後の線路の縦断を決めなおす
+--   （分かれ道のない点でつながる同じ持ち主の線路もいっしょに。前後 8・16・32マスの順に、とどくまで広げる。区間の外の高さは、いまのまま）。
+--   ほかの駅・車庫のところは、いまの高さのまま。線の高さのえらびかた（地形に合わせる・トンネル優先・平坦・高さを決める など）は、駅の線のもの。
+--   ホームの上に建物があれば、地下駅は地面より 15m 下に。工事費：つくりが高くなるマス（地面 → 高架・トンネルなど）の差と、駅の差（地下駅 2.5倍・高架駅 1.5倍）。もどしても返金なし
+create or replace function public.mp_sta_height(p_id bigint, p_lv text, p_dry boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); st mp_stations; sg mp_segs; c record; o record; smp record;
+        ids bigint[] := '{}'; rvs boolean[] := '{}'; offs real[] := '{}'; lens real[] := '{}'; cp int[] := '{}'; p int[]; m int; gp real; tl real := 0;
+        cs_ real[] := '{}'; cz_ real[] := '{}'; cur real[]; fx real[] := '{}'; wfx real[]; j int; i int;
+        sc real; hp real; ozl text; nlv text; oc real; og real; olv text; ozc real; bdeep boolean;
+        a0 real; a1 real; rr real; pr jsonb; wp real[]; sub real[]; comb real[]; z0 real; z1 real; nd0 bigint; nd1 bigint; za real; zb real;
+        md text; ho jsonb; rk boolean; wpts int[]; err text; amt numeric := 0; scost numeric := 0; sa numeric; tiles int[]; nst text; zc real; hit text; pcs int[];
+        subs jsonb := '{}'::jsonb; nseg int := 0; k text; cg float8;
+begin
+  perform _mp_ok(u);
+  select * into st from mp_stations where id = p_id;
+  if not found or st.kind <> 'rail' then raise exception '駅が見つかりません'; end if;
+  if not _mp_mine(u, st.own_u, st.own_c) then raise exception 'あなたの駅ではありません'; end if;
+  if p_lv is null or p_lv not in ('G', 'E', 'U') then raise exception '高さは 地上駅・高架駅・地下駅 からえらんでください'; end if;
+  nlv := nullif(p_lv, 'G');
+  select * into sg from mp_segs where id = st.seg;
+  if not found then raise exception '駅の線路が見つかりません'; end if;
+  if sg.gov or not _mp_mine(u, sg.own_u, sg.own_c) then raise exception 'ほかの人の線路にある駅は、高さを変えられません'; end if;
+  ozl := _mp_sta_lv(st.seg, st.at, st.x, st.y);
+  if ozl is not distinct from nlv then raise exception 'いまと同じ高さです'; end if;
+  if not p_dry then perform _mp_lock(st.own_u, st.own_c); end if;
+  -- 線の高さのえらびかた（駅の線のもの。勾配の上限も）
+  md := case when sg.hm in ('el', 'ug', 'tn', 'fl') then sg.hm when sg.hm = 'tz' and coalesce(sg.hopt ? 'zt', false) then 'tz' else 'auto' end;
+  ho := nullif(case when md = 'tz' then sg.hopt else coalesce(sg.hopt, '{}'::jsonb) - 'zt' - 'zr' end, '{}'::jsonb);
+  -- ホームの区画。上に建物があれば、地下駅は地面より 15m 下に
+  pcs := (select coalesce(array_agg(u2.v order by z.y, z.x, u2.o), '{}') from _mp_sta_cells(p_id) z, lateral unnest(array[z.x, z.y]) with ordinality u2(v, o));
+  bdeep := p_lv = 'U' and _mp_bld_hit_z(pcs, null) is not null;
+  -- 1本の線に（_mp_fix_xing と同じ。つなぎ目の点は1つに）・いまの高さ（1マスごと）・車庫と駅のところ
+  --   （えらんだ駅は新しい高さ。ほかの駅は いまの高さ ±6m で、同じ種類（地上・高架・地下）のまま）
+  for c in select * from _mp_chain(st.seg) order by ord loop
+    select * into sg from mp_segs where id = c.id;
+    p := case when c.rev then _mp_rev(sg.pts) else sg.pts end;
+    m := coalesce(array_length(cp, 1), 0);
+    if m > 0 then
+      gp := sqrt(((p[1] - cp[m - 1]) / 100.0) ^ 2 + ((p[2] - cp[m]) / 100.0) ^ 2);
+      if gp < 0.03 then cp := cp || p[3:]; else cp := cp || p; tl := tl + gp; end if;
+    else cp := p; end if;
+    ids := ids || c.id; rvs := rvs || c.rev; offs := offs || tl; lens := lens || sg.len;
+    fx := fx || _mp_dep_fx(c.id, tl, c.rev, sg.len);
+    for smp in select q.s, q.g from _mp_gsamp(sg.pts) q loop
+      cs_ := cs_ || (tl + case when c.rev then sg.len - smp.s else smp.s end)::real;
+      cz_ := cz_ || case when sg.prof is null then smp.g else _mp_pz(sg.prof, smp.s) end;
+    end loop;
+    for o in select * from mp_stations t where t.seg = c.id and t.kind = 'rail' loop
+      oc := tl + case when c.rev then sg.len - o.at else o.at end;
+      og := _mp_gz(o.x / 100.0, o.y / 100.0);
+      if o.id = p_id then
+        sc := oc; hp := o.plat / 100.0 + 0.1;
+        fx := fx || array[oc - hp, oc + hp, case p_lv when 'E' then og + 6.5 when 'U' then og - 60 else og - 7.5 end,
+                                            case p_lv when 'E' then og + 40 when 'U' then og - case when bdeep then 15.5 else 8.5 end else og + 5.5 end]::real[];
+      else
+        olv := coalesce(_mp_sta_lv(o.seg, o.at, o.x, o.y), 'G');
+        ozc := case when sg.prof is null then og else _mp_pz(sg.prof, o.at) end;
+        fx := fx || array[oc - o.plat / 100.0 - 0.1, oc + o.plat / 100.0 + 0.1,
+                          case olv when 'E' then greatest(og + 6.2, ozc - 6) when 'U' then ozc - 6 else greatest(og - 7.8, ozc - 6) end,
+                          case olv when 'E' then ozc + 6 when 'U' then least(og - 8.2, ozc + 6) else least(og + 5.8, ozc + 6) end]::real[];
+      end if;
+    end loop;
+    tl := tl + sg.len;
+  end loop;
+  if sc is null then raise exception '駅の線路が見つかりません'; end if;
+  cur := (select array_agg(u2.v order by q.s, q.k, u2.o) from unnest(cs_, cz_) with ordinality q(s, z, k), lateral unnest(array[q.s, q.z]) with ordinality u2(v, o));
+  -- はしの点：ほかの線もつながっていれば その高さ
+  select * into sg from mp_segs where id = ids[1]; nd0 := case when rvs[1] then sg.n1 else sg.n0 end; z0 := _mp_end_z(nd0, ids[1]);
+  select * into sg from mp_segs where id = ids[array_length(ids, 1)]; nd1 := case when rvs[array_length(ids, 1)] then sg.n0 else sg.n1 end; z1 := _mp_end_z(nd1, ids[array_length(ids, 1)]);
+  select * into sg from mp_segs where id = st.seg;
+  rk := coalesce((select bool_and(s2.rack) from mp_segs s2 where s2.id = any(ids)), false);
+  -- 前後を広げながら解く（区間のはしは、いまの高さ）
+  foreach rr in array array[6, 12, 24, 48]::real[] loop
+    a0 := greatest(0, sc - hp - rr); a1 := least(tl, sc + hp + rr);
+    if a0 < 0.5 then a0 := 0; end if;
+    if a1 > tl - 0.5 then a1 := tl; end if;
+    wfx := '{}';
+    for j in 1..coalesce(array_length(fx, 1), 0) / 4 loop
+      if fx[4 * j - 2] > a0 and fx[4 * j - 3] < a1 then wfx := wfx || array[fx[4 * j - 3] - a0, fx[4 * j - 2] - a0, fx[4 * j - 1], fx[4 * j]]; end if;
+    end loop;
+    wpts := _mp_sub(cp, a0, a1);
+    za := case when a0 = 0 then z0 else _mp_pz(cur, a0) end; zb := case when a1 = tl then z1 else _mp_pz(cur, a1) end;
+    pr := _mp_prof_make2(wpts, 'rail', 'rail', za, zb, md, rk, null::real[], _mp_seg_cells_arr(wpts, 'rail', sg.w, sg.dbl), _mp_tiles(wpts),
+                         case when a0 = 0 then 0.4 else 0 end::real, (a1 - a0 - case when a1 = tl then 0.4 else 0 end)::real, ids, false, wfx, ho);
+    if not (pr ->> 'ok')::boolean then   -- いまの線が急なら、区間の中だけ その急さまで（‰）
+      select max(abs(q.z2 - q.z1) / greatest((q.s2 - q.s1) * 50, 0.5)) into cg
+        from (select cur[2 * gi - 1] s1, cur[2 * gi] z1, cur[2 * gi + 1] s2, cur[2 * gi + 2] z2 from generate_series(1, array_length(cur, 1) / 2 - 1) gi) q where q.s2 > a0 and q.s1 < a1;
+      if coalesce(cg, 0) > 0.03 then
+        pr := _mp_prof_make2(wpts, 'rail', 'rail', za, zb, md, rk, null::real[], _mp_seg_cells_arr(wpts, 'rail', sg.w, sg.dbl), _mp_tiles(wpts),
+                             case when a0 = 0 then 0.4 else 0 end::real, (a1 - a0 - case when a1 = tl then 0.4 else 0 end)::real, ids, false, wfx,
+                             coalesce(ho, '{}'::jsonb) || jsonb_build_object('gx', least(150, ceil(cg * 1000) + 1)));
+      end if;
+    end if;
+    exit when (pr ->> 'ok')::boolean;
+    err := pr ->> 'err';
+    exit when a0 = 0 and a1 = tl;
+  end loop;
+  if not coalesce((pr ->> 'ok')::boolean, false) then raise exception '%', coalesce(err, 'この駅は、この高さにできません'); end if;
+  wp := array(select v::real from jsonb_array_elements_text(pr -> 'prof') v);
+  -- 区間の中は決めた縦断、外は いまの高さ
+  comb := '{}';
+  for j in 1..array_length(wp, 1) / 2 loop comb := comb || array[wp[2 * j - 1] + a0, wp[2 * j]]; end loop;
+  for j in 1..array_length(cs_, 1) loop
+    if cs_[j] < a0 - 0.01 or cs_[j] > a1 + 0.01 then comb := comb || array[cs_[j], cz_[j]]; end if;
+  end loop;
+  comb := (select array_agg(u2.v order by q.s, q.gi, u2.o) from (select comb[2 * gi - 1] s, comb[2 * gi] z, gi from generate_series(1, array_length(comb, 1) / 2) gi) q,
+                   lateral unnest(array[q.s, q.z]) with ordinality u2(v, o));
+  -- ホームが建物にかからないか（地下駅は地面より 15m 下・高架駅は屋根より 5m 上なら かからない）
+  zc := _mp_pz(comb, sc);
+  hit := _mp_bld_hit_z(pcs, zc);
+  if hit is not null then raise exception 'ホームが建物（%）にかかります', hit; end if;
+  -- 区間にかかる線ごとの新しい縦断と工事費（つくりが高くなるマスの差）
+  for i in 1..array_length(ids, 1) loop
+    continue when not (a0 < offs[i] + lens[i] - 0.01 and a1 > offs[i] + 0.01);
+    select * into sg from mp_segs where id = ids[i];
+    sub := _mp_prof_sub(comb, offs[i], offs[i] + lens[i]);
+    if rvs[i] then sub := _mp_prof_rev(sub, lens[i]); end if;
+    nst := _mp_st_of(sg.pts, sub);
+    sa := 0;
+    if not sg.gov then
+      tiles := _mp_tiles(sg.pts);
+      sa := round(_mp_st_cost(tiles, _mp_ters(tiles), _mp_st_tiles(sg.pts, nst), sg.rack, _mp_st_map(sg.pts, sg.st), sg.rack, _mp_rate('rail'),
+                              case when sg.dbl then _mp_rate('dbl_mul') else 1 end, 0));
+    end if;
+    amt := amt + sa; nseg := nseg + 1;
+    subs := subs || jsonb_build_object(ids[i]::text, jsonb_build_object('pf', to_jsonb(sub), 'st', nst, 'c', sa));
+  end loop;
+  -- 駅の差（地下駅 2.5倍・高架駅 1.5倍）
+  scost := round(greatest(0, _mp_sta_cost(st.tracks, st.plat, (st.x / 100.0)::real, (st.y / 100.0)::real, nlv) - _mp_sta_cost(st.tracks, st.plat, (st.x / 100.0)::real, (st.y / 100.0)::real, ozl)));
+  if p_dry then
+    return (pr - 'ok' - 'ns' - 'prof') || jsonb_build_object('prof', to_jsonb(wp), 'cur', to_jsonb(_mp_prof_sub(cur, a0, a1)), 'len', round((a1 - a0)::numeric, 2),
+      'sta', jsonb_build_array(round((sc - hp - a0)::numeric, 2), round((sc + hp - a0)::numeric, 2)), 'from', coalesce(ozl, 'G'), 'to', p_lv,
+      'cost', amt + scost, 'scost', scost, 'segs', nseg, 'm', round(((a1 - a0) * 50)::numeric));
+  end if;
+  if amt + scost > 0 then
+    perform _mp_pay(st.own_u, st.own_c, false, (amt + scost)::bigint, 'sta', format('駅「%s」の高さ（%s → %s）', st.name,
+      case coalesce(ozl, 'G') when 'E' then '高架駅' when 'U' then '地下駅' else '地上駅' end, case p_lv when 'E' then '高架駅' when 'U' then '地下駅' else '地上駅' end));
+  end if;
+  for k in select jsonb_object_keys(subs) loop
+    select * into sg from mp_segs where id = k::bigint for update;
+    sub := array(select v::real from jsonb_array_elements_text(subs -> k -> 'pf') v);
+    update mp_segs set prof = sub, st = subs -> k ->> 'st', hm = coalesce(hm, 'auto'), cost = cost + (subs -> k ->> 'c')::bigint where id = sg.id;
+    update mp_nodes set z = _mp_pz(sub, 0) where id = sg.n0;
+    update mp_nodes set z = _mp_pz(sub, sg.len) where id = sg.n1;
+    perform _mp_chg('seg', sg.id, 'set', sg.bb);
+    for o in select t.id, t.x, t.y from mp_stations t where t.seg = sg.id loop
+      perform _mp_chg('sta', o.id, 'set', box(point(o.x / 100.0 - 3, o.y / 100.0 - 3), point(o.x / 100.0 + 3, o.y / 100.0 + 3)));
+    end loop;
+  end loop;
+  return jsonb_build_object('id', p_id, 'cost', amt + scost, 'lv', p_lv);
 end $$;
 
 -- 線 sid の車庫のところ：[s0, s1, 地面−2.5, 地面＋2.5, …]（off マスずらす。rev なら逆向き。長さ ln）
@@ -31425,7 +31698,7 @@ begin
             'mp_sta_build','mp_sta_edit','mp_sta_resize','mp_sta_trk','mp_sta_trk_set','mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list',
             'mp_thru_req','mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market',
             'mp_unit_mine','mp_unit_own','mp_unit_set','mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer','mp_unko_list','mp_unko_pick','mp_unko_furi','mp_unko_make','mp_jam_now','mp_jam_list','mp_er_now','mp_er_list','mp_er_bld','mp_lic_find','mp_lic_at','mp_lic_apply','_mp_lic_pfee_of','_mp_lic_pfee','_mp_lic_have','_mp_lic_mfee','mp_lic_mine','mp_lic_cancel','mp_lic_review','mp_lic_decide',
-            'mp_sta_melt','mp_seg_snow','mp_dep_plow','mp_snow_mine','mp_seg_height',
+            'mp_sta_melt','mp_seg_snow','mp_dep_plow','mp_snow_mine','mp_seg_height','_mp_taut','_mp_prof_flat','_mp_prof_simp','_mp_hopt','_mp_prof_make2','mp_sta_height',
             '_mp_form_busy','_mp_form_runs','_mp_cxl_on','_mp_unko_zone','_mp_unko_zi','_mp_unko_zt','_mp_unko_rt','_mp_sched_idx','_mp_unko_trn','_mp_rail_path_x','_mp_unko_det','mp_cxl_add','mp_cxl_del','_mp_form_key','_mp_train_runs','_mp_subst_can','_mp_subst_pick','_mp_subst_has','_mp_subst_ok','_mp_subst_plan','_mp_subst_plan_all','_mp_tmp_back','mp_form_spare','mp_form_add','mp_car_tmp') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
@@ -31471,3 +31744,5 @@ alter function public.mp_dia_import(bigint, jsonb, boolean, boolean, text) set s
 alter function public.mp_sta_sup(bigint, text, boolean, boolean) set statement_timeout = '60s';
 -- 運行の乱れの対応で迂回をえらぶと、線路の道すじをさがすので20秒まで（DB の更新82）
 alter function public.mp_unko_pick(bigint, int, text, boolean, boolean, boolean) set statement_timeout = '20s';
+-- 駅の高さを変える（DB の更新84）は、縦断を何回か解くので60秒まで
+alter function public.mp_sta_height(bigint, text, boolean) set statement_timeout = '60s';
