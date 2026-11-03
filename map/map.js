@@ -513,6 +513,7 @@ function prepArea(d) {
   if (d.hgt) S.hgtOK = true;     // 高さ（DB の更新59）のあるサーバー
   if (d.sup) S.supOK = true;     // 給水・給炭（DB の更新78）のあるサーバー
   if (d.hgt2) S.hgt2 = true;     // 平坦・高さを決める・勾配の上限・駅の高さ（DB の更新84）のあるサーバー
+  if (d.sig) S.sigOK = true;     // 信号の段（DB の更新85）のあるサーバー
   for (const s of d.segs) prepSeg(s);
   for (const s of d.stas) { s.fx = s.x / 100; s.fy = s.y / 100; }
   for (const s of d.deps) { s.fx = s.x / 100; s.fy = s.y / 100; }
@@ -3433,15 +3434,17 @@ function showSeg(s, hit) {
       ${s.k === 'road' ? `<b>車線</b><span>${s.l ? '片側' + s.l + '車線' : '中央線なし'}</span>` : `<b>線路</b><span>${s.dbl ? '複線' : '単線'}・${s.el ? '電化' : '非電化'}</span>`}
       ${s.k === 'rail' && s.col ? `<b>路線カラー</b><span><span style="display:inline-block;width:2.2em;height:.8em;border-radius:3px;vertical-align:middle;background:${esc(s.col)}"></span></span>` : ''}
       <b>制限速度</b><span data-spd><span>${s.v} km/h</span></span>${segSnowRow(s)}
+      ${s.k === 'rail' && S.sigOK ? `<b>信号</b><span>${SIG_N[s.sg || 0]}</span>` : ''}
       ${s.k === 'rail' && s.o !== 'gov' ? thruRow(s.o) : ''}</div>
     ${s.k === 'rail' ? '<canvas class="mp-spd" data-spdc hidden></canvas>' : ''}
     ${S.hgtOK && (s.pf || s.k === 'rail') ? `<canvas class="mp-prof" data-profc></canvas><p class="small muted" style="margin:0 0 4px">${hgtLine(s)}</p>` : ''}
-    ${s.mine ? `<div class="mp-row"><button class="btn" data-edit>形を直す</button><button class="btn" data-split>ここで分ける</button><button class="btn" data-opt>${s.k === 'rail' ? '複線・電化・名前・色' : '車線・名前'}</button>${S.hgtOK ? '<button class="btn" data-hgt>⛰ 高さ</button>' : ''}${s.k === 'rail' && S.snowOK && (s.sp || segSnowZone(s) > 0) ? '<button class="btn" data-snowp>❄ 雪よけ</button>' : ''}<button class="btn" data-del>こわす</button></div>` : ''}`, sh => {
+    ${s.mine ? `<div class="mp-row"><button class="btn" data-edit>形を直す</button><button class="btn" data-split>ここで分ける</button><button class="btn" data-opt>${s.k === 'rail' ? '複線・電化・名前・色' : '車線・名前'}</button>${S.hgtOK ? '<button class="btn" data-hgt>⛰ 高さ</button>' : ''}${s.k === 'rail' && S.sigOK ? '<button class="btn" data-sig>🚦 信号</button>' : ''}${s.k === 'rail' && S.snowOK && (s.sp || segSnowZone(s) > 0) ? '<button class="btn" data-snowp>❄ 雪よけ</button>' : ''}<button class="btn" data-del>こわす</button></div>` : ''}`, sh => {
     const q = k => sh.querySelector(k);
     if (q('[data-edit]')) q('[data-edit]').onclick = () => startEdit(s);
     if (q('[data-split]')) q('[data-split]').onclick = async () => { if (await api('mp_seg_split', { p_id: s.id, p_x: hit.x, p_y: hit.y }, '分けました')) { refreshBox(...s.bb); sheet(null); } };
     if (q('[data-opt]')) q('[data-opt]').onclick = () => segOpts(s);
     if (q('[data-hgt]')) q('[data-hgt]').onclick = () => segHeight(s);   // 高さ（t108）
+    if (q('[data-sig]')) q('[data-sig]').onclick = () => segSig(s, hit);   // 信号（DB の更新85）
     if (q('[data-profc]')) profChart(q('[data-profc]'), segProf(s));
     if (q('[data-snowp]')) q('[data-snowp]').onclick = () => segSnow(s, () => { if (S.sel && S.sel.kind === 'seg' && S.sel.id === s.id) showSeg(s, hit); });   // 雪よけ（t108）
     if (q('[data-del]')) q('[data-del]').onclick = () => segDel(s);
@@ -3458,6 +3461,43 @@ function showSeg(s, hit) {
     if (e) e.innerHTML = s.k === 'rail' ? `${sp.here != null ? `<span>ここ ${sp.here} km/h</span><br>` : ''}<small class="muted">${sp.min === sp.max ? `<span>この線 ${sp.min} km/h</span>` : `<span>この線 ${sp.min}〜${sp.max} km/h</span>`}${sp.rmin && sp.rmin < 99999 ? `<br><span>いちばんきついカーブ 半径 ${fmt(sp.rmin)} m</span>` : ''}</small>` : `<span>${sp.here} km/h</span>`;
     const cv = S.sheet.querySelector('[data-spdc]'); if (cv) { cv.hidden = false; spdChart(cv, sp); }
   });
+}
+// 信号の段（DB の更新85）：自動閉塞（ふつう）・ATC（車内信号）・移動閉塞。強いほど、前の列車につめて走れる
+const SIG_N = ['自動閉塞', 'ATC', '移動閉塞'];
+const SIG_D = ['ふつう。前の列車のうしろ 30m まで近づける', '車内信号。20m まで・駅のあたりでも速いまま つめられる', '10m まで。いちばん つめられる'];
+function segSig(s, hit) {
+  const st = { lv: s.sg || 0, chain: true, q: null, err: null, quoting: false, seq: 0 };
+  const quote = async () => {
+    const my = ++st.seq; st.quoting = true; st.err = null; draw();
+    let q = null, err = null;
+    try { q = await call('mp_seg_sig', { p_id: s.id, p_sig: st.lv, p_chain: st.chain, p_dry: true }); } catch (e) { err = errJa(e.message); }
+    if (st.seq !== my) return;
+    st.quoting = false; st.q = q; st.err = err; draw();
+  };
+  const changed = () => { st.seq++; st.quoting = false; st.q = null; st.err = null; draw(); };
+  const draw = () => {
+    const q = st.q;
+    sheet(`<h4>🚦 線路の信号</h4>
+      <p class="small muted" style="margin:0 0 4px">いま：<span>${SIG_N[s.sg || 0]}</span>。強いほど、前の列車につめて走れます（待避・続行の待ちが へる）</p>
+      ${[0, 1, 2].map(k => `<label class="small" style="display:flex;align-items:flex-start;gap:6px;margin:5px 0"><input type="radio" name="mpsig" data-lv="${k}" ${st.lv === k ? 'checked' : ''} style="flex:none;margin-top:2px"><span><b>${SIG_N[k]}</b>：<span>${SIG_D[k]}</span></span></label>`).join('')}
+      <label class="small" style="display:block;margin:4px 0"><input type="checkbox" data-chain ${st.chain ? 'checked' : ''}> 分かれ道までの つながる線路も いっしょに</label>
+      <div class="mp-row">${q ? `<span class="mp-cost">${q.cost > 0 ? '工事費 ' + X(q.cost) : '工事費なし'}</span><span class="small muted"><span>線路 約${fmt(q.m)}m</span><span>・通る系統 ${q.routes}</span></span>`
+        : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button>'}</div>
+      <div class="mp-row"><button class="btn main" data-ok ${q ? '' : 'disabled'}>この信号にする</button><button class="btn" data-back>もどる</button></div>
+      <p class="muted small" style="margin:4px 0 0">工事費は上げる分だけ（1マス：ATC は線路の工事費の 0.4倍・移動閉塞は 0.8倍。複線はその倍率）。下げるのは無料（返金なし）。維持費は変わりません。変えると、通る系統の時刻（待避・続行）を計算しなおします</p>`, sh => {
+      sh.querySelectorAll('[data-lv]').forEach(r => r.onchange = () => { st.lv = Number(r.dataset.lv); changed(); });
+      { const c = sh.querySelector('[data-chain]'); if (c) c.onchange = () => { st.chain = c.checked; changed(); }; }
+      { const e = sh.querySelector('[data-est]'); if (e) e.onclick = () => quote(); }
+      sh.querySelector('[data-back]').onclick = () => showSeg(s, hit);
+      sh.querySelector('[data-ok]').onclick = async () => {
+        const r = await api('mp_seg_sig', { p_id: s.id, p_sig: st.lv, p_chain: st.chain, p_dry: false });
+        if (!r) return;
+        toast(r.cost > 0 ? `信号を変えました（${fmt(r.cost)} X）` : '信号を変えました');
+        s.sg = st.lv; refreshBox(...s.bb); showSeg(s, hit);
+      };
+    });
+  };
+  draw();
 }
 // 線の高さのことば（線のシート）：高さのえらびかた・トンネル・高架・橋の長さ（t108）
 function hgtLine(s) {

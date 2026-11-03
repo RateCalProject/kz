@@ -18739,7 +18739,8 @@ begin
                   || case when s.snowp > 0 then jsonb_build_object('sp', s.snowp) else '{}'::jsonb end
                   || case when s.prof is not null and p_lod <= 1 then jsonb_build_object('pf', to_jsonb(s.prof), 'st', s.st) else '{}'::jsonb end   -- 高さ（t108）
                   || case when s.rack then jsonb_build_object('rk', 1) else '{}'::jsonb end || case when s.hm is not null then jsonb_build_object('hm', s.hm) else '{}'::jsonb end
-                  || case when s.hopt is not null then jsonb_build_object('ho', s.hopt) else '{}'::jsonb end), '[]'::jsonb)   -- 高さの数値（DB の更新84）
+                  || case when s.hopt is not null then jsonb_build_object('ho', s.hopt) else '{}'::jsonb end   -- 高さの数値（DB の更新84）
+                  || case when s.sig > 0 then jsonb_build_object('sg', s.sig) else '{}'::jsonb end), '[]'::jsonb)   -- 信号の段（DB の更新85）
                from mp_segs s where s.bb && b and (p_lod = 0 or s.kind = 'rail' or s.cls in ('exp', 'nat', 'pref') or (p_lod = 1 and s.art))
                  and (p_lod < 2 or s.kind = 'rail' or s.cls in ('exp', 'nat'))
                  and (p_lod < 3 or s.kind = 'rail' or s.cls = 'exp')),   -- lod 3（とても遠く。t108）：線路と高速だけ
@@ -18790,7 +18791,7 @@ begin
                union select distinct 'c:' || pa.own_c, (select name from companies where id = pa.own_c) from mp_parcels pa where p_lod = 0 and pa.own_c is not null and pa.bb && box(point(p_x0 * 5, p_y0 * 5), point(p_x1 * 5, p_y1 * 5))
                union select distinct 'u:' || s.own_u, (select nickname from profiles where id = s.own_u) from mp_segs s where s.own_u is not null and s.bb && b
                union select distinct 'c:' || s.own_c, (select name from companies where id = s.own_c) from mp_segs s where s.own_c is not null and s.bb && b) z where v is not null),
-    'ver', coalesce((select max(ver) from mp_changes), 0), 'snow', 1, 'hgt', 1, 'sup', 1, 'hgt2', 1) into r;   -- sup：給水・給炭のあるサーバー（DB の更新78）・hgt2：平坦・高さを決める・勾配の上限・駅の高さ（DB の更新84）
+    'ver', coalesce((select max(ver) from mp_changes), 0), 'snow', 1, 'hgt', 1, 'sup', 1, 'hgt2', 1, 'sig', 1) into r;   -- sup：給水・給炭のあるサーバー（DB の更新78）・hgt2：平坦・高さを決める・勾配の上限・駅の高さ（DB の更新84）・sig：信号の段（DB の更新85）
   return r;
 end $$;
 -- 変わったもの（共同編集）。なければ空。多すぎたら reload
@@ -18892,10 +18893,10 @@ begin
   insert into mp_nodes(kind, x, y, z) values (sg.kind, round(q.x * 100), round(q.y * 100), case when sg.prof is not null then _mp_pz(sg.prof, s) end) returning id into nid;   -- 高さ（t108）
   pa := _mp_sub(sg.pts, 0, s); pb := _mp_sub(sg.pts, s, sg.len);
   fa := _mp_prof_sub(sg.prof, 0, s); fb := _mp_prof_sub(sg.prof, s, sg.len);   -- 縦断（なければ null）
-  insert into mp_segs(kind, cls, name, own_u, own_c, gov, ctl, pts, bb, len, w, lanes, dbl, elec, vlim, n0, n1, net, art, cost, color, snowp, prof, st, rack, hm, hopt)
+  insert into mp_segs(kind, cls, name, own_u, own_c, gov, ctl, pts, bb, len, w, lanes, dbl, elec, vlim, n0, n1, net, art, cost, color, snowp, prof, st, rack, hm, hopt, sig)
   values (sg.kind, sg.cls, sg.name, sg.own_u, sg.own_c, sg.gov, null, pb, _mp_bb(pb), _mp_len(pb), sg.w, sg.lanes, sg.dbl, sg.elec,
           case when sg.kind = 'rail' then least(case when sg.rack then 30 else 300 end, _mp_vlim(_mp_minr(pb))) else sg.vlim end, nid, sg.n1, sg.net, sg.art, 0, sg.color,   -- color：路線カラーもそのまま（2026-10-29）
-          sg.snowp, fb, _mp_st_of(pb, fb), sg.rack, sg.hm, sg.hopt)   -- 雪よけ・高さ・アプト式もそのまま（t108）。高さの数値も（DB の更新84）
+          sg.snowp, fb, _mp_st_of(pb, fb), sg.rack, sg.hm, sg.hopt, sg.sig)   -- 雪よけ・高さ・アプト式もそのまま（t108）。高さの数値も（DB の更新84）・信号の段も（85）
   returning id into bid;
   update mp_segs set pts = pa, ctl = null, bb = _mp_bb(pa), len = _mp_len(pa), vlim = case when kind = 'rail' then least(case when rack then 30 else 300 end, _mp_vlim(_mp_minr(pa))) else vlim end, n1 = nid,
                      prof = fa, st = _mp_st_of(pa, fa) where id = sid;
@@ -18965,6 +18966,7 @@ begin
   if not (x.own_u is not distinct from y.own_u and x.own_c is not distinct from y.own_c and x.gov = y.gov) then raise exception 'ほかの会社の線路にはつなげません'; end if;
   if x.dbl <> y.dbl or x.elec <> y.elec then raise exception '単線と複線、電化と非電化がかわるところは、またげません（線路の設定をそろえてください）'; end if;
   if x.rack <> y.rack then raise exception 'アプト式とそうでない線路のつなぎ目は、またげません（線路の高さの設定をそろえてください）'; end if;
+  if x.sig <> y.sig then raise exception '信号のちがう線路のつなぎ目は、またげません（線路の信号をそろえてください）'; end if;   -- DB の更新85
   if x.name <> '' and y.name <> '' and x.name <> y.name then raise exception '名前のちがう線路のつなぎ目は、またげません（線路の名前をそろえてください）'; end if;
   xr := x.n1 is distinct from nd;   -- x は nd で終わるように
   yr := y.n0 is distinct from nd;   -- y は nd から始まるように
@@ -20678,6 +20680,22 @@ language sql immutable as $$ select greatest(8, ceil(sqrt(2 * (coalesce(len, 100
 --   走っている列車（速さ v m/s）が、ある点を（うしろのはし＋30m）はなれるまでの秒
 create or replace function public._mp_clr_pass(len double precision, v double precision) returns int
 language sql immutable as $$ select greatest(4, ceil((coalesce(len, 100) + 30) / greatest(coalesce(v, 10), 3)))::int $$;
+-- 信号の段ごとの「はなれるまで」（DB の更新85）：前の列車のうしろ 自動閉塞 30m・ATC 20m・移動閉塞 10m まで近づける。いちばん短い秒も 8・6・5（止まっていた）／4・3・2（走っている）
+--   段 0 は _mp_clr_stop・_mp_clr_pass と同じ。待避・続行では、つぎの駅のあたりの前の列車の速さを 平均の 0.6・0.75・0.9 倍とみる（強いほど、速いまま つめられる）
+create or replace function public._mp_clr_stop2(len double precision, acc double precision, lv int) returns int
+language sql immutable as $$
+  select greatest(case lv when 2 then 5 when 1 then 6 else 8 end, ceil(sqrt(2 * (coalesce(len, 100) + case lv when 2 then 10 when 1 then 20 else 30 end) / greatest(coalesce(acc, 2) / 3.6, 0.15))))::int
+$$;
+create or replace function public._mp_clr_pass2(len double precision, v double precision, lv int) returns int
+language sql immutable as $$
+  select greatest(case lv when 2 then 2 when 1 then 3 else 4 end, ceil((coalesce(len, 100) + case lv when 2 then 10 when 1 then 20 else 30 end) / greatest(coalesce(v, 10), 3)))::int
+$$;
+-- 系統の駅と駅のあいだ（legs）ごとの信号の段（通る線路のうち いちばん弱いもの。DB の更新85）
+create or replace function public._mp_leg_sig(legs jsonb) returns int[]
+language sql stable set search_path = public as $$
+  select coalesce(array_agg(coalesce((select min(s.sig) from jsonb_array_elements(coalesce(l -> 'g', '[]'::jsonb)) g join mp_segs s on s.id = (g ->> 0)::bigint), 0)::int order by k), '{}')
+    from jsonb_array_elements(coalesce(legs, '[]'::jsonb)) with ordinality q(l, k)
+$$;
 -- 番線をえらぶ：その向き（dir 1 下り・-1 上り）で使える番線のうち、side なら待避線（なければ番号の大きいほう）、そうでなければ本線（番号の小さいほう）
 create or replace function public._mp_pick_trk(trk jsonb, dir int, side boolean) returns int
 language sql immutable as $$
@@ -20885,6 +20903,7 @@ declare r mp_routes; n int; km real[]; capd boolean[]; capu boolean[]; tr mp_tra
         sdir int[] := '{}'; sday date[] := '{}'; snum text[] := '{}'; sarr int[]; sdep int[]; m int := 0; skips int[]; cap boolean[]; H constant int := 60; key text;
         smin int[] := '{}'; smax int[] := '{}'; tmin int; tmax int;
         slen real[] := '{}'; sacc real[] := '{}'; sstp boolean[]; mlen real; macc real; pf jsonb; va real; vc real; ga int; gb int; ca int; cb int; gw int; HB constant int := 150;   -- t62：自動閉塞
+        lsg int[]; lv int;   -- 信号の段（駅と駅のあいだごと。DB の更新85）
         sprio int[] := '{}'; srid bigint[] := '{}'; mypr int; et record; kn int; a0 int; a1 int; edir int; eord int[]; estp boolean[]; k0d int; k1d int; kc int;
 begin
   select * into r from mp_routes where id = rid;
@@ -20899,6 +20918,7 @@ begin
   end if;
   -- 駅の km（系統の駅の順）と、待避できる駅（向きごとに使える番線が2つ以上）
   km := array(select coalesce((select sum((l ->> 'd')::real) from jsonb_array_elements(r.legs) with ordinality q2(l, kq) where kq < o), 0) from generate_series(1, n) o);
+  lsg := _mp_leg_sig(r.legs);   -- 信号の段（DB の更新85）
   capd := array(select (select count(*) from jsonb_array_elements(_mp_sta_trk(s)) v where v ->> 'd' in ('down', 'both')) >= 2
                    and exists (select 1 from jsonb_array_elements(_mp_sta_trk(s)) v where v ->> 'd' in ('down', 'both') and coalesce(v ->> 'm', 'main') <> 'pass')   -- 通過線（t62）
                   from unnest(r.stops) with ordinality z(id, o) join mp_stations s on s.id = z.id order by z.o);
@@ -20987,10 +21007,11 @@ begin
             -- うしろを走る（自動閉塞・t62）：前の列車のうしろ 30m まで。a を出るとき・b に入るときに、前の列車が（長さ＋30m）はなれている。
             --   b に前の列車が止まっていて、同じ番線に入るとき（こちらも b に止まる・こちらは通過でも、その向きに通れる番線がほかにない）は、前の列車が b を出てから
             va := abs(km[b] - km[a]) / greatest(sarr[si][b] - sdep[si][a], 1);   -- 前の列車の、この区間の平均の速さ（m/s）
-            ga := case when sstp[si][a] then _mp_clr_stop(slen[si], sacc[si]) else _mp_clr_pass(slen[si], va) end;
-            gb := _mp_clr_pass(slen[si], va * 0.6);
+            lv := coalesce(lsg[least(a, b)], 0);   -- この区間の信号の段（DB の更新85）
+            ga := case when sstp[si][a] then _mp_clr_stop2(slen[si], sacc[si], lv) else _mp_clr_pass2(slen[si], va, lv) end;
+            gb := _mp_clr_pass2(slen[si], va * case lv when 2 then 0.9 when 1 then 0.75 else 0.6 end, lv);   -- 信号が強いほど、b のあたりでも速いまま つめられる
             need := greatest(sdep[si][a] + ga - td[a], sarr[si][b] + gb - ta[b]);
-            if sstp[si][b] and (stp[b] or not cap[b]) then need := greatest(need, sdep[si][b] + _mp_clr_stop(slen[si], sacc[si]) - ta[b]); end if;
+            if sstp[si][b] and (stp[b] or not cap[b]) then need := greatest(need, sdep[si][b] + _mp_clr_stop2(slen[si], sacc[si], lv) - ta[b]); end if;
             if need > 0 then
               j := null; for jj in reverse kk..1 loop if stp[ord[jj]] then j := jj; exit; end if; end loop;
               key := r.stops[ord[j]]::text;
@@ -21001,19 +21022,21 @@ begin
           else
             -- 前を走る：うしろの列車（si）に追いつかれないか（こちらが a・b を出て、長さ＋30m はなれるまでに、si が来ない）
             vc := abs(km[b] - km[a]) / greatest(ta[b] - td[a], 1);
-            ca := case when stp[a] then _mp_clr_stop(mlen, macc) else _mp_clr_pass(mlen, vc) end;
-            cb := case when stp[b] then _mp_clr_stop(mlen, macc) else _mp_clr_pass(mlen, vc) end;
+            lv := coalesce(lsg[least(a, b)], 0);   -- この区間の信号の段（DB の更新85）
+            ca := case when stp[a] then _mp_clr_stop2(mlen, macc, lv) else _mp_clr_pass2(mlen, vc, lv) end;
+            cb := case when stp[b] then _mp_clr_stop2(mlen, macc, lv) else _mp_clr_pass2(mlen, vc, lv) end;
             if sdep[si][a] < td[a] + ca or sarr[si][b] < td[b] + cb or sarr[si][a] < td[a] + ca then
               -- 追いつかれる。つぎの駅で待避できて、そこまでは追いこされないなら、つぎの駅で
-              if sarr[si][b] >= ta[b] + _mp_clr_pass(mlen, vc * 0.6) and stp[b] and cap[b] and kk + 1 < k1d and sdep[si][a] >= td[a] + ca and sarr[si][a] >= td[a] + ca then continue; end if;
+              if sarr[si][b] >= ta[b] + _mp_clr_pass2(mlen, vc * case lv when 2 then 0.9 when 1 then 0.75 else 0.6 end, lv) and stp[b] and cap[b] and kk + 1 < k1d and sdep[si][a] >= td[a] + ca and sarr[si][a] >= td[a] + ca then continue; end if;
               j := null; for jj in reverse kk..1 loop if stp[ord[jj]] and (cap[ord[jj]] or jj = k0d) then j := jj; exit; end if; end loop;
               if j is null then
                 ws := ws || format('%s に追いつかれます（待避できる駅がありません）', snum[si]); skips := skips || si; conf := true; exit;
               end if;
               -- 待避する駅で、うしろの列車が出て（通って）、その長さ＋30m はなれてから出る
-              gw := case when sstp[si][ord[j]] then _mp_clr_stop(slen[si], sacc[si])
-                         when j < n and sarr[si][ord[j + 1]] is not null then _mp_clr_pass(slen[si], abs(km[ord[j + 1]] - km[ord[j]]) / greatest(sarr[si][ord[j + 1]] - sdep[si][ord[j]], 1))
-                         else _mp_clr_pass(slen[si], null) end;
+              lv := coalesce(case when j < n then lsg[least(ord[j], ord[j + 1])] end, case when j > 1 then lsg[least(ord[j], ord[j - 1])] end, 0);   -- 待避する駅の先の信号の段（DB の更新85）
+              gw := case when sstp[si][ord[j]] then _mp_clr_stop2(slen[si], sacc[si], lv)
+                         when j < n and sarr[si][ord[j + 1]] is not null then _mp_clr_pass2(slen[si], abs(km[ord[j + 1]] - km[ord[j]]) / greatest(sarr[si][ord[j + 1]] - sdep[si][ord[j]], 1), lv)
+                         else _mp_clr_pass2(slen[si], null, lv) end;
               need := greatest(sdep[si][ord[j]] + gw - td[ord[j]], 1);
               key := r.stops[ord[j]]::text;
               hld := jsonb_set(hld, array[key], to_jsonb(coalesce((hld ->> key)::int, 0) + need));
@@ -21135,19 +21158,22 @@ declare tr mp_trains; a record; b record; r mp_routes; w text; fid bigint; lsta 
 begin
   perform _mp_dispatch(rid);   -- 時刻（待避・続行もふくめて）
   select * into r from mp_routes where id = rid;
-  -- 番線：同じ駅・同じ番線に、重なる（t62：自動閉塞。前の列車が出て、長さ＋30m はなれるまで。前は前後30秒ずつ）
+  -- 番線：同じ駅・同じ番線に、重なる（t62：自動閉塞。前の列車が出て、長さ＋30m はなれるまで。前は前後30秒ずつ。駅の線の信号が強ければ 20m・10m。DB の更新85）
   --   （2026-10-28）前は列車の組ごとに sched をひらいていて「本数の2乗×駅数の2乗」かかり、列車をまとめて足すと8秒の制限をこえていた。
   --   いまは駅ごとの発着を1回だけ表にして、駅・番線でつなぐ。注意書きも、列車ごとにまとめて1回で書く（中身は前と同じ）
   --   さらに10分ごとの枠（bk）でもつなぐ：重なる2つは、両方の最初の枠のおそいほう（greatest(p)）で1回だけ出会う
-  with pf as materialized (   -- 編成ごとの「出てから はなれるまで」の秒
-    select f.form, _mp_clr_stop((q.p ->> 'len')::real, (q.p ->> 'acc')::real) clr
+  with pf as materialized (   -- 編成ごとの長さ・加速（「出てから はなれるまで」の秒は、駅の信号の段で）
+    select f.form, (q.p ->> 'len')::real len, (q.p ->> 'acc')::real acc
       from (select distinct t.form from mp_trains t where t.route in (select id from mp_routes where stops && r.stops) and t.form is not null) f,
            lateral (select _mp_form_perf(f.form) p) q),
+  sl as materialized (   -- 駅の線の信号の段（DB の更新85）
+    select s2.id, coalesce(sg.sig, 0)::int lv from mp_stations s2 left join mp_segs sg on sg.id = s2.seg
+     where s2.id in (select unnest(ro.stops) from mp_routes ro where ro.stops && r.stops)),
   st as materialized (
     select z.*, floor(least(z.ta, z.td + z.clr) / 600.0)::int p, floor(greatest(z.ta, z.td + z.clr) / 600.0)::int q from (
       select t.id, t.route, t.num, t.day, s.v ->> 0 sta, s.v ->> 3 trk,
              coalesce((s.v ->> 1)::int, (s.v ->> 2)::int) ta, coalesce((s.v ->> 2)::int, (s.v ->> 1)::int) td,
-             coalesce((select pf.clr from pf where pf.form = t.form), _mp_clr_stop(null, null)) clr
+             _mp_clr_stop2((select pf.len from pf where pf.form = t.form), (select pf.acc from pf where pf.form = t.form), coalesce((select sl.lv from sl where sl.id = (s.v ->> 0)::bigint), 0)) clr
         from mp_trains t cross join lateral jsonb_array_elements(t.sched) s(v)
        where t.route in (select id from mp_routes where stops && r.stops) and s.v ->> 0 is not null and s.v ->> 3 is not null) z),
   sb as materialized (select st.*, w10.bk from st cross join lateral generate_series(st.p, st.q) w10(bk)),
@@ -29835,6 +29861,7 @@ alter table public.mp_segs add column if not exists st text;       -- つくり�
 alter table public.mp_segs add column if not exists rack boolean not null default false;   -- アプト式（急な坂を登れる。30km/h まで）
 alter table public.mp_segs add column if not exists hm text;       -- 高さのえらびかた：auto 地形に合わせる・el 高架・ug 地下・man 手で直した
 alter table public.mp_segs add column if not exists hopt jsonb;   -- 高さのえらびかたの数値（DB の更新84）：{zt: 高さ m, zr: 地面から, gm: 勾配の上限 ‰}
+alter table public.mp_segs add column if not exists sig smallint not null default 0;   -- 信号の段（DB の更新85）：0 自動閉塞（ふつう）・1 ATC（車内信号）・2 移動閉塞
 alter table public.mp_nodes add column if not exists z real;       -- 点の高さ（m）。null は地面
 
 -- 地面の高さ（m。海・川・湖は 0）
@@ -30677,6 +30704,46 @@ begin
     end loop;
   end loop;
   return jsonb_build_object('id', p_id, 'cost', amt + scost, 'lv', p_lv);
+end $$;
+
+-- 信号の段を変える（DB の更新85）：0 自動閉塞（ふつう）・1 ATC（車内信号）・2 移動閉塞。強いほど、前の列車につめて走れる（うしろ 30m → 20m → 10m。駅の入れかわりも早い）
+--   p_chain：分かれ道のない点でつながる同じ持ち主の線路も いっしょに。工事費は上げる分だけ（1マス ATC 0.4・移動閉塞 0.8 × 線路の工事費。複線はその倍率。国の線は無料）。
+--   下げるのは無料（返金なし）。維持費は変わらない。通る系統の時刻（待避・続行）を計算しなおす
+create or replace function public.mp_seg_sig(p_id bigint, p_sig int, p_chain boolean, p_dry boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); sg mp_segs; me_cs int[]; ids bigint[]; amt numeric := 0; s record; a numeric; per jsonb := '{}'::jsonb; rid bigint; nr int := 0; lm real := 0; rts bigint[];
+begin
+  perform _mp_ok(u);
+  select * into sg from mp_segs where id = p_id;
+  if not found or sg.kind <> 'rail' then raise exception '線路が見つかりません'; end if;
+  me_cs := array(select id from companies where owner = u);
+  if not coalesce(sg.own_u = u or sg.own_c = any(me_cs) or (sg.gov and _is_admin(u)), false) then raise exception 'あなたの線路ではありません'; end if;
+  if p_sig is null or p_sig not in (0, 1, 2) then raise exception '信号は 自動閉塞・ATC・移動閉塞 からえらんでください'; end if;
+  ids := case when coalesce(p_chain, false) then array(select c.id from _mp_chain(p_id) c order by c.ord) else array[p_id] end;
+  if not exists (select 1 from mp_segs x where x.id = any(ids) and x.sig <> p_sig) then raise exception 'いまと同じ信号です'; end if;
+  if not p_dry then perform _mp_lock(sg.own_u, sg.own_c); end if;
+  for s in select x.id, x.len, x.sig, x.gov, x.dbl, x.pts from mp_segs x where x.id = any(ids) loop
+    lm := lm + s.len;
+    a := 0;
+    if not s.gov and p_sig > s.sig then
+      a := round((case p_sig when 2 then 0.8 when 1 then 0.4 else 0 end - case s.sig when 2 then 0.8 when 1 then 0.4 else 0 end) * _mp_rate('rail')
+                 * (coalesce(array_length(_mp_tiles(s.pts), 1), 0) / 2) * case when s.dbl then _mp_rate('dbl_mul') else 1 end);
+    end if;
+    amt := amt + a; per := per || jsonb_build_object(s.id::text, a);
+  end loop;
+  rts := array(select distinct ro.id from mp_routes ro, jsonb_array_elements(ro.legs) l, jsonb_array_elements(coalesce(l -> 'g', '[]'::jsonb)) g
+                where ro.kind = 'rail' and (g ->> 0)::bigint = any(ids));
+  if p_dry then
+    return jsonb_build_object('cost', amt, 'segs', array_length(ids, 1), 'm', round((lm * 50)::numeric), 'routes', coalesce(array_length(rts, 1), 0),
+      'now', (select jsonb_agg(distinct x.sig) from mp_segs x where x.id = any(ids)));
+  end if;
+  if amt > 0 then
+    perform _mp_pay(sg.own_u, sg.own_c, sg.gov, amt::bigint, 'rail', format('線路の信号（%s・%sm）', case p_sig when 2 then '移動閉塞' when 1 then 'ATC' else '自動閉塞' end, round((lm * 50)::numeric)));
+  end if;
+  update mp_segs x set sig = p_sig, cost = x.cost + coalesce((per ->> x.id::text)::bigint, 0) where x.id = any(ids);
+  for s in select x.id, x.bb from mp_segs x where x.id = any(ids) loop perform _mp_chg('seg', s.id, 'set', s.bb); end loop;
+  foreach rid in array coalesce(rts, '{}'::bigint[]) loop perform _mp_resched(rid); nr := nr + 1; end loop;
+  return jsonb_build_object('cost', amt, 'segs', array_length(ids, 1), 'routes', nr, 'sig', p_sig);
 end $$;
 
 -- 線 sid の車庫のところ：[s0, s1, 地面−2.5, 地面＋2.5, …]（off マスずらす。rev なら逆向き。長さ ln）
@@ -31698,7 +31765,7 @@ begin
             'mp_sta_build','mp_sta_edit','mp_sta_resize','mp_sta_trk','mp_sta_trk_set','mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list',
             'mp_thru_req','mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market',
             'mp_unit_mine','mp_unit_own','mp_unit_set','mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer','mp_unko_list','mp_unko_pick','mp_unko_furi','mp_unko_make','mp_jam_now','mp_jam_list','mp_er_now','mp_er_list','mp_er_bld','mp_lic_find','mp_lic_at','mp_lic_apply','_mp_lic_pfee_of','_mp_lic_pfee','_mp_lic_have','_mp_lic_mfee','mp_lic_mine','mp_lic_cancel','mp_lic_review','mp_lic_decide',
-            'mp_sta_melt','mp_seg_snow','mp_dep_plow','mp_snow_mine','mp_seg_height','_mp_taut','_mp_prof_flat','_mp_prof_simp','_mp_hopt','_mp_prof_make2','mp_sta_height',
+            'mp_sta_melt','mp_seg_snow','mp_dep_plow','mp_snow_mine','mp_seg_height','_mp_taut','_mp_prof_flat','_mp_prof_simp','_mp_hopt','_mp_prof_make2','mp_sta_height','_mp_clr_stop2','_mp_clr_pass2','_mp_leg_sig','mp_seg_sig',
             '_mp_form_busy','_mp_form_runs','_mp_cxl_on','_mp_unko_zone','_mp_unko_zi','_mp_unko_zt','_mp_unko_rt','_mp_sched_idx','_mp_unko_trn','_mp_rail_path_x','_mp_unko_det','mp_cxl_add','mp_cxl_del','_mp_form_key','_mp_train_runs','_mp_subst_can','_mp_subst_pick','_mp_subst_has','_mp_subst_ok','_mp_subst_plan','_mp_subst_plan_all','_mp_tmp_back','mp_form_spare','mp_form_add','mp_car_tmp') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
@@ -31746,3 +31813,5 @@ alter function public.mp_sta_sup(bigint, text, boolean, boolean) set statement_t
 alter function public.mp_unko_pick(bigint, int, text, boolean, boolean, boolean) set statement_timeout = '20s';
 -- 駅の高さを変える（DB の更新84）は、縦断を何回か解くので60秒まで
 alter function public.mp_sta_height(bigint, text, boolean) set statement_timeout = '60s';
+-- 信号を変える（DB の更新85）は、通る系統の時刻を計算しなおすので60秒まで
+alter function public.mp_seg_sig(bigint, int, boolean, boolean) set statement_timeout = '60s';
