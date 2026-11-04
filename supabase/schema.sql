@@ -3097,18 +3097,47 @@ language sql stable set search_path = public as $$
   select exists (select 1 from app_settings where key = 'admins' and u::text = any(string_to_array(value, ',')))
 $$;
 
--- まだ公開していないゲーム（app_settings 'beta_games'：カンマ区切り。ないときは boat・bike・auction・koikoi・fishing）。それまでは管理者だけ遊べる
---   公開するときは、そのゲームを一覧から消す（例：update app_settings set value = 'fishing' where key = 'beta_games'）
+-- まだ公開していないゲーム（app_settings 'beta_games'：カンマ区切り。ないときは ぜんぶ公開。DB の更新95）。それまでは管理者だけ遊べる
+--   管理 → ゲーム で えらぶ（admin_beta_set）。前は boat・bike・auction・koikoi・fishing が準備中だった
 create or replace function public._beta_games() returns text[]
 language sql stable set search_path = public as $$
   select array(select x from unnest(string_to_array(replace(coalesce((select value from app_settings where key = 'beta_games'),
-                                                                     'boat,bike,auction,koikoi,fishing'), ' ', ''), ',')) x where x <> '')
+                                                                     ''), ' ', ''), ',')) x where x <> '')   -- ないときは、ぜんぶ公開（DB の更新95）
 $$;
 create or replace function public._beta_ok(u uuid, g text) returns boolean
 language sql stable set search_path = public as $$ select _is_admin(u) or not (g = any(_beta_games())) $$;
 -- 画面に出さないゲーム（管理者には何もかくさない）
 create or replace function public._beta_list(u uuid) returns jsonb
 language sql stable set search_path = public as $$ select case when _is_admin(u) then '[]'::jsonb else to_jsonb(_beta_games()) end $$;
+-- 管理 → ゲーム で えらべる準備中のゲーム（DB の更新95）：[キー, 名前]。競艇と競輪は いっしょ（サーバーは boat で見ている）
+create or replace function public._beta_keys() returns jsonb
+language sql immutable as $$
+  select '[["boat","競艇・競輪"],["auction","競り市"],["koikoi","花札こいこい"],["fishing","釣り"],["owner","馬主"],["map","国土（地図）"]]'::jsonb
+$$;
+-- ゲームの公開のようす（管理者）
+create or replace function public.admin_beta_get() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare u uuid := _me(); b text[] := _beta_games();
+begin
+  if not _is_admin(u) then raise exception '管理者だけです'; end if;
+  return jsonb_build_object('list', to_jsonb(b),
+    'games', (select jsonb_agg(jsonb_build_object('k', z.e ->> 0, 'n', z.e ->> 1, 'open', not ((z.e ->> 0) = any(b) or ((z.e ->> 0) = 'boat' and 'bike' = any(b)))) order by z.o)
+                from jsonb_array_elements(_beta_keys()) with ordinality z(e, o)));
+end $$;
+-- 準備中にするゲームを決める（管理者）。p_beta：準備中にするキー（ほかは公開）。一覧にないキー（ほかの準備中のもの）は そのまま
+create or replace function public.admin_beta_set(p_beta text[]) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); ks text[] := array(select e ->> 0 from jsonb_array_elements(_beta_keys()) e); nb text[]; x text;
+begin
+  if not _is_admin(u) then raise exception '管理者だけです'; end if;
+  foreach x in array coalesce(p_beta, '{}'::text[]) loop
+    if not (x = any(ks) or x = 'bike') then raise exception 'ゲームの名前がちがいます（%）', x; end if;
+  end loop;
+  nb := array(select distinct y from unnest(coalesce(p_beta, '{}'::text[]) || case when 'boat' = any(coalesce(p_beta, '{}'::text[])) then array['bike'] else '{}'::text[] end) y order by y)
+        || array(select y from unnest(_beta_games()) y where not (y = any(ks) or y = 'bike'));
+  insert into app_settings(key, value) values ('beta_games', array_to_string(nb, ',')) on conflict (key) do update set value = excluded.value;
+  return admin_beta_get();
+end $$;
 
 create or replace function public._my_corp(u uuid, p_cid text) returns companies
 language plpgsql stable set search_path = public as $$
@@ -17478,7 +17507,7 @@ end $$;
 --   車両：1両ずつ注文して車庫に車籍。編成を組み、系統（止まる駅の順）に列車（ダイヤ）を入れる。採時駅だけ着・発・番線を指定
 --   お金：国庫を通る。運賃・家賃・使用料・維持費・税は tx_log の 'map_in'（所得）、工事・土地・車両は 'map'。会社は会社の帳簿 'map'
 --   1時間ごと（cron 毎時2分）：運賃・維持費・使用料・家賃・車両のいたみ。毎日朝4時：地価・固定資産税・まちの成長
---   準備中にもどすときは、_beta_games のはじめの一覧に 'map' を足す（管理者だけになる）
+--   準備中にもどすときは、管理 → ゲーム で「国土（地図）」のチェックをはずす（管理者だけになる。DB の更新95）
 -- =====================================================================
 
 create table if not exists public.mp_chunks (
@@ -32653,7 +32682,7 @@ begin
             '_find_id','_corp_move','_credit','_is_admin','_my_corp','_bank_accrue','_bank_accrue_all','_corp_card',
             'corp_search','corp_pins','corp_pin','corp_page','corp_buy','my_orders','bank_open','bank_deposit','bank_withdraw',
             'my_banks','corp_apply','my_corps','corp_update','corp_item_save','corp_order_done','corp_send','corp_withdraw',
-            'corp_fund','admin_state','admin_corp_decide','corp_job_save','job_list','job_apply','corp_apply_answer',
+            'corp_fund','admin_state','admin_beta_get','admin_beta_set','_beta_keys','admin_corp_decide','corp_job_save','job_list','job_apply','corp_apply_answer',
             'corp_member_set','corp_pay','my_jobs','job_quit',
             '_inv_json','invoice_list','invoice_create','invoice_pay','invoice_close',
             '_corp_holders','_add_shares','corp_shares_change','share_give','my_stocks','corp_dividend','corp_owner_set',

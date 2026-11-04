@@ -5876,7 +5876,7 @@ const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick 
 let coT = null, jbT = null;
 // 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
 const MAPV = '151';
-const DBV = 94;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）
+const DBV = 95;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）
 { const e = document.getElementById('verLogin'); if (e) e.textContent = 'v' + MAPV; }   // バージョン表記（ログインの画面）
 // バージョン表記（設定 → プロフィール）：画面の版・サーバーに入っている DB の更新の番号。管理者には、サーバーの更新がまだのとき知らせる
 async function verShow() {
@@ -6443,7 +6443,7 @@ async function myWorkLoad() {
    ================================================================= */
 // 管理の画面：タブ（審査・会社と株・お金・イベント・人）。タブを開いたときに、そこの中身を読みこむ
 const AD = { tab: sessionStorageGet('adTab') || '', d: null, loaded: {} };
-const AD_TABS = [['review', '審査'], ['corp', '会社・株'], ['money', 'お金'], ['event', 'イベント'], ['staff', '人'], ['sec', 'セキュリティ']];
+const AD_TABS = [['review', '審査'], ['corp', '会社・株'], ['money', 'お金'], ['event', 'イベント'], ['game', 'ゲーム'], ['staff', '人'], ['sec', 'セキュリティ']];
 const adTabsFor = (role, ev) => AD_TABS.filter(([k]) => k === 'event' ? ev : k === 'review' || k === 'corp' ? !!role : role === 'admin');
 const adEventCards = () => `<div class="card" data-adtab="event"><h3 style="margin-top:0">臨時のレース</h3><div id="adKb"><p class="muted small" style="margin:0">読みこみ中…</p></div></div>
   <div class="card" data-adtab="event"><h3 style="margin-top:0">お知らせバナー</h3><div id="adBn"><p class="muted small" style="margin:0">読みこみ中…</p></div></div>`;
@@ -6484,6 +6484,23 @@ async function adSecLoad() {
     adSecLoad();
   };
 }
+// ゲームの公開（DB の更新95）：ゲームごとに「みんなが遊べる」か「準備中（管理者だけ）」かをえらぶ
+async function adGameLoad() {
+  const box = $('#adGame'); if (!box) return;
+  let d;
+  try { d = await call('admin_beta_get'); }
+  catch (e) { box.innerHTML = `<p class="muted small" style="margin:0">${/admin_beta_get|schema cache|function/i.test(e.message) ? 'サーバーの更新（DB の更新95）のあとで使えます（update.sh）' : esc(e.message)}</p>`; return; }
+  box.innerHTML = d.games.map(g => `<label class="row small" style="gap:8px;margin:4px 0;align-items:center"><input type="checkbox" data-gk="${esc(g.k)}" ${g.open ? 'checked' : ''} style="margin:0">
+      <b>${esc(g.n)}</b><span class="muted">${g.open ? 'みんなが遊べる' : '準備中（管理者だけ）'}</span></label>`).join('')
+    + `<div class="row" style="margin-top:6px"><button class="btn main" id="adGameSave">保存</button></div>
+    <p class="muted small" style="margin:4px 0 0">チェックをはずしたゲームは「準備中」になり、管理者のほかは遊べなくなります（一覧にも「準備中」と出ます）。管理者はいつでも遊べます。</p>`;
+  $('#adGameSave').onclick = async () => {
+    const off = [...box.querySelectorAll('[data-gk]')].filter(x => !x.checked).map(x => x.dataset.gk);
+    if (off.length && !confirm(`${off.length}つのゲームを準備中にします（管理者のほかは遊べなくなります）。よろしいですか？`)) return;
+    try { await call('admin_beta_set', { p_beta: off }); toast('保存しました'); } catch (e) { return toast(e.message); }
+    adGameLoad();
+  };
+}
 function adShow(tab) {
   AD.tab = tab; try { sessionStorage.setItem('adTab', tab); } catch (e) {}
   $$('#adTabs button').forEach(b => b.classList.toggle('on', b.dataset.k === tab));
@@ -6495,6 +6512,7 @@ function adShow(tab) {
   if (tab === 'event') { adKbLoad(); adBnLoad(); }
   if (tab === 'staff') adStaffLoad();
   if (tab === 'sec') adSecLoad();   // DB の更新90
+  if (tab === 'game') adGameLoad();   // DB の更新95
 }
 async function adminLoad() {
   AD.loaded = {};
@@ -6581,6 +6599,7 @@ async function adminLoad() {
       <p class="muted small" style="margin:4px 0 0">国庫の外にあるお金＝ユーザー・会社・銀行預金・注文で預かっている X の合計。あわない分＝発行 − 国庫 − 国庫の外（＋は記録の外で消えたお金、−は記録の外でふえたお金）</p>
 `) + card('money', 'adGrant', '国庫から渡す', adGrantBody()) + card('money', 'adAds', '広告と抽選', '<div id="adAdsBox"><p class="muted small" style="margin:0">読みこみ中…</p></div>') + card('money', '', '介入', '<div id="adIv"><p class="muted small" style="margin:0">読みこみ中…</p></div>') : '')
       + (ME.event ? adEventCards() : '')
+      + (adm ? card('game', '', '🎮 ゲームの公開', '<div id="adGame"><p class="muted small" style="margin:0">読みこみ中…</p></div>') : '')   // DB の更新95
       + (adm ? card('staff', '', '副管理者・イベント製作者・鉄道の審査', '<div id="adStaff"><p class="muted small" style="margin:0">読みこみ中…</p></div>') : '')
       + (adm ? card('sec', '', '🛡 セキュリティ（すぐ止める）', '<div id="adSec"><p class="muted small" style="margin:0">読みこみ中…</p></div>') : '');
     $$('#adminBox [data-fxok], #adminBox [data-fxng]').forEach(b => b.onclick = async () => {
