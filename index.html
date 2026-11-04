@@ -5186,7 +5186,7 @@ function stCmpDraw() {
    役所 → ヘルプ（t62）：遊び方・やり方（help/help.json。README からつくる）。さがせる（題・中身・ことば。ひらがな・カタカナ・全角半角は同じに）
    役所 → 意見箱（t62）：運営への問い合わせ（support_open）に「【意見箱】」の件名で送る
    ================================================================= */
-const HELP_V = 'ce0296d3';
+const HELP_V = '298067bf';
 const HP = { d: null, cat: 'start', q: '' };
 const hpNorm = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
 async function helpLoad() {
@@ -5697,6 +5697,43 @@ function xferInput() {
   }, 350);
 }
 $('#xTo').oninput = xferInput; $('#xAmt').oninput = xferInput;
+// 相手のIDを、ニックネームからさがす（送金・請求・訴え）。同じ名前の人もいるので、一覧からえらぶ（ID・はじめた月・称号で見分ける。「見る」で人のページ。DB の更新96）
+function idFinder(toEl, onPick) {
+  if (!toEl) return;
+  const wrap = document.createElement('div');
+  wrap.innerHTML = '<input class="inp" data-idf placeholder="IDがわからないとき：ニックネームでさがす" autocomplete="off" maxlength="30"><div data-idfl></div>';
+  toEl.insertAdjacentElement('afterend', wrap);
+  const q = wrap.querySelector('[data-idf]'), box = wrap.querySelector('[data-idfl]');
+  let t = null, seq = 0;
+  const draw = (list, qs) => {
+    const xs = list.filter(x => !x.me);
+    if (!xs.length) { box.innerHTML = `<p class="muted small" style="margin:0 0 8px">「${esc(qs)}」の人は見つかりませんでした（ゲストは出ません。IDで送れます）</p>`; return; }
+    const nSame = xs.filter(x => x.same).length;
+    box.innerHTML = (nSame > 1 ? `<p class="small" style="margin:0 0 4px">同じ名前の人が <b>${nSame}人</b> います。ID・はじめた月・称号で見分けて、えらんでください（「見る」で人のページ）</p>` : '')
+      + xs.map(x => `<div class="co-row" data-idpick="${esc(x.uid)}"><span class="nm"><b>${nameB(x.nickname, x.badge)}${friendTag(x.friend)}</b>
+          <small>ID <span style="font-weight:700;color:var(--ink)">${esc(x.uid)}</span>${x.since ? `・${esc(x.since)}から` : ''}</small></span>
+          <button class="btn s" type="button" data-idview="${esc(x.uid)}">見る</button><button class="btn main s" type="button" data-idpick="${esc(x.uid)}" style="margin-left:4px">えらぶ</button></div>`).join('')
+      + (xs.length >= 30 ? '<p class="muted small" style="margin:2px 0 8px">多いので30人までです。名前をもっと入れてください</p>' : '');
+  };
+  q.addEventListener('input', () => {
+    clearTimeout(t);
+    const qs = q.value.trim(); seq++;
+    if (!qs) { box.innerHTML = ''; return; }
+    t = setTimeout(async () => {
+      const my = ++seq;
+      try { const list = await call('people_search', { p_q: qs }); if (my === seq) draw(list || [], qs); }
+      catch (e) { if (my === seq) box.innerHTML = `<p class="small" style="color:var(--lose);margin:0 0 8px">${esc(e.message)}</p>`; }
+    }, 350);
+  });
+  box.addEventListener('click', ev => {
+    const v = ev.target.closest('[data-idview]'); if (v) { ev.stopPropagation(); personOpen(v.dataset.idview); return; }
+    const p = ev.target.closest('[data-idpick]'); if (!p) return;
+    toEl.value = p.dataset.idpick; box.innerHTML = ''; q.value = ''; seq++;
+    toast(`ID ${p.dataset.idpick} を入れました`);
+    if (onPick) onPick(p.dataset.idpick);
+  });
+}
+idFinder($('#xTo'), () => { xferInput(); $('#xAmt').focus(); });
 
 
 /* ---------------- 訴え ---------------- */
@@ -5722,6 +5759,7 @@ async function courtLoad() {
   } catch (e) { toast(e.message); }
 }
 $$('#ctKind button').forEach(b => b.onclick = () => { ctKind = b.dataset.k; $$('#ctKind button').forEach(x => x.classList.toggle('on', x === b)); });
+idFinder($('#bTo'), () => $('#bAmt').focus()); idFinder($('#ctTo'));   // 請求・訴えの相手も、ニックネームから（DB の更新96）
 $('#ctSend').onclick = async () => {
   const to = $('#ctTo').value.trim();
   if (!/^(\d{5,6}|\d{3,4}(-\d{5,6})?)$/.test(to)) return toast('相手のID（ユーザー5けた・会社3けた）を入れてください');
@@ -5876,7 +5914,7 @@ const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick 
 let coT = null, jbT = null;
 // 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
 const MAPV = '151';
-const DBV = 95;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）
+const DBV = 96;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）
 { const e = document.getElementById('verLogin'); if (e) e.textContent = 'v' + MAPV; }   // バージョン表記（ログインの画面）
 // バージョン表記（設定 → プロフィール）：画面の版・サーバーに入っている DB の更新の番号。管理者には、サーバーの更新がまだのとき知らせる
 async function verShow() {
@@ -9205,7 +9243,7 @@ async function peopleLoad() {
   try {
     const d = await call('people_search', { p_q: $('#ppQ').value });
     $('#ppList').innerHTML = d.map(x => `<div class="co-row" data-person="${x.uid}"><span class="nm"><b>${nameB(x.nickname, x.badge)}${x.me ? '<span class="tag">あなた</span>' : ''}${friendTag(x.friend)}</b>
-        <small>ID ${x.uid}</small></span><span style="color:var(--muted);font-size:20px">›</span></div>`).join('')
+        <small>ID ${x.uid}${x.since ? `・${esc(x.since)}から` : ''}</small></span><span style="color:var(--muted);font-size:20px">›</span></div>`).join('')
       || `<p class="muted small" style="margin:6px 0 0">${$('#ppQ').value.trim() ? '見つかりませんでした' : 'まだフレンドはいません。ニックネームかIDでさがせます'}</p>`;
   } catch (e) { toast(e.message); }
 }

@@ -9535,17 +9535,22 @@ language sql stable set search_path = public as $$
 
 create or replace function public.people_search(p_q text) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me_g(); q text := btrim(coalesce(p_q, '')); lk text;
+declare u uuid := _me_g(); q text := btrim(coalesce(p_q, '')); lk text; nq text;
 begin
   if q = '' then   -- 何も入れないとき：フレンド
-    return (select coalesce(jsonb_agg(_person_card(p, u) order by p.nickname), '[]'::jsonb) from (
+    return (select coalesce(jsonb_agg(_person_card(p, u) || jsonb_build_object('since', to_char(p.created_at at time zone 'Asia/Tokyo', 'YYYY"年"FMMM"月"')) order by p.nickname), '[]'::jsonb) from (
               select * from profiles p where _is_friend(u, p.id) order by p.nickname limit 50) p);
   end if;
   q := ltrim(q, '@');
-  lk := '%' || replace(replace(replace(q, '\', '\\'), '%', '\%'), '_', '\_') || '%';
-  return (select coalesce(jsonb_agg(_person_card(p, u) order by (p.account_no = q) desc, _is_friend(u, p.id) desc, p.nickname), '[]'::jsonb) from (
-            select * from profiles p where (p.account_no = q or p.nickname ilike lk) and p.ai is null and not _is_guest(p.id)
-             order by (p.account_no = q) desc, p.nickname limit 30) p);
+  -- 全角・半角、大文字・小文字は同じとみる（DB の更新96）
+  nq := lower(normalize(q, NFKC));
+  lk := '%' || replace(replace(replace(nq, '\', '\\'), '%', '\%'), '_', '\_') || '%';
+  -- 名前がまるごと同じ人を先に（同じ名前の人が何人いても、30人の中に入る）。since：はじめた月・same：名前がまるごと同じ（同じ名前の人を見分ける。DB の更新96）
+  return (select coalesce(jsonb_agg(_person_card(z.pr, u) || jsonb_build_object('since', to_char((z.pr).created_at at time zone 'Asia/Tokyo', 'YYYY"年"FMMM"月"'), 'same', z.sm)
+                                    order by ((z.pr).account_no = q) desc, z.sm desc, _is_friend(u, (z.pr).id) desc, (z.pr).nickname, (z.pr).account_no), '[]'::jsonb) from (
+            select x pr, lower(normalize(x.nickname, NFKC)) = nq sm from profiles x
+             where (x.account_no = q or lower(normalize(x.nickname, NFKC)) like lk) and x.ai is null and not _is_guest(x.id)
+             order by (x.account_no = q) desc, (lower(normalize(x.nickname, NFKC)) = nq) desc, x.nickname, x.account_no limit 30) z);
 end $$;
 
 create or replace function public.person_page(p_uid text) returns jsonb
