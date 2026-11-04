@@ -516,6 +516,7 @@ function prepArea(d) {
   if (d.sig) S.sigOK = true;     // 信号の段（DB の更新85）のあるサーバー
   if (d.quad) S.quadOK = true;   // 複々線（DB の更新86）のあるサーバー
   if (d.pw) S.pwOK = true;       // 電化方式（DB の更新87）のあるサーバー
+  if (d.spec) S.specOK = true;   // 線路の規格・1本にする・騒音（DB の更新99）のあるサーバー
   if (d.subs2) { S.subsOK = true; for (const s of d.segs) s.pw2 = true; }   // 変電所（DB の更新89）のあるサーバー（pw2：fd がないのは 電気が来ていない線）
   d.subs = d.subs || []; for (const v of d.subs) { v.fx = v.x / 100; v.fy = v.y / 100; }
   if (d.park2) S.parkOK = true;   // テーマパーク・アトラクション（DB の更新91）のあるサーバー
@@ -1006,8 +1007,27 @@ function drawUpShadow(g, s, z, w) {
   }
   g.lineCap = 'round';
 }
-// 電化方式（DB の更新87）：0 直流・1 交流50Hz・2 交流60Hz
-const PS_N = ['直流', '交流50Hz', '交流60Hz'];
+// 電化方式（DB の更新87）：0 直流・1 交流50Hz・2 交流60Hz・3 第三軌条（直流750V。架線の種類で えらぶ。DB の更新99）
+const PS_N = ['直流', '交流50Hz', '交流60Hz', '第三軌条'];
+// 線路の規格（DB の更新99）：軌間（mm）・三線軌条（2つめの軌間）・枕木・架線・防音壁。上限の速さ（km/h）
+const GAUGES = [762, 1067, 1372, 1435], GAUGE_V = { 762: 70, 1067: 160, 1372: 130, 1435: 300 };
+const SLP_N = ['PC', '木', 'RC', 'スラブ'], SLP_V = [285, 100, 130, 300], SLP_ORDER = [1, 2, 0, 3];
+const SLP_D = ['ふつう（プレストレストコンクリート）', '安いが、維持費が高い', '鉄筋コンクリート。維持費は少し高め', '工事費が高いが、維持費は安い。少しうるさい'];
+const CAT_N = ['シンプルカテナリー', '直接吊架式', 'ツインシンプルカテナリー', 'コンパウンドカテナリー', 'ヘビーシンプルカテナリー', '剛体架線', '第三軌条'];
+const CAT_V = [130, 85, 130, 160, 300, 110, 90], CAT_ORDER = [1, 0, 2, 3, 4, 5, 6];
+const CAT_D = ['ふつう', 'いちばん安い（路面電車のような低い速さの線に）', '電気を遠くまで送れる（変電所が とどく遠さ 1.5倍）', '電気を遠くまで送れる（変電所が とどく遠さ 1.5倍）',
+  '高速用（変電所が とどく遠さ 1.2倍）', 'トンネルの中では安い', '直流750V・第三軌条の電車だけ走れる・トンネルの中では安い'];
+const NW_N = ['なし', '防音壁', '高い防音壁'];
+const segCapAll = s => Math.min(GAUGE_V[s.ga || 1067] || 160, s.g2 ? Math.min(130, GAUGE_V[s.g2] || 160) : 300, SLP_V[s.sl || 0] || 285, s.rk ? 30 : 300);   // 列車ぜんぶの上限
+const segCapEl = s => s.el ? Math.min(segCapAll(s), CAT_V[s.ct || 0] || 130) : null;   // 電車の上限（架線も）
+const gaugeN = (g, g2) => `${g || 1067}mm${g2 ? `＋${g2}mm（三線軌条）` : ''}`;
+const gmN = m => GAUGES.filter((v, i) => m & (1 << i)).map(v => v + 'mm').join('・');   // 編成の軌間のしるし（762 1・1067 2・1372 4・1435 8）
+function specLine(s) {
+  return [gaugeN(s.ga, s.g2), `${SLP_N[s.sl || 0]}枕木`, s.el ? CAT_N[s.ct || 0] : null, s.nw ? NW_N[s.nw] : null].filter(Boolean);
+}
+const specHtml = s => specLine(s).map(x => `<span>${esc(x)}</span>`).join('・');   // ことばごとに訳せるように
+// 線路の騒音（DB の更新99）のことば（0〜3）
+const nzWord = v => v >= 2 ? 'とてもうるさい' : v >= 1 ? 'うるさい' : v >= 0.3 ? 'ややうるさい' : '少し聞こえる';
 // デッドセクション（DB の更新87）：電化した線路どうしで、方式のちがう線がつながる点に、黄と黒のしるし
 function drawDeadSecs(g, rails, z) {
   const at = new Map();
@@ -1034,8 +1054,8 @@ function drawDeadSecs(g, rails, z) {
 }
 /* ---------- 変電所（DB の更新89）：電化した線路に電気をとどける（同じ持ち主・同じ方式。直流 10km・交流 40km まで） ---------- */
 const SUB_SZ = ['小', '中', '大'];
-const subKm = ps => ps ? 40 : 10;   // とどく遠さ（km）
-const subCaps = ps => ps ? '小 10,000・中 20,000・大 40,000 kW' : '小 3,000・中 6,000・大 12,000 kW';
+const subKm = ps => ps === 3 ? 4 : ps ? 40 : 10;   // とどく遠さ（km。第三軌条 4km。DB の更新99）
+const subCaps = ps => ps === 3 ? '小 1,500・中 3,000・大 6,000 kW' : ps ? '小 10,000・中 20,000・大 40,000 kW' : '小 3,000・中 6,000・大 12,000 kW';
 // エアセクション（同じ方式で、電気をとどける変電所がかわる点）に青のしるし。自分の電化した線で、電気が来ていない線は赤の点線
 function drawPower(g, rails, z) {
   const at = new Map();
@@ -1411,17 +1431,26 @@ function trackTool(k, cur) {
 function drawRail(g, s, z) {
   const mine = s.mine, col = s.col && /^#[0-9a-f]{6}$/i.test(s.col) ? s.col : null;   // 路線カラー（2026-10-29）
   const w = Math.max(1.8, (s.q ? 0.52 : s.dbl ? 0.34 : 0.22) * z);   // 複々線（DB の更新86）は太く
+  // 線路の規格（DB の更新99）：軌間で太さ（大きく見たとき）・枕木の色（木は茶色・スラブは つながった灰色）・三線軌条と第三軌条の細い線
+  const gk = z >= 10 ? ({ 762: 0.75, 1372: 1.08, 1435: 1.15 }[s.ga] || 1) : 1, tie = s.sl === 1 ? '#e8d5ad' : s.sl === 3 ? '#d6d6d6' : '#ffffff', slab = s.sl === 3;
+  const extra = off => {
+    if (z < 10) return;
+    if (s.g2) { g.strokeStyle = '#c8962e'; g.lineWidth = Math.max(1, 0.025 * z); g.setLineDash([]); pathSeg(g, s, off + 0.035); g.stroke(); }
+    if (s.ct === 6 && s.el) { g.strokeStyle = '#e8b400'; g.lineWidth = Math.max(1, 0.03 * z); g.setLineDash([]); pathSeg(g, s, off - 0.06); g.stroke(); }
+  };
   g.lineCap = 'butt';
   if (z >= 10 && s.dbl) {
     for (const off of s.q ? [0.27, 0.09, -0.09, -0.27] : [0.09, -0.09]) {
-      g.strokeStyle = col || '#4a4a4a'; g.lineWidth = Math.max(1.5, 0.12 * z); g.setLineDash([]); pathSeg(g, s, off); g.stroke();
-      g.strokeStyle = '#ffffff'; g.lineWidth = Math.max(1, 0.07 * z); g.setLineDash([z * 0.5, z * 0.5]); pathSeg(g, s, off); g.stroke();
+      g.strokeStyle = col || '#4a4a4a'; g.lineWidth = Math.max(1.5, 0.12 * z * gk); g.setLineDash([]); pathSeg(g, s, off); g.stroke();
+      g.strokeStyle = tie; g.lineWidth = Math.max(1, 0.07 * z * gk); g.setLineDash(slab ? [] : [z * 0.5, z * 0.5]); pathSeg(g, s, off); g.stroke();
+      extra(off);
     }
   } else {
     if (mine) { g.strokeStyle = 'rgba(40,110,220,.5)'; g.lineWidth = w + 4; g.setLineDash([]); pathSeg(g, s); g.stroke(); }
     if (col) { g.strokeStyle = 'rgba(0,0,0,.45)'; g.lineWidth = w + 2; g.setLineDash([]); pathSeg(g, s); g.stroke(); }   // 色の線は、ふちを少し濃く
-    g.strokeStyle = col || '#3f3f3f'; g.lineWidth = w; g.setLineDash([]); pathSeg(g, s); g.stroke();
-    if (z >= 1.5) { g.strokeStyle = '#ffffff'; g.lineWidth = Math.max(1, w - 2); g.setLineDash([Math.max(4, z * 0.5), Math.max(4, z * 0.5)]); pathSeg(g, s); g.stroke(); }
+    g.strokeStyle = col || '#3f3f3f'; g.lineWidth = w * gk; g.setLineDash([]); pathSeg(g, s); g.stroke();
+    if (z >= 1.5) { g.strokeStyle = tie; g.lineWidth = Math.max(1, w * gk - 2); g.setLineDash(slab && z >= 4 ? [] : [Math.max(4, z * 0.5), Math.max(4, z * 0.5)]); pathSeg(g, s); g.stroke(); }
+    extra(0);
   }
   if (z >= 10 && !s.el) { /* 非電化：そのまま */ }
   g.setLineDash([]); g.lineCap = 'round';
@@ -1439,6 +1468,14 @@ function drawRail(g, s, z) {
       for (const o of [off, -off]) { pathSeg(g, s, o); g.stroke(); }
     }
     g.setLineDash([]); g.lineCap = 'round';
+  }
+  // 防音壁（DB の更新99）：線路の両わきに灰色の線（高い防音壁は太く・濃く）
+  if (s.nw && z >= 1.5) {
+    const off = Math.max((s.q ? 0.46 : s.dbl ? 0.3 : 0.2) + 0.06, (w / 2 + 3) / z);
+    g.lineCap = 'butt'; g.setLineDash([]);
+    g.strokeStyle = s.nw === 2 ? '#6d8399' : '#93a6ba'; g.lineWidth = Math.max(1.4, (s.nw === 2 ? 0.11 : 0.07) * z);
+    for (const o of [off, -off]) { pathSeg(g, s, o); g.stroke(); }
+    g.lineCap = 'round';
   }
 }
 // バス停のしるし（名前は文字の層で）
@@ -3776,6 +3813,7 @@ async function showSpot(cx, cy) {
   sheet(`<h4><span translate="no">${esc(d.addr.text)}</span>${d.addr.ban ? ` <span>${esc(d.addr.ban)}</span>` : ''}</h4>
     <div class="mp-kv"><b>地形</b><span><span>${esc(d.ter)}</span>${d.elev ? `<small>（標高 約${d.elev}m）</small>` : ''}</span>${wxRow((cx + 0.5) / 5, (cy + 0.5) / 5)}<b>地目</b><span>${esc(d.chimoku)}</span>
       <b>用途地域</b><span>${esc(d.zname)}</span><b>人の多さ</b><span>${fmt(d.dens)} 人/km²</span>
+      ${d.nz != null ? `<b>線路の騒音</b><span><span>${nzWord(d.nz)}</span><small class="muted">（${d.nz}）</small></span>` : ''}
       ${d.cval != null ? `<b>地価</b><span>${X(d.cval)}（1区画・100㎡）</span>` : ''}
       ${d.cval0 != null ? `<b>評価額</b><span><span>${X(d.cval0)}（1区画・100㎡）</span><br><small class="muted">税・家賃・使用料は評価額で計算します</small></span>` : ''}
       <b>持ち主</b><span>${P ? `<span>${esc(P.owner)}</span>${P.mine ? '<small>（あなた）</small>' : ''}` : d.pub ? '公衆用道路' : '国'}</span>
@@ -3850,17 +3888,20 @@ function showSeg(s, hit) {
     <div class="mp-kv"><b>持ち主</b><span><span>${esc(own)}</span>${s.mine && s.o !== 'gov' ? '<small>（あなた）</small>' : ''}</span>
       <b>長さ</b><span>${fmt(Math.round(s.len * 50))} m</span>
       ${s.k === 'road' ? `<b>車線</b><span>${s.l ? '片側' + s.l + '車線' : '中央線なし'}</span>` : `<b>線路</b><span>${s.q ? '複々線' : s.dbl ? '複線' : '単線'}・${s.el ? (S.pwOK ? `電化（${PS_N[s.ps || 0]}）` : '電化') : '非電化'}</span>`}
+      ${s.k === 'rail' && S.specOK ? `<b>規格</b><span>${specHtml(s)}</span>` : ''}
       ${s.k === 'rail' && s.col ? `<b>路線カラー</b><span><span style="display:inline-block;width:2.2em;height:.8em;border-radius:3px;vertical-align:middle;background:${esc(s.col)}"></span></span>` : ''}
-      <b>制限速度</b><span data-spd><span>${s.v} km/h</span></span>${segSnowRow(s)}
+      <b>制限速度</b><span data-spd><span>${s.k === 'rail' && S.specOK ? Math.min(s.v, segCapAll(s)) : s.v} km/h</span></span>${segSnowRow(s)}
       ${s.k === 'rail' && S.sigOK ? `<b>信号</b><span>${SIG_N[s.sg || 0]}</span>` : ''}${subFeedRow(s)}
       ${s.k === 'rail' && s.o !== 'gov' ? thruRow(s.o) : ''}</div>
     ${s.k === 'rail' ? '<canvas class="mp-spd" data-spdc hidden></canvas>' : ''}
     ${S.hgtOK && (s.pf || s.k === 'rail') ? `<canvas class="mp-prof" data-profc></canvas><p class="small muted" style="margin:0 0 4px">${hgtLine(s)}</p>` : ''}
-    ${s.mine ? `<div class="mp-row"><button class="btn" data-edit>形を直す</button><button class="btn" data-split>ここで分ける</button><button class="btn" data-opt>${s.k === 'rail' ? '複線・電化・名前・色' : '車線・名前'}</button>${S.hgtOK ? '<button class="btn" data-hgt>⛰ 高さ</button>' : ''}${s.k === 'rail' && S.sigOK ? '<button class="btn" data-sig>🚦 信号</button>' : ''}${s.k === 'rail' && s.el && S.subsOK ? '<button class="btn" data-sub>⚡ 変電所</button>' : ''}${s.k === 'rail' && S.snowOK && (s.sp || segSnowZone(s) > 0) ? '<button class="btn" data-snowp>❄ 雪よけ</button>' : ''}<button class="btn" data-del>こわす</button></div>` : ''}`, sh => {
+    ${s.mine ? `<div class="mp-row"><button class="btn" data-edit>形を直す</button><button class="btn" data-split>ここで分ける</button>${s.k === 'rail' && S.specOK ? '<button class="btn" data-merge>1本にする</button><button class="btn" data-spec>規格（軌間・枕木・架線・防音壁）</button>' : ''}<button class="btn" data-opt>${s.k === 'rail' ? '複線・電化・名前・色' : '車線・名前'}</button>${S.hgtOK ? '<button class="btn" data-hgt>⛰ 高さ</button>' : ''}${s.k === 'rail' && S.sigOK ? '<button class="btn" data-sig>🚦 信号</button>' : ''}${s.k === 'rail' && s.el && S.subsOK ? '<button class="btn" data-sub>⚡ 変電所</button>' : ''}${s.k === 'rail' && S.snowOK && (s.sp || segSnowZone(s) > 0) ? '<button class="btn" data-snowp>❄ 雪よけ</button>' : ''}<button class="btn" data-del>こわす</button></div>` : ''}`, sh => {
     const q = k => sh.querySelector(k);
     if (q('[data-edit]')) q('[data-edit]').onclick = () => startEdit(s);
     if (q('[data-split]')) q('[data-split]').onclick = async () => { if (await api('mp_seg_split', { p_id: s.id, p_x: hit.x, p_y: hit.y }, '分けました')) { refreshBox(...s.bb); sheet(null); } };
     if (q('[data-opt]')) q('[data-opt]').onclick = () => segOpts(s);
+    if (q('[data-spec]')) q('[data-spec]').onclick = () => segSpec(s, hit);    // 線路の規格（DB の更新99）
+    if (q('[data-merge]')) q('[data-merge]').onclick = () => segMerge(s, hit);  // 1本にする（DB の更新99）
     if (q('[data-hgt]')) q('[data-hgt]').onclick = () => segHeight(s);   // 高さ（t108）
     if (q('[data-sig]')) q('[data-sig]').onclick = () => segSig(s, hit);   // 信号（DB の更新85）
     if (q('[data-sub]')) q('[data-sub]').onclick = () => subBuild(s, hit);   // 変電所（DB の更新89）
@@ -3877,7 +3918,7 @@ function showSeg(s, hit) {
   api('mp_seg_speed', { p_id: s.id, p_x: hit ? hit.x : null, p_y: hit ? hit.y : null }).then(sp => {
     if (!sp || !still()) return;
     const e = S.sheet.querySelector('[data-spd]');
-    if (e) e.innerHTML = s.k === 'rail' ? `${sp.here != null ? `<span>ここ ${sp.here} km/h</span><br>` : ''}<small class="muted">${sp.min === sp.max ? `<span>この線 ${sp.min} km/h</span>` : `<span>この線 ${sp.min}〜${sp.max} km/h</span>`}${sp.rmin && sp.rmin < 99999 ? `<br><span>いちばんきついカーブ 半径 ${fmt(sp.rmin)} m</span>` : ''}</small>` : `<span>${sp.here} km/h</span>`;
+    if (e) e.innerHTML = s.k === 'rail' ? `${sp.here != null ? `<span>ここ ${sp.here} km/h</span><br>` : ''}<small class="muted">${sp.min === sp.max ? `<span>この線 ${sp.min} km/h</span>` : `<span>この線 ${sp.min}〜${sp.max} km/h</span>`}${sp.ve != null && sp.ve < sp.max ? `<br><span>電車は ${sp.ve} km/h まで（架線）</span>` : ''}${sp.rmin && sp.rmin < 99999 ? `<br><span>いちばんきついカーブ 半径 ${fmt(sp.rmin)} m</span>` : ''}</small>` : `<span>${sp.here} km/h</span>`;
     const cv = S.sheet.querySelector('[data-spdc]'); if (cv) { cv.hidden = false; spdChart(cv, sp); }
   });
 }
@@ -3918,6 +3959,105 @@ function segSig(s, hit) {
   };
   draw();
 }
+// 線路の規格（DB の更新99）：軌間（三線軌条）・枕木・架線（電化した線）・防音壁。見つもり（工事費・上限の速さ・1日の維持費・走れなくなる列車）
+function segSpec(s, hit) {
+  const st = { ga: s.ga || 1067, g2: s.g2 || 0, sl: s.sl || 0, ct: s.ct || 0, nw: s.nw || 0, chain: false, q: null, err: null, quoting: false, seq: 0 };
+  const same = () => st.ga === (s.ga || 1067) && st.g2 === (s.g2 || 0) && st.sl === (s.sl || 0) && (!s.el || st.ct === (s.ct || 0)) && st.nw === (s.nw || 0);
+  const spec = () => ({ gauge: st.ga, g2: st.g2 && st.g2 !== st.ga ? st.g2 : 0, slp: st.sl, nw: st.nw, ...(s.el ? { cat: st.ct } : {}) });
+  const quote = async () => {
+    const my = ++st.seq; st.quoting = true; st.err = null; draw();
+    let q = null, err = null;
+    try { q = await call('mp_seg_spec', { p_id: s.id, p_spec: spec(), p_chain: st.chain, p_dry: true }); } catch (e) { err = errJa(e.message); }
+    if (st.seq !== my) return;
+    st.quoting = false; st.q = q; st.err = err; draw();
+  };
+  const changed = () => { st.seq++; st.quoting = false; st.q = null; st.err = null; draw(); };
+  const seg = (k, list, cur, lab) => `<span class="mp-seg" style="flex-wrap:wrap">${list.map(v => `<button data-${k}="${v}" class="${cur === v ? 'on' : ''}">${lab(v)}</button>`).join('')}</span>`;
+  const draw = () => {
+    const q = st.q;
+    sheet(`<h4>線路の規格</h4>
+      <p class="small muted" style="margin:0 0 4px">いま：${specHtml(s)}</p>
+      <h4 style="margin:8px 0 4px">軌間</h4>
+      <div class="mp-row small">${seg('ga', GAUGES, st.ga, v => `${v}mm`)}</div>
+      <div class="mp-row small" style="align-items:center"><span>三線軌条</span>${seg('g2', [0, ...GAUGES.filter(v => v !== st.ga)], st.g2 === st.ga ? 0 : st.g2, v => v ? `＋${v}mm` : 'なし')}</div>
+      <p class="muted small" style="margin:0"><span>軌間が合わない列車は走れません（三線軌条なら、2つの軌間の列車が走れます）。</span>${SEP()}<span>上限：762mm 70km/h・1067mm 160km/h・1372mm 130km/h・1435mm 300km/h・三線軌条 130km/h</span></p>
+      <h4 style="margin:10px 0 4px">枕木</h4>
+      ${SLP_ORDER.map(k => `<label class="small" style="display:flex;align-items:flex-start;gap:6px;margin:4px 0"><input type="radio" name="mpslp" data-sl="${k}" ${st.sl === k ? 'checked' : ''} style="flex:none;margin-top:2px"><span><b><span>${SLP_N[k]}枕木</span></b>（<span>${SLP_V[k]}km/h まで</span>）：<span>${SLP_D[k]}</span></span></label>`).join('')}
+      ${s.el ? `<h4 style="margin:10px 0 4px">架線</h4>
+        ${CAT_ORDER.map(k => `<label class="small" style="display:flex;align-items:flex-start;gap:6px;margin:4px 0"><input type="radio" name="mpcat" data-ct="${k}" ${st.ct === k ? 'checked' : ''} style="flex:none;margin-top:2px"><span><b><span>${CAT_N[k]}</span></b>（<span>電車は ${CAT_V[k]}km/h まで</span>）：<span>${CAT_D[k]}</span></span></label>`).join('')}
+        ${st.ct === 6 && (s.ct || 0) !== 6 ? '<p class="mp-warn small" style="margin:2px 0">第三軌条にすると直流750Vになり、いまの電車（架線の電車）は走れなくなります</p>' : ''}
+        ${st.ct !== 6 && (s.ct || 0) === 6 ? '<p class="small muted" style="margin:2px 0">架線にすると直流1500Vになります</p>' : ''}` : '<p class="muted small" style="margin:8px 0 0">架線の種類は、電化した線でえらべます（複線・電化・名前・色 で電化）</p>'}
+      <h4 style="margin:10px 0 4px">防音壁</h4>
+      <div class="mp-row small">${seg('nw', [0, 1, 2], st.nw, v => NW_N[v])}</div>
+      <p class="muted small" style="margin:0"><span>家の近くを速く・たくさん走ると、騒音で まわりの地価とまちの成長が少し下がります。</span>${SEP()}<span>防音壁で騒音は半分、高い防音壁で4分の1（トンネルの中は騒音なし）。</span></p>
+      <label class="small" style="display:block;margin:8px 0 4px"><input type="checkbox" data-chain ${st.chain ? 'checked' : ''}> <span>分かれ道までの つながる線路も いっしょに</span></label>
+      <div class="mp-row">${same() ? '<span class="muted small">いまと同じ規格です</span>' : q ? `<span class="mp-cost">${q.cost > 0 ? '工事費 ' + X(q.cost) : '工事費なし'}</span><span class="small muted"><span>線路 約${fmt(q.m)}m</span><span>・通る系統 ${q.routes}</span></span>`
+        : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button>'}</div>
+      ${q && !same() ? `<p class="small" style="margin:2px 0"><span>上限の速さ：列車 ${q.v}km/h</span>${q.ve != null ? `<span>・電車 ${Math.min(q.v, q.ve)}km/h</span>` : ''}${SEP()}<span>・維持費 1日 ${X(q.up0)} → ${X(q.up1)}</span></p>
+        ${q.bad ? `<p class="mp-warn small" style="margin:2px 0">${esc(T(`軌間が合わなくなって、走れなくなる列車が ${q.bad}本あります`))}</p>` : ''}` : ''}
+      <div class="mp-row"><button class="btn main" data-ok ${q && !same() ? '' : 'disabled'}>この規格にする</button><button class="btn" data-back>もどる</button></div>
+      <p class="muted small" style="margin:4px 0 0"><span>工事費は1マスごと：改軌は線路の工事費の半分くらい（軌間で ちがう）・三線軌条を足す 0.35倍・枕木の取りかえ・架線の取りかえ・防音壁。</span>${SEP()}<span>へらす（三線軌条をやめる・防音壁をへらす）のは無料（返金なし）。変えると、通る系統の時刻を計算しなおします</span></p>`, sh => {
+      sh.querySelectorAll('[data-ga]').forEach(b => b.onclick = () => { st.ga = Number(b.dataset.ga); if (st.g2 === st.ga) st.g2 = 0; changed(); });
+      sh.querySelectorAll('[data-g2]').forEach(b => b.onclick = () => { st.g2 = Number(b.dataset.g2); changed(); });
+      sh.querySelectorAll('[data-sl]').forEach(r => r.onchange = () => { st.sl = Number(r.dataset.sl); changed(); });
+      sh.querySelectorAll('[data-ct]').forEach(r => r.onchange = () => { st.ct = Number(r.dataset.ct); changed(); });
+      sh.querySelectorAll('[data-nw]').forEach(b => b.onclick = () => { st.nw = Number(b.dataset.nw); changed(); });
+      { const c = sh.querySelector('[data-chain]'); if (c) c.onchange = () => { st.chain = c.checked; changed(); }; }
+      { const e = sh.querySelector('[data-est]'); if (e) e.onclick = () => quote(); }
+      sh.querySelector('[data-back]').onclick = () => showSeg(s, hit);
+      sh.querySelector('[data-ok]').onclick = async () => {
+        const r = await api('mp_seg_spec', { p_id: s.id, p_spec: spec(), p_chain: st.chain, p_dry: false });
+        if (!r) return;
+        toast(r.cost > 0 ? T(`規格を変えました（${fmt(r.cost)} X）`) : T('規格を変えました'));
+        s.ga = st.ga === 1067 ? undefined : st.ga; s.g2 = st.g2 && st.g2 !== st.ga ? st.g2 : undefined; s.sl = st.sl || undefined; s.nw = st.nw || undefined;
+        if (s.el) { s.ct = st.ct || undefined; s.ps = st.ct === 6 ? 3 : s.ps === 3 ? 0 : s.ps; }
+        refreshBox(...s.bb); showSeg(s, hit);
+      };
+    });
+  };
+  draw();
+}
+// 線路を1本にする（DB の更新99）：つなぎ目で となりの線と結合。設定がちがうときは、えらんだ線にそろえる（そろえる工事費）
+async function segMerge(s, hit) {
+  const r0 = await api('mp_seg_merge', { p_a: s.id, p_b: null, p_keep: null, p_dry: true }); if (!r0) return;
+  const cands = r0.cands || [];
+  const st = { b: null, qa: null, qb: null, busy: false };
+  const nm = c => c.n ? c.n : T(`線路（${fmt(c.m)}m）`);
+  const pick = async c => {
+    st.b = c; st.qa = st.qb = null; st.busy = true; draw();
+    const [qa, qb] = await Promise.all([call('mp_seg_merge', { p_a: s.id, p_b: c.id, p_keep: s.id, p_dry: true }).catch(e => ({ err: errJa(e.message) })),
+                                        call('mp_seg_merge', { p_a: s.id, p_b: c.id, p_keep: c.id, p_dry: true }).catch(e => ({ err: errJa(e.message) }))]);
+    if (st.b !== c) return;
+    st.qa = qa; st.qb = qb; st.busy = false; draw();
+  };
+  const opt = (q, keep, label) => !q ? '' : `<div class="mp-item" data-optw="${keep}"><div class="small"><b>${label}</b></div>
+      ${q.err ? `<p class="mp-warn small" style="margin:2px 0">${esc(q.err)}</p>` : `<div class="mp-row" style="align-items:center;margin:4px 0 0"><span class="mp-cost">${q.cost > 0 ? '工事費 ' + X(q.cost) : '工事費なし'}</span>
+        <button class="btn main" data-go="${keep}" ${hasNeed(q) ? 'disabled' : ''}>1本にする</button></div>${needH(q.need)}`}</div>`;
+  const draw = () => {
+    const c = st.b;
+    sheet(`<h4>線路を1本にする</h4>
+      <p class="small muted" style="margin:0 0 4px">つなぎ目（分かれ道のない点）で、となりの線と1本にします。駅・車庫はそのまま。設定がちがうときは、どちらかの線にそろえます</p>
+      ${cands.length ? `<div class="mp-list">${cands.map((x, i) => `<button class="mp-item" style="text-align:left${c && c.id === x.id ? ';outline:2px solid var(--accent)' : ''}" data-c="${i}"><b><span>${x.end ? 'おわりのほう' : 'はじめのほう'}</span>：<span translate="no">${esc(nm(x))}</span></b>
+          <br><small>${x.rack ? '<span class="mp-warn">アプト式の線とは1本にできません</span>' : x.dif && x.dif.length ? `<span>設定のちがい：</span><span>${x.dif.map(d => esc(d)).join('・')}</span>` : '<span>設定は同じ</span>'}</small></button>`).join('')}</div>`
+        : '<p class="muted small">1本にできる となりの線がありません（分かれ道のある点・ほかの持ち主の線とは、1本にできません）</p>'}
+      ${c && st.busy ? '<p class="muted small">見つもり中…</p>' : ''}
+      ${c && !st.busy ? (st.qa && st.qa.dif && !st.qa.dif.length ? opt(st.qa, s.id, T('1本にする（設定は同じ）'))
+        : opt(st.qa, s.id, T('この線の設定に そろえる')) + opt(st.qb, c.id, T('となりの線の設定に そろえる'))) : ''}
+      <div class="mp-row"><button class="btn" data-back>もどる</button></div>
+      <p class="muted small" style="margin:4px 0 0">そろえる工事費は、それぞれの設定を変えるのと同じです（へらす分は無料・返金なし）。名前と路線カラーも そろえます</p>`, sh => {
+      sh.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { const x = cands[Number(b.dataset.c)]; if (x && !x.rack) pick(x); });
+      sh.querySelectorAll('[data-go]').forEach(b => b.onclick = async () => {
+        const r = await api('mp_seg_merge', { p_a: s.id, p_b: c.id, p_keep: Number(b.dataset.go), p_dry: false });
+        if (!r) return;
+        toast(r.cost > 0 ? T(`1本にしました（${fmt(r.cost)} X）`) : T('1本にしました'));
+        refreshAll(); sheet(null);
+      });
+      sh.querySelectorAll('[data-optw]').forEach(w => { const q = Number(w.dataset.optw) === s.id ? st.qa : st.qb; needBind(w, q && q.need, () => pick(c)); });
+      sh.querySelector('[data-back]').onclick = () => showSeg(s, hit);
+    });
+  };
+  draw();
+}
 // 線の高さのことば（線のシート）：高さのえらびかた・トンネル・高架・橋の長さ（t108）
 function hgtLine(s) {
   if (!s.pf) return s.c === 'exp' ? '高さ：地面から 10m（高架）' : '高さ：地面どおり';
@@ -3948,7 +4088,7 @@ function segOpts(s) {
     sheet(`<h4 data-segopt="${s.id}">${s.k === 'rail' ? '線路' : '道路'}の設定</h4>
       ${s.k === 'rail' ? `<div class="mp-row"><span class="mp-seg"><button data-d="0" class="${!st.dbl ? 'on' : ''}">単線</button><button data-d="1" class="${st.dbl && !st.qd ? 'on' : ''}">複線</button>${S.quadOK ? `<button data-d="2" class="${st.qd ? 'on' : ''}">複々線</button>` : ''}</span>
         <span class="mp-seg"><button data-e="0" class="${!st.el ? 'on' : ''}">非電化</button><button data-e="1" class="${st.el ? 'on' : ''}">電化</button></span></div>
-        ${S.pwOK && st.el ? `<div class="mp-row small" style="align-items:center"><span>電化方式</span><span class="mp-seg">${PS_N.map((n, k) => `<button data-ps="${k}" class="${st.ps === k ? 'on' : ''}">${n}</button>`).join('')}</span></div>` : ''}`
+        ${S.pwOK && st.el ? `<div class="mp-row small" style="align-items:center"><span>電化方式</span><span class="mp-seg">${PS_N.slice(0, 3).map((n, k) => `<button data-ps="${k}" class="${st.ps === k ? 'on' : ''}">${n}</button>`).join('')}</span></div>` : ''}`
       : `<div class="mp-row">片側 <span class="mp-seg">${[0, 1, 2, 3].map(n => `<button data-l="${n}" class="${st.l === n ? 'on' : ''}">${n ? n + '車線' : '細い道'}</button>`).join('')}</span></div>`}
       <div class="mp-row"><input class="mp-inp" data-nm placeholder="名前（路線名など）" value="${esc(st.name)}"></div>
       ${s.k === 'rail' ? `<h4 style="margin:10px 0 4px">路線カラー</h4>
@@ -4541,7 +4681,7 @@ function startDraw(kind) {
   if (kind === 'rail') loadThru();
   let mode = kind === 'rail' ? 'arc' : 'free', rad = kind === 'rail' ? 400 : 50;
   try { mode = localStorage.getItem('mp_dm_' + kind) || mode; rad = Number(localStorage.getItem('mp_dr_' + kind)) || rad; } catch (e) {}
-  const st = S.toolState = { kind, mode, rad, ctrl: [], A: null, B: null, curve: [], quote: null, err: null, opts: { dbl: false, elec: false, lanes: admin ? 2 : 1, cls: admin ? 'nat' : 'priv', name: '', hm: 'auto', rack: false }, qt: 0, pins: new Map(), psel: null, pv: null };
+  const st = S.toolState = { kind, mode, rad, ctrl: [], A: null, B: null, curve: [], quote: null, err: null, opts: { dbl: false, elec: false, lanes: admin ? 2 : 1, cls: admin ? 'nat' : 'priv', name: '', hm: 'auto', rack: false, ...specLoad() }, qt: 0, pins: new Map(), psel: null, pv: null };
   S.tapHook = (x, y) => {
     const a = findAttach(kind, x, y);
     if (!st.ctrl.length) { st.ctrl.push(a ? [a.x, a.y] : [x, y]); st.A = a; }
@@ -4613,6 +4753,36 @@ function drawUpdate(fast) {
   S.dirty = true;
   drawSheet();
 }
+// 線をひくときの規格（DB の更新99）：軌間・三線軌条・枕木・架線（電化するとき）・防音壁。前に えらんだものを この端末におぼえる
+function specLoad() {
+  let v = null; try { v = JSON.parse(localStorage.getItem('mp_spec') || 'null'); } catch (e) { v = null; }
+  v = v && typeof v === 'object' ? v : {};
+  return { ga: GAUGES.includes(v.ga) ? v.ga : 1067, g2: GAUGES.includes(v.g2) && v.g2 !== v.ga ? v.g2 : 0, sl: [0, 1, 2, 3].includes(v.sl) ? v.sl : 0,
+           ct: [0, 1, 2, 3, 4, 5, 6].includes(v.ct) ? v.ct : 0, nw: [0, 1, 2].includes(v.nw) ? v.nw : 0 };
+}
+function specSave(o) { try { localStorage.setItem('mp_spec', JSON.stringify({ ga: o.ga, g2: o.g2, sl: o.sl, ct: o.ct, nw: o.nw })); } catch (e) {} }
+const specOpt = o => ({ gauge: o.ga || 1067, g2: o.g2 && o.g2 !== o.ga ? o.g2 : 0, slp: o.sl || 0, cat: o.elec ? o.ct || 0 : 0, nw: o.nw || 0 });
+function specPick(o) {
+  const ga = o.ga || 1067, g2 = o.g2 && o.g2 !== ga ? o.g2 : 0;
+  const sum = specHtml({ ga, g2, sl: o.sl, el: o.elec, ct: o.ct, nw: o.nw });
+  const va = Math.min(GAUGE_V[ga], g2 ? Math.min(130, GAUGE_V[g2]) : 300, SLP_V[o.sl || 0]), ve = o.elec ? Math.min(va, CAT_V[o.ct || 0]) : null;
+  return `<div class="mp-row small" style="align-items:center"><span>規格</span><span style="flex:1 1 auto">${sum}</span><button class="btn" data-specx style="flex:0 0 auto">${o.specOpen ? 'とじる' : '変える'}</button></div>
+    ${o.specOpen ? `<div class="mp-row small" style="align-items:center"><span>軌間</span><span class="mp-seg" style="flex-wrap:wrap">${GAUGES.map(v => `<button data-bga="${v}" class="${ga === v ? 'on' : ''}">${v}mm</button>`).join('')}</span></div>
+      <div class="mp-row small" style="align-items:center"><span>三線軌条</span><span class="mp-seg" style="flex-wrap:wrap">${[0, ...GAUGES.filter(v => v !== ga)].map(v => `<button data-bg2="${v}" class="${g2 === v ? 'on' : ''}">${v ? `＋${v}mm` : 'なし'}</button>`).join('')}</span></div>
+      <div class="mp-row small" style="align-items:center"><span>枕木</span><span class="mp-seg" style="flex-wrap:wrap">${SLP_ORDER.map(k => `<button data-bsl="${k}" class="${(o.sl || 0) === k ? 'on' : ''}">${SLP_N[k]}</button>`).join('')}</span></div>
+      ${o.elec ? `<div class="mp-row small" style="align-items:center"><span>架線</span><select class="mp-inp" data-bct style="width:auto">${CAT_ORDER.map(k => `<option value="${k}" ${(o.ct || 0) === k ? 'selected' : ''}>${CAT_N[k]}（${CAT_V[k]}km/h）</option>`).join('')}</select></div>` : ''}
+      <div class="mp-row small" style="align-items:center"><span>防音壁</span><span class="mp-seg">${[0, 1, 2].map(v => `<button data-bnw="${v}" class="${(o.nw || 0) === v ? 'on' : ''}">${NW_N[v]}</button>`).join('')}</span></div>
+      <p class="muted small" style="margin:0"><span>上限の速さ：列車 ${va}km/h</span>${ve != null ? `<span>・電車 ${ve}km/h</span>` : ''}${SEP()}<span>（軌間が合わない列車は走れません。くわしくは 線をタップ →「規格」）</span></p>` : ''}`;
+}
+function specPickBind(s, o, upd, redraw) {
+  { const b = s.querySelector('[data-specx]'); if (b) b.onclick = () => { o.specOpen = !o.specOpen; redraw(); }; }
+  const set = (k, v) => { o[k] = v; if (o.g2 === o.ga) o.g2 = 0; specSave(o); upd(); };
+  s.querySelectorAll('[data-bga]').forEach(b => b.onclick = () => set('ga', Number(b.dataset.bga)));
+  s.querySelectorAll('[data-bg2]').forEach(b => b.onclick = () => set('g2', Number(b.dataset.bg2)));
+  s.querySelectorAll('[data-bsl]').forEach(b => b.onclick = () => set('sl', Number(b.dataset.bsl)));
+  s.querySelectorAll('[data-bnw]').forEach(b => b.onclick = () => set('nw', Number(b.dataset.bnw)));
+  { const e = s.querySelector('[data-bct]'); if (e) e.onchange = () => set('ct', Number(e.value)); }
+}
 // 見つもり（「見つもる」を押したとき）
 async function quoteDraw(st) {
   if (S.toolState !== st || st.curve.length < 3 || st.quoting) return;
@@ -4628,7 +4798,7 @@ function drawArgs(st, dry) {
   if (st.edit) return { p_id: st.edit.id, p_ctl: toInts(st.ctrl), p_pts: toInts(st.curve), p_dry: dry };
   const o = st.opts;
   return { p_kind: st.kind, p_cls: st.kind === 'road' ? o.cls : null, p_ctl: st.mode === 'arc' ? null : toInts(st.ctrl), p_pts: toInts(st.curve),
-    p_opts: { dbl: o.dbl, elec: o.elec, name: o.name, lanes: o.lanes, ...(S.quadOK && o.quad ? { quad: true } : {}), ...(S.pwOK && o.elec && o.ps ? { ps: o.ps } : {}), ...(S.hgtOK ? { hm: o.hm || 'auto', rack: st.kind === 'rail' && !!o.rack, prof: pinArr(st.pins) } : {}), ...(S.hgt2 ? hgtOpt({ ...o, hm: o.hm || 'auto' }) : {}) },
+    p_opts: { dbl: o.dbl, elec: o.elec, name: o.name, lanes: o.lanes, ...(S.quadOK && o.quad ? { quad: true } : {}), ...(S.pwOK && o.elec && o.ps ? { ps: o.ps } : {}), ...(S.hgtOK ? { hm: o.hm || 'auto', rack: st.kind === 'rail' && !!o.rack, prof: pinArr(st.pins) } : {}), ...(S.hgt2 ? hgtOpt({ ...o, hm: o.hm || 'auto' }) : {}), ...(S.specOK && st.kind === 'rail' ? specOpt(o) : {}) },
     p_as: S.as, p_from: st.A ? st.A.att : null, p_to: st.B ? st.B.att : null, p_dry: dry };
 }
 function drawSheet() {
@@ -4644,7 +4814,8 @@ function drawSheet() {
     ${tight ? `<p class="mp-warn">${rail ? 'カーブがきつすぎます（線路は半径150m以上）' : 'カーブがきつすぎます'}</p>` : ''}
     ${st.edit ? '' : rail ? `<div class="mp-row"><span class="mp-seg"><button data-d="0" class="${!o.dbl ? 'on' : ''}">単線</button><button data-d="1" class="${o.dbl && !o.quad ? 'on' : ''}">複線</button>${S.quadOK ? `<button data-d="2" class="${o.quad ? 'on' : ''}">複々線</button>` : ''}</span>
         <span class="mp-seg"><button data-e="0" class="${!o.elec ? 'on' : ''}">非電化</button><button data-e="1" class="${o.elec ? 'on' : ''}">電化</button></span></div>
-        ${S.pwOK && o.elec ? `<div class="mp-row small" style="align-items:center"><span>電化方式</span><span class="mp-seg">${PS_N.map((n, k) => `<button data-ps="${k}" class="${(o.ps || 0) === k ? 'on' : ''}">${n}</button>`).join('')}</span></div>` : ''}`
+        ${S.pwOK && o.elec && o.ct !== 6 ? `<div class="mp-row small" style="align-items:center"><span>電化方式</span><span class="mp-seg">${PS_N.slice(0, 3).map((n, k) => `<button data-ps="${k}" class="${(o.ps || 0) === k ? 'on' : ''}">${n}</button>`).join('')}</span></div>` : ''}
+        ${S.specOK ? specPick(o) : ''}`
       : `<div class="mp-row">${gov ? `<select class="mp-inp" style="width:auto" data-cls>${[['exp', '高速道路'], ['nat', '国道'], ['pref', '府県道'], ['city', '市道'], ['lane', '細い道']].map(c => `<option value="${c[0]}" ${o.cls === c[0] ? 'selected' : ''}>${c[1]}</option>`).join('')}</select>` : ''}
         片側 <span class="mp-seg">${(gov ? [0, 1, 2, 3] : [0, 1, 2]).map(n => `<button data-l="${n}" class="${o.lanes === n ? 'on' : ''}">${n ? n + '車線' : '細い道'}</button>`).join('')}</span></div>`}
     ${S.hgtOK && !st.edit ? `<div class="mp-row"><span>高さ</span> <span class="mp-seg" style="flex-wrap:wrap">${hgtModes().map(m => `<button data-hm="${m}" class="${(o.hm || 'auto') === m ? 'on' : ''}">${HGT_MODE[m]}</button>`).join('')}</span>${rail ? `<label class="small"><input type="checkbox" data-rack ${o.rack ? 'checked' : ''}> アプト式</label>` : ''}</div>${hgtOptHtml({ ...o, hm: o.hm || 'auto' }, st.kind, !!o.rack)}` : ''}
@@ -4662,6 +4833,7 @@ function drawSheet() {
     s.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { o.dbl = b.dataset.d !== '0'; o.quad = b.dataset.d === '2'; drawUpdate(); });
     s.querySelectorAll('[data-e]').forEach(b => b.onclick = () => { o.elec = b.dataset.e === '1'; drawUpdate(); });
     s.querySelectorAll('[data-ps]').forEach(b => b.onclick = () => { o.ps = Number(b.dataset.ps); drawUpdate(); });   // 電化方式（DB の更新87）
+    specPickBind(s, o, () => drawUpdate(), () => drawSheet());   // 線路の規格（DB の更新99）
     s.querySelectorAll('[data-l]').forEach(b => b.onclick = () => { o.lanes = Number(b.dataset.l); drawUpdate(); });
     const cl = s.querySelector('[data-cls]'); if (cl) cl.onchange = () => { o.cls = cl.value; if (o.cls === 'exp' && o.hm === 'auto') o.hm = 'el'; drawUpdate(); };
     // 高さ（t108）
@@ -5593,7 +5765,8 @@ async function openCars(depFocus) {
     const locos = g.types.filter(t => t.role === 'L'), pcSers = sers.filter(x => x.kind === 'pc' && g.types.some(t => t.series === x.code));
     // 等級・設備（DB の更新72）と、プリセット（系列の よく使う編成・自分で保存したもの）
     const CLS = { G: 'グリーン車', A: 'A寝台', B: 'B寝台' }, FN = { din: '食堂車', buf: 'ビュフェ', lng: 'ラウンジ', obs: '展望車', bag: '荷物車', mail: '郵便車', pow: '電源車' };
-    const tTag = t => [t.face, CLS[t.cls], t.rooms ? `個室${t.rooms}室` : '', ...(t.fn || []).map(k => FN[k] || '')].filter(Boolean).map(x => T(x)).join('・');
+    const tTag = t => [t.face, CLS[t.cls], t.rooms ? `個室${t.rooms}室` : '', ...(t.fn || []).map(k => FN[k] || ''),
+      t.gauge && t.gauge !== 1067 && !['Bus', 'Truck', 'Ship', 'Air'].includes(t.role) ? `軌間${t.gauge}mm` : '', t.elec && (t.ps & 8) ? '第三軌条' : ''].filter(Boolean).map(x => T(x)).join('・');   // 軌間・第三軌条（DB の更新99）
     const pcs = pcSers.find(x => x.code === st.pcs) || pcSers[0], loco = locos.find(t => t.code === st.loco) || locos.slice().sort((x, y) => y.vmax - x.vmax)[0];   // はじめは いちばん速い機関車
     const shown = g.kind === 'lp' ? g.types.filter(t => t.role === 'L' || !pcs || t.series === pcs.code) : g.kind === 'P' ? g.types.filter(t => !pcs || t.series === pcs.code) : g.types;   // 機関車と客車は、えらんだ客車の系列の形式だけ
     const has = c => typeOpts.some(t => t.code === c);
@@ -5627,7 +5800,7 @@ async function openCars(depFocus) {
       <h4 style="margin:12px 0 4px">編成（${forms.length}）</h4>
       ${forms.map(f => { const p = f.perf || {}; const fc = cars.filter(c => c.form === f.id).sort((a, b) => a.pos - b.pos); return `<div class="mp-item">
         <b>${esc(f.name)}</b>${f.op ? ` <small class="muted"><span>運用</span> <span>${esc(f.op.num)}</span></small>` : ''}${f.spare ? ' <small class="mp-tag">予備</small>' : ''}${f.xfer ? ' <small class="mp-warn">譲渡の申しこみ中</small>' : ''}
-        <small>${p.air ? `<span>長さ${p.len}m・${fmt(p.cap)}席</span><span>・巡航${p.vmax}km/h</span><span>・滑走路${fmt(p.rwy)}m以上</span>` : p.ship ? `<span>長さ${p.len}m・旅客${fmt(p.cap)}人</span>${p.load ? `<span>・車両 ${fmt(p.load)}t</span>` : '<span>・車はのせられない</span>'}<span>・最高${p.vmax}km/h</span>` : `<span>${p.n}両・${p.len}m・定員${fmt(p.cap)}人・加速 ${p.acc}km/h/s・最高${p.vmax}km/h</span>${p.ac ? '<span>・冷房</span>' : ''}${p.toilet ? '<span>・トイレ</span>' : ''}${p.g ? `<span>・グリーン${p.g}</span>` : ''}${p.a ? `<span>・A寝台${p.a}</span>` : ''}${p.b ? `<span>・B寝台${p.b}</span>` : ''}${p.rooms ? `<span>・個室${p.rooms}室</span>` : ''}${p.din ? '<span>・食堂車</span>' : ''}${p.lng ? '<span>・ラウンジ</span>' : ''}${p.obs ? '<span>・展望車</span>' : ''}${p.bag ? `<span>・荷物と郵便${p.bag}両</span>` : ''}${p.wkm ? `<span>・蒸気（水で ${p.wkm}km・石炭で ${p.ckm}km）</span>` : ''}`}${uni ? `<span>・状態${p.cond}・便 ${f.trains}本</span>` : `<span>・状態${p.cond}・列車 ${f.trains}本</span>`}</small>
+        <small>${p.air ? `<span>長さ${p.len}m・${fmt(p.cap)}席</span><span>・巡航${p.vmax}km/h</span><span>・滑走路${fmt(p.rwy)}m以上</span>` : p.ship ? `<span>長さ${p.len}m・旅客${fmt(p.cap)}人</span>${p.load ? `<span>・車両 ${fmt(p.load)}t</span>` : '<span>・車はのせられない</span>'}<span>・最高${p.vmax}km/h</span>` : `<span>${p.n}両・${p.len}m・定員${fmt(p.cap)}人・加速 ${p.acc}km/h/s・最高${p.vmax}km/h</span>${p.gm && p.gm !== 2 ? `<span>・軌間 ${esc(gmN(p.gm))}</span>` : ''}${p.ac ? '<span>・冷房</span>' : ''}${p.toilet ? '<span>・トイレ</span>' : ''}${p.g ? `<span>・グリーン${p.g}</span>` : ''}${p.a ? `<span>・A寝台${p.a}</span>` : ''}${p.b ? `<span>・B寝台${p.b}</span>` : ''}${p.rooms ? `<span>・個室${p.rooms}室</span>` : ''}${p.din ? '<span>・食堂車</span>' : ''}${p.lng ? '<span>・ラウンジ</span>' : ''}${p.obs ? '<span>・展望車</span>' : ''}${p.bag ? `<span>・荷物と郵便${p.bag}両</span>` : ''}${p.wkm ? `<span>・蒸気（水で ${p.wkm}km・石炭で ${p.ckm}km）</span>` : ''}`}${uni ? `<span>・状態${p.cond}・便 ${f.trains}本</span>` : `<span>・状態${p.cond}・列車 ${f.trains}本</span>`}</small>
         ${split && p.np && !p.nl ? '<small class="mp-warn"><br>客車だけの編成です。機関車をつなぐまで走れません（運用に入れられません）</small>' : ''}
         ${f.spare ? `<small class="muted"><br>${f.subn ? `<b>代走の予定 ${f.subn}本</b>・` : ''}<span>同じ車庫の、同じ形式・両数の編成が検査・改造・転属のあいだ、その列車をかわりに走ります</span></small>`
           : f.subby ? `<small><br>🔁 <span>工事のあいだ、予備編成が ${f.subby}本 代走します</span></small>` : ''}
