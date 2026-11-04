@@ -20445,6 +20445,7 @@ alter table public.mp_trains add column if not exists bad boolean not null defau
 alter table public.mp_trains add column if not exists sa bigint references public.mp_stations(id) on delete set null;   -- 途中始発（2026-10-28）：この駅から走る（null は系統の端から）
 alter table public.mp_trains add column if not exists sb bigint references public.mp_stations(id) on delete set null;   -- 途中止まり：この駅まで走る（null は系統の端まで）
 alter table public.mp_routes add column if not exists runt jsonb not null default '{}'::jsonb;   -- 走る時間のメモ {性能のキー: [秒, …]}
+alter table public.mp_routes add column if not exists kform jsonb;   -- 種別ごとの編成 {種別: [編成, …]}（運用を自動で組む → 種別ごと。DB の更新97）
 alter table public.mp_routes add column if not exists catch jsonb;                               -- 駅ごとの利用できる人（毎日見なおす）
 alter table public.mp_routes add column if not exists xwait boolean not null default false;   -- ほかの系統の列車とも待避・続行する（2026-10-28）
 alter table public.mp_routes add column if not exists parent bigint references public.mp_routes(id) on delete set null;   -- 支線のときの本線（DB の更新70）
@@ -22334,6 +22335,75 @@ begin
   end loop;
   perform _mp_resched(p_route);
   return jsonb_build_object('ok', ok, 'none', ng, 'used', (select count(distinct form) from mp_trains where route = p_route and form is not null), 'busy', nall - n);
+end $$;
+-- 運用を自動で組む（種別ごと。DB の更新97）：種別ごとに えらんだ編成を、その種別の列車にわりあてる（1回で。時刻の組みなおしは さいごの1回だけ。やりなおしの記録も1つ）。
+--   p_map：{種別: [編成, …]}。編成をえらばなかった種別の列車は いまのまま。えらばなかった種別の列車に入っている編成は使わない。同じ編成を2つの種別には えらべない
+--   わりあてかたは mp_train_autoform と同じ（時刻の順に、始発駅にいて2分前にあいている編成。いなければ、まだ使っていない編成）。えらびかたは系統に保存（kform）
+--   p_dry：保存してある えらびかた を返すだけ（いまもある、この名義の編成だけ）
+create or replace function public.mp_train_autoform_k(p_route bigint, p_map jsonb, p_as text, p_dry boolean default false) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); pa record; r mp_routes; e record; fz bigint[]; allf bigint[] := '{}'; ks text[] := '{}'; kf jsonb := '{}'::jsonb; perf jsonb; x bigint; kn text;
+        t record; i int; best int; n int; locs bigint[]; frees int[]; ops bigint[]; nok int := 0; nng int := 0; nbusy int; res jsonb := '{}'::jsonb; kok int; kng int;
+begin
+  perform _mp_ok(u);
+  select * into pa from _mp_party(u, p_as);
+  select * into r from mp_routes where id = p_route and own_u is not distinct from pa.pu and own_c is not distinct from pa.pc;
+  if not found then raise exception '系統が見つかりません'; end if;
+  if p_dry then
+    return jsonb_build_object('kform', coalesce((select jsonb_object_agg(z.kk, z.v) from (
+             select q.key kk, jsonb_agg(f.id order by w.o) v from jsonb_each(coalesce(r.kform, '{}'::jsonb)) q
+               cross join lateral jsonb_array_elements_text(case when jsonb_typeof(q.value) = 'array' then q.value else '[]'::jsonb end) with ordinality w(fid, o)
+               join mp_forms f on f.id = w.fid::bigint and f.own_u is not distinct from pa.pu and f.own_c is not distinct from pa.pc
+              group by q.key) z), '{}'::jsonb));
+  end if;
+  -- 種別ごとの編成をしらべる
+  for e in select q.key kk, q.value v from jsonb_each(coalesce(p_map, '{}'::jsonb)) q order by q.key loop
+    if jsonb_typeof(e.v) <> 'array' then raise exception '編成のえらびかたが読めません'; end if;
+    if char_length(e.kk) > 20 then raise exception '種別の名前が長すぎます'; end if;
+    fz := array(select z2.x from (select distinct on (z.x) z.x, z.o from (select w.v::bigint x, w.o from jsonb_array_elements_text(e.v) with ordinality w(v, o)) z order by z.x, z.o) z2 order by z2.o);
+    if coalesce(cardinality(fz), 0) = 0 then continue; end if;
+    foreach x in array fz loop
+      if not exists (select 1 from mp_forms where id = x and own_u is not distinct from pa.pu and own_c is not distinct from pa.pc) then raise exception '編成が見つかりません'; end if;
+      perf := _mp_form_perf(x);
+      if (perf ->> 'rail')::boolean <> (r.kind = 'rail') then raise exception '%', case when r.kind = 'rail' then '鉄道の系統にはバスを使えません' else 'バスの系統には電車を使えません' end; end if;
+    end loop;
+    if fz && allf then raise exception '同じ編成を2つの種別にえらんでいます（%）', e.kk; end if;
+    allf := allf || fz; ks := ks || e.kk; kf := kf || jsonb_build_object(e.kk, to_jsonb(fz));
+  end loop;
+  if cardinality(ks) = 0 then raise exception '種別ごとに編成をえらんでください'; end if;
+  if not exists (select 1 from mp_trains where route = p_route and day is null and kind = any(ks)) then raise exception 'その種別の列車がありません'; end if;
+  -- えらばなかった種別の列車（毎日の列車）に入っている編成は使わない
+  nbusy := (select count(*) from unnest(allf) z(x) where exists (select 1 from mp_trains tr where tr.route = p_route and tr.day is null and tr.form = z.x and not (tr.kind = any(ks))));
+  perform _mp_dia_snap(p_route, format('運用を自動で組んだ（種別ごと：%s）', array_to_string(ks, '・')));
+  update mp_trains set form = null, op = null where route = p_route and day is null and kind = any(ks);
+  -- わりあてる順と、始発・終着の駅と時刻は、いまの時刻から（mp_train_autoform は ここで いちど時刻を組みなおすが、編成のない時刻になるだけなので しない。
+  --   組みなおしは さいごの1回だけ：大きな系統では 1回 5秒くらい かかる）
+  foreach kn in array ks loop
+    fz := array(select z.x from (select w.v::bigint x, w.o from jsonb_array_elements_text(kf -> kn) with ordinality w(v, o)) z
+                 where not exists (select 1 from mp_trains tr where tr.route = p_route and tr.day is null and tr.form = z.x and not (tr.kind = any(ks))) order by z.o);
+    n := coalesce(cardinality(fz), 0); kok := 0; kng := 0;
+    if n > 0 then
+      ops := array(select _mp_op_of_form(z.x) from unnest(fz) with ordinality z(x, o) order by z.o);   -- 編成ごとの運用（なければつくる）
+      locs := array_fill(null::bigint, array[n]); frees := array_fill(-1, array[n]);
+    end if;
+    for t in select tr.id, (tr.sched -> 0 ->> 0)::bigint fs, (tr.sched -> 0 ->> 2)::int ft,
+                    (tr.sched -> (jsonb_array_length(tr.sched) - 1) ->> 0)::bigint es, (tr.sched -> (jsonb_array_length(tr.sched) - 1) ->> 1)::int et
+               from mp_trains tr where tr.route = p_route and tr.day is null and tr.kind = kn and jsonb_array_length(tr.sched) > 1 order by 3, 1 loop
+      best := null;
+      for i in 1..n loop   -- 始発駅にいて、まにあう編成のうち、いちばん早くあいたもの
+        if locs[i] = t.fs and frees[i] + 120 <= t.ft and (best is null or frees[i] < frees[best]) then best := i; end if;
+      end loop;
+      if best is null then for i in 1..n loop if locs[i] is null then best := i; exit; end if; end loop; end if;
+      if best is null then kng := kng + 1; continue; end if;
+      update mp_trains set form = fz[best], op = ops[best] where id = t.id;
+      locs[best] := t.es; frees[best] := t.et; kok := kok + 1;
+    end loop;
+    res := res || jsonb_build_object(kn, jsonb_build_object('ok', kok, 'none', kng, 'forms', n));
+    nok := nok + kok; nng := nng + kng;
+  end loop;
+  perform _mp_resched(p_route);
+  update mp_routes set kform = kf where id = p_route;
+  return jsonb_build_object('ok', nok, 'none', nng, 'used', (select count(distinct form) from mp_trains where route = p_route and form is not null), 'busy', nbusy, 'kinds', res);
 end $$;
 
 /* ---------- 1時間ごと：運賃・家賃・維持費・使用料。毎日（朝4時）：地価・固定資産税・まちの成長 ----------
@@ -32798,7 +32868,7 @@ begin
             'mp_seg_build','mp_seg_color','mp_seg_del','mp_seg_find','mp_seg_routes','mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_speed','mp_seg_split','mp_slot_admin',
             'mp_slot_answer','mp_slot_apply','mp_slot_bid','mp_slot_cancel','mp_slot_get','mp_slot_list','mp_slot_return','mp_spot',
             'mp_sta_build','mp_sta_edit','mp_sta_resize','mp_sta_trk','mp_sta_trk_set','mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list',
-            'mp_thru_req','mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market',
+            'mp_thru_req','mp_train_autoform','mp_train_autoform_k','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market',
             'mp_unit_mine','mp_unit_own','mp_unit_set','mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer','mp_unko_list','mp_unko_pick','mp_unko_furi','mp_unko_make','mp_jam_now','mp_jam_list','mp_er_now','mp_er_list','mp_er_bld','mp_lic_find','mp_lic_at','mp_lic_apply','_mp_lic_pfee_of','_mp_lic_pfee','_mp_lic_have','_mp_lic_mfee','mp_lic_mine','mp_lic_cancel','mp_lic_review','mp_lic_decide',
             'mp_sta_melt','mp_seg_snow','mp_dep_plow','mp_snow_mine','mp_seg_height','_mp_taut','_mp_prof_flat','_mp_prof_simp','_mp_hopt','_mp_prof_make2','mp_sta_height','_mp_clr_stop2','_mp_clr_pass2','_mp_leg_sig','mp_seg_sig','_mp_trmul','_mp_leg_quad','_mp_ps_names','_mp_leg_pm','_mp_leg_dz','_mp_ptime','_mp_legs_near','_mp_track_ng','_mp_track_autoname','mp_track_rename','_mp_race_w','_mp_track_wh','_mp_track_base','_mp_track_check','_mp_track_why','_mp_track_sta','_mp_track_riders','_mp_race_sessions','mp_track_list','mp_track_place','mp_track_find','mp_track_del','mp_track_info','_mp_attr_kinds','_mp_attr_max','_mp_attr_fresh','mp_attr_list','mp_attr_build','mp_attr_del','_sec_lim','_sec_label','_sec_tell','_sec_auto','sec_admin_list','sec_admin_block','sec_admin_unblock','app_ver','_mp_sub_spec','_mp_sub_r','_mp_feed','_mp_leg_fed','_mp_route_feed','_mp_sub_name','_mp_sub_auto','_mp_sub_event','mp_sub_build','mp_sub_set','mp_sub_del','_mp_li_put','_mp_routes_fp',
             '_mp_form_busy','_mp_form_runs','_mp_cxl_on','_mp_unko_zone','_mp_unko_zi','_mp_unko_zt','_mp_unko_rt','_mp_sched_idx','_mp_unko_trn','_mp_rail_path_x','_mp_unko_det','mp_cxl_add','mp_cxl_del','_mp_form_key','_mp_train_runs','_mp_subst_can','_mp_subst_pick','_mp_subst_has','_mp_subst_ok','_mp_subst_plan','_mp_subst_plan_all','_mp_tmp_back','mp_form_spare','mp_form_add','mp_car_tmp') loop
@@ -32855,6 +32925,8 @@ alter function public.mp_seg_sig(bigint, int, boolean, boolean) set statement_ti
 -- 変電所をつくる・こわす（DB の更新89）は、通る系統の時刻を計算しなおすので60秒まで
 alter function public.mp_sub_build(bigint, real, real, int, text, boolean) set statement_timeout = '60s';
 alter function public.mp_sub_del(bigint, boolean) set statement_timeout = '60s';
+-- 運用を自動で組む（種別ごと。DB の更新97）は、時刻を組みなおすので60秒まで
+alter function public.mp_train_autoform_k(bigint, jsonb, text, boolean) set statement_timeout = '60s';
 -- 競馬場をおく・さがす（DB の更新92）は、広い土地をしらべるので60秒まで
 alter function public.mp_track_place(text, int, int, text, boolean, text) set statement_timeout = '60s';   -- 名前（p_name）を足した（DB の更新93）
 alter function public.mp_track_find(text, int, int, text) set statement_timeout = '60s';

@@ -6789,7 +6789,9 @@ function trainBulk(D, reload) {
   });
 }
 async function autoForm(D, reload) {
-  const cl = await api('mp_cars_list', { p_as: S.as }); if (!cl) return;
+  // 種別ごと（DB の更新97）：保存してある えらびかた も いっしょに読む（まだのサーバーでは null）
+  const [cl, kf] = await Promise.all([api('mp_cars_list', { p_as: S.as }), call('mp_train_autoform_k', { p_route: D.id, p_map: null, p_as: S.as, p_dry: true }).catch(() => null)]);
+  if (!cl) return;
   const forms = cl.forms.filter(f => fKind(f) === D.kind);
   if (!forms.length) return toast(D.kind === 'air' ? '飛行機がありません（≡ →「車両と編成」で空港をえらんで注文してください）' : D.kind === 'ship' ? '船がありません（≡ →「車両と編成」で港をえらんで注文してください）' : '編成がありません（車両と編成で組んでください）');
   const pick = new Set();   // はじめは何もえらばない（2026-10-29。絞りこんでから「表示中をぜんぶえらぶ」かタップで）
@@ -6799,36 +6801,98 @@ async function autoForm(D, reload) {
   const kinds = [...new Set(daily.map(t => t.kind))].sort((a, b) => ko(a) - ko(b) || a.localeCompare(b, 'ja'));
   const ks = new Set(kinds);
   // 編成の絞りこみ：両数（台数）・形式。表示中をぜんぶえらぶ・ぜんぶはずす
-  const counted = D.kind === 'rail' || D.kind === 'bus', unit = D.kind === 'bus' ? '台' : '両';
+  const counted = D.kind === 'rail' || D.kind === 'bus', unit = D.kind === 'bus' ? '台' : '両', fu = D.kind === 'ship' ? '隻' : D.kind === 'air' ? '機' : '編成';
   const serN = c => ((S.boot && S.boot.series) || []).find(x => x.code === c)?.name || c || '';
   const ns = [...new Set(forms.map(f => f.perf.n))].sort((a, b) => a - b), sers = [...new Set(forms.map(f => f.perf.series || ''))].filter(Boolean).sort();
   let fn = null, fsr = null;
+  // 種別ごと（DB の更新97）：種別 → えらんだ編成。前に保存した えらびかた（いまもある、この系統で使える編成だけ・1つの編成は1つの種別だけ）
+  const fid = new Set(forms.map(f => f.id)), kmap = new Map(kinds.map(k => [k, new Set()])), saved = (kf && kf.kform) || {};
+  for (const k of kinds) for (const id of saved[k] || []) if (fid.has(id) && ![...kmap.values()].some(z => z.has(id))) kmap.get(k).add(id);
+  let mode = kinds.length > 1 && [...kmap.values()].some(z => z.size) ? 'kind' : 'all', ek = null;   // mode：all いっしょに・kind 種別ごと。ek：編成をえらんでいる種別
   const m = modal(['運用を自動で組む', '']);
+  const elsewhere = f => f.trains > D.trains.filter(t => t.form === f.id).length;   // ほかの系統の列車にも入っている編成（「ぜんぶえらぶ」ではえらばない）
+  const fLabel = f => `${D.kind === 'ship' || D.kind === 'air' ? `便${f.trains}本` : D.kind === 'bus' ? `${f.perf.n}台・列車${f.trains}本` : `${f.perf.n}両・列車${f.trains}本`}`;
+  const filters = () => `${counted && ns.length > 1 ? `<div class="mp-row small" style="align-items:center"><span>${unit === '台' ? '台数' : '両数'}</span><span class="mp-seg" style="flex-wrap:wrap"><button data-an="" class="${fn == null ? 'on' : ''}">すべて</button>${ns.map(n => `<button data-an="${n}" class="${fn === n ? 'on' : ''}">${T(`${n}${unit}`)}</button>`).join('')}</span></div>` : ''}
+      ${sers.length > 1 ? `<div class="mp-row small" style="align-items:center"><span>形式</span><span class="mp-seg" style="flex-wrap:wrap"><button data-as="" class="${fsr == null ? 'on' : ''}">すべて</button>${sers.map(c => `<button data-as="${esc(c)}" class="${fsr === c ? 'on' : ''}"><span translate="no">${esc(serN(c))}</span></button>`).join('')}</span></div>` : ''}`;
+  const modeRow = () => kinds.length > 1 ? `<div class="mp-row small" style="align-items:center"><span>使う編成</span><span class="mp-seg"><button data-mode="all" class="${mode === 'all' ? 'on' : ''}">いっしょに</button><button data-mode="kind" class="${mode === 'kind' ? 'on' : ''}">種別ごとに</button></span></div>` : '';
+  const bindCommon = b => {
+    b.querySelectorAll('[data-mode]').forEach(x => x.onclick = () => { mode = x.dataset.mode; ek = null; draw(); });
+    b.querySelectorAll('[data-an]').forEach(x => x.onclick = () => { fn = x.dataset.an === '' ? null : Number(x.dataset.an); draw(); });
+    b.querySelectorAll('[data-as]').forEach(x => x.onclick = () => { fsr = x.dataset.as === '' ? null : x.dataset.as; draw(); });
+  };
+  const done = r => { if (r) { toast(T(`${r.ok}本にわりあてました（${r.used}編成）`) + (r.none ? SEP() + T(`・${r.none}本は編成が足りません`) : '') + (r.busy ? SEP() + T(`・${r.busy}編成はほかの種別の列車に入っているので使いませんでした`) : '')); m.close(); reload(); } };
+  // 種別ごと：まとめて わりあてる（まだのサーバー＝DB の更新97の前 では、種別ごとに順に。えらびかたの保存はなし）
+  const runKind = async () => {
+    const mp = {}; for (const [k, z] of kmap) if (z.size) mp[k] = [...z];
+    if (kf) return done(await api('mp_train_autoform_k', { p_route: D.id, p_map: mp, p_as: S.as, p_dry: false }));
+    const kk = Object.keys(mp); let sum = { ok: 0, none: 0, used: 0, busy: 0 };
+    for (let i = 0; i < kk.length; i++) {
+      toast(T(`わりあてています…（${i + 1}/${kk.length}）`));
+      const r = await api('mp_train_autoform', { p_route: D.id, p_forms: mp[kk[i]], p_as: S.as, p_kinds: [kk[i]] }); if (!r) { m.close(); return reload(); }
+      sum = { ok: sum.ok + r.ok, none: sum.none + r.none, used: r.used, busy: sum.busy + r.busy };
+    }
+    done(sum);
+  };
   const draw = () => {
-    const vis = forms.filter(f => (fn == null || f.perf.n === fn) && (fsr == null || f.perf.series === fsr)), nT = daily.filter(t => ks.has(t.kind)).length;
+    const vis = forms.filter(f => (fn == null || f.perf.n === fn) && (fsr == null || f.perf.series === fsr));
+    if (mode === 'kind' && ek == null) {   // 種別ごと：種別の一覧
+      const on = kinds.filter(k => kmap.get(k).size), busyF = daily.some(t => !kmap.get(t.kind).size && t.form);
+      const nm = id => (forms.find(f => f.id === id) || {}).name || id;
+      m.set('運用を自動で組む', `<p class="small" style="margin-top:0">種別ごとに使う編成をえらんで、その種別の列車にわりあてます（始発駅にいて、2分前にあいている編成）</p>
+        ${modeRow()}
+        <div class="mp-list">${kinds.map(k => { const z = [...kmap.get(k)]; return `<div class="mp-item"><div class="mp-row" style="align-items:center;margin:0">
+            <b style="flex:1 1 auto"><span>${esc(kindL(k))}</span> <small class="muted">（${daily.filter(t => t.kind === k).length}本）</small></b>
+            <button class="btn ${z.length ? '' : 'main'}" data-kedit="${esc(k)}">${z.length ? '編成を変える' : '編成をえらぶ'}</button></div>
+            <small>${z.length ? `<span>${z.length}${fu}えらんでいます</span>：<span translate="no">${z.slice(0, 8).map(id => esc(nm(id))).join('・')}${z.length > 8 ? '…' : ''}</span>` : '<span class="muted">えらんでいません（この種別の列車は、いまのまま）</span>'}</small></div>`; }).join('')}</div>
+        <div class="mp-row"><button class="btn main" data-okk ${on.length ? '' : 'disabled'}>わりあてる</button></div>
+        <p class="muted small"><span>1つの編成は1つの種別だけで使います。</span>${busyF ? SEP() + '<span>編成をえらんでいない種別の列車に入っている編成は使いません。</span>' : ''}${kf ? SEP() + '<span>えらびかたは この系統に保存して、次にひらいたときに出します。</span>' : ''}</p>`, b => {
+        bindCommon(b);
+        b.querySelectorAll('[data-kedit]').forEach(x => x.onclick = () => { ek = x.dataset.kedit; draw(); });
+        b.querySelector('[data-okk]').onclick = () => runKind();
+      });
+      return;
+    }
+    if (mode === 'kind') {   // 種別ごと：その種別の編成をえらぶ
+      const z = kmap.get(ek), other = id => kinds.find(k => k !== ek && kmap.get(k).has(id));
+      const busyF = new Set(daily.filter(t => t.kind !== ek && !kmap.get(t.kind).size && t.form).map(t => t.form));   // 編成をえらんでいない種別の列車に入っている編成
+      const can = f => !other(f.id) && !busyF.has(f.id);
+      m.set('運用を自動で組む', `<p class="small" style="margin-top:0"><b><span>${esc(kindL(ek))}</span></b>（<span>${daily.filter(t => t.kind === ek).length}本</span>）<br><span>この種別の列車に使う編成をえらんでください</span></p>
+        ${filters()}
+        <div class="mp-row small" style="align-items:center"><button class="btn" data-aall ${vis.some(f => can(f) && !elsewhere(f) && !z.has(f.id)) ? '' : 'disabled'}>表示中をぜんぶえらぶ</button><button class="btn" data-anone ${z.size ? '' : 'disabled'}>ぜんぶはずす</button><b><span>${z.size}${fu}えらんでいます</span></b></div>
+        <div class="mp-cars">${vis.map(f => { const o = other(f.id); return `<span class="mp-car ${z.has(f.id) ? 'on' : ''}" data-f="${f.id}"${!can(f) ? ' style="opacity:.55"' : ''}>${esc(f.name)}<span class="n">${fLabel(f)}${o ? `<br><span>${esc(kindL(o))}にえらんだ</span>` : busyF.has(f.id) ? '<br><span>ほかの種別で使用中</span>' : elsewhere(f) ? '<br><span>ほかの系統で使用中</span>' : ''}</span></span>`; }).join('') || '<p class="muted small">この絞りこみにあう編成はありません</p>'}</div>
+        <div class="mp-row"><button class="btn main" data-kback>決める</button></div>
+        <p class="muted small"><span>ほかの種別にえらんだ編成と、編成をえらんでいない種別の列車に入っている編成は、えらべません。</span>${SEP()}<span>「表示中をぜんぶえらぶ」では、ほかの系統で使用中の編成はえらびません（えらぶときはタップ）。</span></p>`, b => {
+        bindCommon(b);
+        b.querySelector('[data-aall]').onclick = () => { for (const f of vis) if (can(f) && !elsewhere(f)) z.add(f.id); draw(); };
+        b.querySelector('[data-anone]').onclick = () => { z.clear(); draw(); };
+        b.querySelectorAll('[data-f]').forEach(x => x.onclick = () => {
+          const id = Number(x.dataset.f), f = forms.find(y => y.id === id), o = other(id);
+          if (!f || !can(f)) return toast(o ? T(`${kindL(o)}にえらんでいます（そちらで はずすと、えらべます）`) : T('ほかの種別の列車に入っています（その種別でも編成をえらぶと、えらべます）'));
+          if (z.has(id)) z.delete(id); else z.add(id); draw();
+        });
+        b.querySelector('[data-kback]').onclick = () => { ek = null; draw(); };
+      });
+      return;
+    }
+    const nT = daily.filter(t => ks.has(t.kind)).length;
     const allK = ks.size === kinds.length, busyF = new Set(allK ? [] : daily.filter(t => !ks.has(t.kind) && t.form).map(t => t.form));   // えらばなかった種別の列車に入っている編成（使わない）
-    const elsewhere = f => f.trains > D.trains.filter(t => t.form === f.id).length;   // ほかの系統の列車にも入っている編成（「ぜんぶえらぶ」ではえらばない）
     m.set('運用を自動で組む', `<p class="small" style="margin-top:0">この系統の列車に、えらんだ編成をわりあてます（始発駅にいて、2分前にあいている編成）</p>
+      ${modeRow()}
       <h4 style="margin:8px 0 4px">わりあてる列車</h4>
       ${kinds.length > 1 ? `<div class="mp-row small" style="align-items:center"><span>種別</span><span class="mp-seg" style="flex-wrap:wrap">${kinds.map(k => `<button data-ak="${esc(k)}" class="${ks.has(k) ? 'on' : ''}"><span>${esc(kindL(k))}</span>（${daily.filter(t => t.kind === k).length}）</button>`).join('')}</span></div>` : ''}
       <p class="small muted" style="margin:2px 0"><span>${nT}本の列車をわりあてなおします</span>${allK ? '' : SEP() + '<span>（えらばなかった種別の列車は、いまのまま）</span>'}</p>
       <h4 style="margin:10px 0 4px">使う編成</h4>
-      ${counted && ns.length > 1 ? `<div class="mp-row small" style="align-items:center"><span>${unit === '台' ? '台数' : '両数'}</span><span class="mp-seg" style="flex-wrap:wrap"><button data-an="" class="${fn == null ? 'on' : ''}">すべて</button>${ns.map(n => `<button data-an="${n}" class="${fn === n ? 'on' : ''}">${T(`${n}${unit}`)}</button>`).join('')}</span></div>` : ''}
-      ${sers.length > 1 ? `<div class="mp-row small" style="align-items:center"><span>形式</span><span class="mp-seg" style="flex-wrap:wrap"><button data-as="" class="${fsr == null ? 'on' : ''}">すべて</button>${sers.map(c => `<button data-as="${esc(c)}" class="${fsr === c ? 'on' : ''}"><span translate="no">${esc(serN(c))}</span></button>`).join('')}</span></div>` : ''}
-      <div class="mp-row small" style="align-items:center"><button class="btn" data-aall ${vis.some(f => !busyF.has(f.id) && !elsewhere(f)) ? '' : 'disabled'}>表示中をぜんぶえらぶ</button><button class="btn" data-anone ${pick.size ? '' : 'disabled'}>ぜんぶはずす</button><b><span>${pick.size}${D.kind === 'ship' ? '隻' : D.kind === 'air' ? '機' : '編成'}えらんでいます</span></b></div>
-      <div class="mp-cars">${vis.map(f => `<span class="mp-car ${pick.has(f.id) ? 'on' : ''}" data-f="${f.id}"${busyF.has(f.id) ? ' style="opacity:.55"' : ''}>${esc(f.name)}<span class="n">${D.kind === 'ship' || D.kind === 'air' ? `便${f.trains}本` : D.kind === 'bus' ? `${f.perf.n}台・列車${f.trains}本` : `${f.perf.n}両・列車${f.trains}本`}${busyF.has(f.id) ? '<br><span>ほかの種別で使用中</span>' : elsewhere(f) ? '<br><span>ほかの系統で使用中</span>' : ''}</span></span>`).join('') || '<p class="muted small">この絞りこみにあう編成はありません</p>'}</div>
+      ${filters()}
+      <div class="mp-row small" style="align-items:center"><button class="btn" data-aall ${vis.some(f => !busyF.has(f.id) && !elsewhere(f)) ? '' : 'disabled'}>表示中をぜんぶえらぶ</button><button class="btn" data-anone ${pick.size ? '' : 'disabled'}>ぜんぶはずす</button><b><span>${pick.size}${fu}えらんでいます</span></b></div>
+      <div class="mp-cars">${vis.map(f => `<span class="mp-car ${pick.has(f.id) ? 'on' : ''}" data-f="${f.id}"${busyF.has(f.id) ? ' style="opacity:.55"' : ''}>${esc(f.name)}<span class="n">${fLabel(f)}${busyF.has(f.id) ? '<br><span>ほかの種別で使用中</span>' : elsewhere(f) ? '<br><span>ほかの系統で使用中</span>' : ''}</span></span>`).join('') || '<p class="muted small">この絞りこみにあう編成はありません</p>'}</div>
       <div class="mp-row"><button class="btn main" data-ok ${nT && pick.size ? '' : 'disabled'}>わりあてる</button></div>
-      <p class="muted small"><span>「表示中をぜんぶえらぶ」では、ほかの系統で使用中の編成はえらびません（えらぶときはタップ）。</span>${allK ? '' : SEP() + '<span>えらばなかった種別の列車に入っている編成は使いません（種別ごとに、ちがう編成をわりあてるとき）。</span>'}</p>`, b => {
+      <p class="muted small"><span>「表示中をぜんぶえらぶ」では、ほかの系統で使用中の編成はえらびません（えらぶときはタップ）。</span>${allK ? '' : SEP() + '<span>えらばなかった種別の列車に入っている編成は使いません（種別ごとに、ちがう編成をわりあてるとき）。</span>'}${kinds.length > 1 ? SEP() + '<span>種別ごとに ちがう編成を まとめて わりあてるときは「種別ごとに」。</span>' : ''}</p>`, b => {
+      bindCommon(b);
       b.querySelectorAll('[data-ak]').forEach(x => x.onclick = () => { const k = x.dataset.ak; if (ks.has(k)) { if (ks.size > 1) ks.delete(k); } else ks.add(k); draw(); });
-      b.querySelectorAll('[data-an]').forEach(x => x.onclick = () => { fn = x.dataset.an === '' ? null : Number(x.dataset.an); draw(); });
-      b.querySelectorAll('[data-as]').forEach(x => x.onclick = () => { fsr = x.dataset.as === '' ? null : x.dataset.as; draw(); });
       b.querySelector('[data-aall]').onclick = () => { for (const f of vis) if (!busyF.has(f.id) && !elsewhere(f)) pick.add(f.id); draw(); };
       b.querySelector('[data-anone]').onclick = () => { pick.clear(); draw(); };
       b.querySelectorAll('[data-f]').forEach(x => x.onclick = () => { const id = Number(x.dataset.f); if (pick.has(id)) pick.delete(id); else pick.add(id); draw(); });
-      b.querySelector('[data-ok]').onclick = async () => {
-        const r = await api('mp_train_autoform', { p_route: D.id, p_forms: [...pick], p_as: S.as, p_kinds: allK ? null : [...ks] });
-        if (r) { toast(T(`${r.ok}本にわりあてました（${r.used}編成）`) + (r.none ? SEP() + T(`・${r.none}本は編成が足りません`) : '') + (r.busy ? SEP() + T(`・${r.busy}編成はほかの種別の列車に入っているので使いませんでした`) : '')); m.close(); reload(); }
-      };
+      b.querySelector('[data-ok]').onclick = async () => done(await api('mp_train_autoform', { p_route: D.id, p_forms: [...pick], p_as: S.as, p_kinds: allK ? null : [...ks] }));
     });
   };
   draw();
