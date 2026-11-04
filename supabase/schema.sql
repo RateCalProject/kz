@@ -18998,12 +18998,15 @@ begin
                union select distinct 'c:' || pa.own_c, (select name from companies where id = pa.own_c) from mp_parcels pa where p_lod = 0 and pa.own_c is not null and pa.bb && box(point(p_x0 * 5, p_y0 * 5), point(p_x1 * 5, p_y1 * 5))
                union select distinct 'u:' || s.own_u, (select nickname from profiles where id = s.own_u) from mp_segs s where s.own_u is not null and s.bb && b
                union select distinct 'c:' || s.own_c, (select name from companies where id = s.own_c) from mp_segs s where s.own_c is not null and s.bb && b) z where v is not null),
+    -- アトラクション（DB の更新91）：[id, 建物, 種類, x, y（マス）]
+    'attrs', case when p_lod > 0 then '[]'::jsonb else (select coalesce(jsonb_agg(jsonb_build_array(a.id, a.bld, a.kind, round(a.x::numeric, 2), round(a.y::numeric, 2))), '[]'::jsonb)
+               from mp_attrs a where a.x between p_x0 - 2 and p_x1 + 2 and a.y between p_y0 - 2 and p_y1 + 2) end,
     -- 変電所（DB の更新89）：[id, 場所, 名前, 方式, 大きさ, 容量, 負荷, 止まっている, 自分の, 持ち主のキー]
     'subs', (select coalesce(jsonb_agg(jsonb_build_object('id', ss.id, 'x', ss.x, 'y', ss.y, 'n', ss.name, 'ps', ss.ps, 'sz', ss.sz, 'cap', ss.cap, 'ld', ss.load,
                   'tr', coalesce(ss.trip > now(), false), 'mine', coalesce(ss.own_u = u or ss.own_c = any(me_cs), false) or (ss.gov and _is_admin(u)),
                   'o', case when ss.gov then 'gov' when ss.own_u is not null then 'u:' || ss.own_u else 'c:' || ss.own_c end)), '[]'::jsonb)
                from mp_subs ss where p_lod < 2 and ss.x between (p_x0 - 3) * 100 and (p_x1 + 3) * 100 and ss.y between (p_y0 - 3) * 100 and (p_y1 + 3) * 100),
-    'ver', coalesce((select max(ver) from mp_changes), 0), 'snow', 1, 'hgt', 1, 'sup', 1, 'hgt2', 1, 'sig', 1, 'quad', 1, 'pw', 1, 'subs2', 1) into r;   -- sup：給水・給炭のあるサーバー（DB の更新78）・hgt2：平坦・高さを決める・勾配の上限・駅の高さ（DB の更新84）・sig：信号の段（DB の更新85）・quad：複々線（DB の更新86）・pw：電化方式（DB の更新87）・subs2：変電所（DB の更新89）
+    'ver', coalesce((select max(ver) from mp_changes), 0), 'snow', 1, 'hgt', 1, 'sup', 1, 'hgt2', 1, 'sig', 1, 'quad', 1, 'pw', 1, 'subs2', 1, 'park2', 1) into r;   -- sup：給水・給炭のあるサーバー（DB の更新78）・hgt2：平坦・高さを決める・勾配の上限・駅の高さ（DB の更新84）・sig：信号の段（DB の更新85）・quad：複々線（DB の更新86）・pw：電化方式（DB の更新87）・subs2：変電所（DB の更新89）・park2：テーマパークとアトラクション（DB の更新91）
   return r;
 end $$;
 -- 変わったもの（共同編集）。なければ空。多すぎたら reload
@@ -22506,6 +22509,7 @@ begin
       union all select own_u, own_c, case when kind in ('ship', 'air') then 0 else _mp_rate(case when kind = 'rail' then 'up_dep' else 'up_bdep' end) end * case when size like 'T%' then greatest(1, cap / 24.0) when size = 'L' then 5 when size = 'M' then 2.5 else 1 end, '車庫' from mp_depots
       union all select c.own_u, c.own_c, t.upkeep, '車両' from mp_cars c join mp_types t on t.code = c.type
       union all select own_u, own_c, upk, '変電所' from mp_subs where not gov   -- 変電所（DB の更新89）
+      union all select p.own_u, p.own_c, (_mp_attr_kinds() -> a.kind ->> 'upk')::numeric, 'アトラクション' from mp_attrs a join mp_blds b on b.id = a.bld join mp_parcels p on p.id = b.parcel where not p.gov   -- DB の更新91
     ) z where pu is not null or pc is not null group by pu, pc   -- 国のもの（国の空港。t54q）は国庫から国庫なので、なし
   loop
     amt := round(o.amt / 24.0);
@@ -23433,7 +23437,7 @@ end $$;
 -- 合筆：同じ持ち主・同じ町字・となりあう筆を1つに（いちばん小さい地番をのこす）。建物があるとできない
 create or replace function public.mp_parcel_merge(p_ids bigint[], p_as text, p_dry boolean default false) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); pa record; ps mp_parcels[]; keep mp_parcels; n int; ncell int; reach int; ck text;
+declare u uuid := _me(); pa record; ps mp_parcels[]; keep mp_parcels; n int; ncell int; reach int; ck text; xcho boolean;
 begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
@@ -23442,7 +23446,7 @@ begin
   if n < 2 then raise exception '筆を2つ以上えらんでください'; end if;
   if n <> (select count(distinct x) from unnest(p_ids) x) then raise exception '土地（筆）が見つかりません'; end if;
   if exists (select 1 from unnest(ps) p where not _mp_same(p.own_u, p.own_c, false, pa.pu, pa.pc, false)) then raise exception 'あなた（この名義）の土地ではないものがあります'; end if;
-  if (select count(distinct p.cho) from unnest(ps) p) > 1 then raise exception '町字がちがう筆は合筆できません'; end if;
+  xcho := (select count(distinct p.cho) from unnest(ps) p) > 1;   -- 町字をまたぐのは、テーマパークの広さ（3,000区画）からだけ（DB の更新91）
   if exists (select 1 from unnest(ps) p where p.bld is not null) then raise exception '建物のある筆は合筆できません（先にこわしてください）'; end if;
   if exists (select 1 from unnest(ps) p where p.sale is not null) then raise exception '売りに出している筆は合筆できません'; end if;
   -- つながっているか（区画の上下左右）
@@ -23453,8 +23457,12 @@ begin
     select c.x, c.y from r join mp_pcells c on c.parcel = any(p_ids) and ((c.x = r.x + 1 and c.y = r.y) or (c.x = r.x - 1 and c.y = r.y) or (c.x = r.x and c.y = r.y + 1) or (c.x = r.x and c.y = r.y - 1))
   ) select count(*) into reach from r;
   if reach < ncell then raise exception 'となりあっていない筆があります'; end if;
+  if xcho and ncell < 3000 then raise exception '町字がちがう筆は合筆できません（合わせて 3,000区画（30ha）以上なら、テーマパークの土地として町字をまたいで合筆できます）'; end if;
   keep := ps[1];
-  if p_dry then return jsonb_build_object('ban', _mp_ban(keep.ban, keep.eda), 'n', ncell); end if;
+  if xcho then   -- 町字をまたぐとき：区画のいちばん多い筆の町字・地番をのこす
+    keep := (select p from unnest(ps) p order by (select count(*) from mp_pcells c where c.parcel = p.id) desc, p.ban, p.eda limit 1);
+  end if;
+  if p_dry then return jsonb_build_object('ban', _mp_ban(keep.ban, keep.eda), 'n', ncell, 'xcho', xcho); end if;
   -- 貸出料は、どの筆も同じときだけのこす。許可は、どの筆でも許可されている名義だけのこす（使用料は高いほう）
   update mp_parcels set rent = case when (select count(distinct coalesce(p.rent, -1)) from unnest(ps) p) = 1 then keep.rent end where id = keep.id;
   update mp_landreq q set fee = (select max(q2.fee) from mp_landreq q2 where q2.parcel = any(p_ids) and q2.st = 'ok' and q2.req_u is not distinct from q.req_u and q2.req_c is not distinct from q.req_c)
@@ -23466,7 +23474,7 @@ begin
     bb = (select box(point(min(x), min(y)), point(max(x) + 1, max(y) + 1)) from mp_pcells where parcel = keep.id) where id = keep.id;
   delete from mp_parcels where id = any(p_ids) and id <> keep.id;
   perform _mp_chg('land', null, 'set', (select box(point(_mp_t5((bb[1])[0]::int), _mp_t5((bb[1])[1]::int)), point(_mp_t5((bb[0])[0]::int) + 1, _mp_t5((bb[0])[1]::int) + 1)) from mp_parcels where id = keep.id));
-  return jsonb_build_object('id', keep.id, 'ban', _mp_ban(keep.ban, keep.eda), 'n', ncell);
+  return jsonb_build_object('id', keep.id, 'ban', _mp_ban(keep.ban, keep.eda), 'n', ncell, 'xcho', xcho);
 end $$;
 -- 分筆：筆の中の四角（区画 [X0, Y0, X1, Y1]）を新しい筆に（枝番）。両方がつながっていること。建物があるとできない
 create or replace function public.mp_parcel_split(p_id bigint, p_rect int[], p_as text, p_dry boolean default false) returns jsonb
@@ -24218,6 +24226,7 @@ language sql immutable as $$
    {"k":"tennis","n":"テニスコート","use":"leisure","one":true,"z":"abcdehk","cpm":100,"f0":0,"f1":0,"min":6,"max":200,"sh":["full"],"sc":"tennis","cat":"fun","c":"#5f9e6e","pat":"court","dn":["{}テニスクラブ"]},
    {"k":"athletics","n":"陸上競技場","use":"leisure","one":true,"z":"bcdehk","cpm":200,"f0":0,"f1":0,"min":200,"max":1600,"sh":["full"],"sc":"athletics","cat":"fun","c":"#93c56a","pat":"track","dn":["{}陸上競技場"]},
    {"k":"amuse","n":"遊園地","use":"leisure","one":true,"z":"cdeh","cpm":300,"f0":0,"f1":0,"min":400,"max":1600,"sh":["full"],"sc":"amuse","cat":"fun","c":"#e6c3d6","fx":{"hotel":0.15,"shop":0.04},"pat":"amuse","dn":["{}ランド","{}遊園地"]},
+   {"k":"tpark","n":"テーマパーク","use":"leisure","one":true,"z":"cdefgh","cpm":500,"f0":0,"f1":0,"min":3000,"max":10000,"sh":["full"],"sc":"tpark","cat":"fun","c":"#efc7de","fx":{"hotel":0.3,"shop":0.08},"pat":"tpark","dn":["{}ランド","{}パーク"]},
    {"k":"zoo","n":"動物園","use":"leisure","one":true,"z":"abcdehk","cpm":150,"f0":0,"f1":0,"min":200,"max":1600,"sh":["full"],"sc":"zoo","cat":"fun","c":"#a9c98a","fx":{"hotel":0.06},"pat":"trees","dn":["{}動物園"]},
    {"k":"botanical","n":"植物園","use":"leisure","one":true,"z":"abcdehk","cpm":100,"f0":0,"f1":0,"min":100,"max":1600,"sh":["full"],"sc":"botanical","cat":"fun","c":"#9fcf8f","pat":"trees","dn":["{}植物園"]},
    {"k":"camp","n":"キャンプ場","use":"leisure","one":true,"z":"hi","cpm":30,"f0":0,"f1":0,"min":100,"max":1600,"sh":["full"],"sc":"camp","cat":"fun","c":"#7fb070","pat":"trees","dn":["{}キャンプ場"]},
@@ -26349,6 +26358,115 @@ $$;
 -- 施設の種類（t54k は学校だけ。t54l で宿泊・医療と福祉・娯楽も）：用途 use・1人の床 spp（㎡）・通える範囲 r（マス）・まわりの人のうち来る人のわりあい age・
 --   近くの駅（750m）の1日の乗り降りのうち来る人のわりあい rs・1人・1日の売上（費用をひいた分）fee・地価で値段が変わる loc・
 --   駅・バス停の乗る人に足す人数（1人あたり）w・駅で通えるかで変わる acc・多い月 pk（1.3倍）・少ない月 op（0.75倍）。presets54l.py でつくる
+create table if not exists public.mp_attrs (   -- アトラクション（DB の更新91）：遊園地・テーマパークの中の乗りもの・ショー
+  id    bigserial primary key,
+  bld   bigint not null references public.mp_blds(id) on delete cascade,
+  kind  text not null,                       -- _mp_attr_kinds のキー
+  x     real not null, y real not null,      -- 場所（マス）
+  name  text not null default '',
+  cost  bigint not null default 0,
+  at    timestamptz not null default now()   -- つくった時刻（新しいほど人気。2年で半分まで下がる）
+);
+create index if not exists mp_attrs_bld on public.mp_attrs (bld);
+create index if not exists mp_attrs_xy on public.mp_attrs (x, y);
+alter table public.mp_attrs enable row level security;
+revoke all on public.mp_attrs from public, anon, authenticated;
+revoke all on sequence public.mp_attrs_id_seq from public, anon, authenticated;
+-- アトラクションの種類（DB の更新91）：工事費・1日の定員（ふえる来場者のわく）・人気（来たい人が何割ふえるか）・維持費（1日）・r 半径（マス。地図の絵の大きさ）。pk：その月は人気が 1.3倍
+create or replace function public._mp_attr_kinds() returns jsonb
+language sql immutable as $$
+  select '{
+    "wheel":   {"n":"観覧車","cost":300000000,"cap":3000,"ap":0.10,"upk":150000,"r":1},
+    "coaster": {"n":"ジェットコースター","cost":800000000,"cap":4000,"ap":0.18,"upk":400000,"r":1.6},
+    "merry":   {"n":"メリーゴーラウンド","cost":60000000,"cap":1200,"ap":0.03,"upk":30000,"r":0.4},
+    "cups":    {"n":"コーヒーカップ","cost":40000000,"cap":1000,"ap":0.02,"upk":20000,"r":0.4},
+    "haunt":   {"n":"お化け屋敷","cost":80000000,"cap":900,"ap":0.04,"upk":40000,"r":0.5},
+    "water":   {"n":"ウォーターライド","cost":500000000,"cap":2500,"ap":0.12,"upk":250000,"r":1.2,"pk":[7,8]},
+    "drop":    {"n":"フリーフォール","cost":250000000,"cap":1500,"ap":0.07,"upk":120000,"r":0.35},
+    "kart":    {"n":"ゴーカート","cost":70000000,"cap":1000,"ap":0.03,"upk":35000,"r":0.9},
+    "show":    {"n":"ショー劇場","cost":200000000,"cap":2000,"ap":0.06,"upk":100000,"r":0.7}
+  }'::jsonb
+$$;
+-- アトラクションを いくつまで つくれるか（土地の広さ 150区画ごとに1つ。遊園地 4ha で2つ・テーマパーク 30ha で20こ）
+create or replace function public._mp_attr_max(n int) returns int
+language sql immutable as $$ select greatest(1, floor(coalesce(n, 0) / 150.0)::int) $$;
+-- アトラクションの人気の新しさ（つくってから2年で半分まで下がる）
+create or replace function public._mp_attr_fresh(t timestamptz, h timestamptz) returns real
+language sql immutable as $$ select greatest(0.5, 1 - 0.25 * extract(epoch from h - t) / 31557600)::real $$;
+-- 遊園地・テーマパークのアトラクションの一覧（建物のシート用。だれでも見られる）
+create or replace function public.mp_attr_list(p_bld bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); b mp_blds; p mp_parcels; me_cs int[];
+begin
+  perform _mp_ok(u);
+  select * into b from mp_blds where id = p_bld;
+  if not found then raise exception '建物が見つかりません'; end if;
+  if b.kind not in ('amuse', 'tpark') then return jsonb_build_object('park', false); end if;
+  select * into p from mp_parcels where id = b.parcel;
+  me_cs := array(select id from companies where owner = u);
+  return jsonb_build_object('park', true, 'max', _mp_attr_max(p.n), 'mine', coalesce(p.own_u = u or p.own_c = any(me_cs), false), 'kinds', _mp_attr_kinds(),
+    'items', (select coalesce(jsonb_agg(jsonb_build_object('id', a.id, 'k', a.kind, 'n', a.name, 'cost', a.cost, 'at', to_char(a.at at time zone 'Asia/Tokyo', 'YYYY-MM-DD'),
+                 'fresh', round(_mp_attr_fresh(a.at, now())::numeric, 2)) order by a.id), '[]'::jsonb) from mp_attrs a where a.bld = b.id));
+end $$;
+-- アトラクションをつくる（自分の遊園地・テーマパークに。場所は、ほかのアトラクションから いちばん遠いところを自動で）
+create or replace function public.mp_attr_build(p_bld bigint, p_kind text, p_name text, p_as text, p_dry boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); pa record; b mp_blds; p mp_parcels; k jsonb; n int; nk int; mx int; cst bigint; nm text; cx real; cy real; rr real; bx real; by_ real; aid bigint; stp int;
+        kr real; ex0 real; ey0 real; ex1 real; ey1 real;
+begin
+  perform _mp_ok(u);
+  select * into pa from _mp_party(u, p_as);
+  select * into b from mp_blds where id = p_bld for update;
+  if not found or b.kind not in ('amuse', 'tpark') then raise exception 'アトラクションは、遊園地・テーマパークにだけ つくれます'; end if;
+  select * into p from mp_parcels where id = b.parcel;
+  if not _mp_same(p.own_u, p.own_c, false, pa.pu, pa.pc, false) then raise exception 'あなた（この名義）の建物ではありません'; end if;
+  k := _mp_attr_kinds() -> p_kind;
+  if k is null then raise exception 'アトラクションの種類がちがいます'; end if;
+  n := (select count(*) from mp_attrs where bld = b.id); nk := (select count(*) from mp_attrs where bld = b.id and kind = p_kind); mx := _mp_attr_max(p.n);
+  if n >= mx then raise exception 'この広さでは、アトラクションは %こまでです（土地 150区画ごとに1つ）', mx; end if;
+  if nk >= 3 then raise exception '同じアトラクションは3つまでです'; end if;
+  cst := (k ->> 'cost')::bigint;
+  nm := left(coalesce(nullif(btrim(p_name), ''), (k ->> 'n') || case when nk > 0 then (nk + 1)::text else '' end), 30);
+  if p_dry then
+    return jsonb_build_object('cost', cst, 'cap', (k ->> 'cap')::int, 'ap', (k ->> 'ap')::real, 'upk', (k ->> 'upk')::int, 'name', nm, 'n', n, 'max', mx);
+  end if;
+  -- 場所：建物の区画（多いときは 2000 ほどに間引く）のうち、
+  --   1. 建物のはし（いちばん外の区画の行・列）から、そのアトラクションの半径 ＋ 20m より内がわ
+  --   2. ほかのアトラクションの はしから いちばん遠いところ（はじめの1つは まん中にいちばん近いところ）
+  stp := greatest(1, (array_length(b.cells, 1) / 2) / 2000);
+  kr := coalesce((k ->> 'r')::real, 0.6);
+  select avg(b.cells[2 * i - 1] + 0.5) / 5, avg(b.cells[2 * i] + 0.5) / 5, min(b.cells[2 * i - 1]) / 5.0, min(b.cells[2 * i]) / 5.0, (max(b.cells[2 * i - 1]) + 1) / 5.0, (max(b.cells[2 * i]) + 1) / 5.0
+    into cx, cy, ex0, ey0, ex1, ey1 from generate_series(1, array_length(b.cells, 1) / 2) i;
+  select z.x, z.y into bx, by_ from (
+    select (b.cells[2 * i - 1] + 0.5) / 5.0 x, (b.cells[2 * i] + 0.5) / 5.0 y from generate_series(1, array_length(b.cells, 1) / 2) i where i % stp = 0) z
+   order by (z.x >= ex0 + kr + 0.4 and z.x <= ex1 - kr - 0.4 and z.y >= ey0 + kr + 0.4 and z.y <= ey1 - kr - 0.4) desc,
+            coalesce((select min(sqrt((a.x - z.x) ^ 2 + (a.y - z.y) ^ 2) - coalesce((_mp_attr_kinds() -> a.kind ->> 'r')::real, 0.6)) from mp_attrs a where a.bld = b.id),
+                     -sqrt((z.x - cx) ^ 2 + (z.y - cy) ^ 2)) desc
+   limit 1;
+  perform _mp_lock(pa.pu, pa.pc);
+  perform _mp_pay(pa.pu, pa.pc, false, cst, 'bld', format('アトラクション「%s」をつくった（%s）', nm, coalesce(nullif(b.name, ''), '遊園地')));
+  insert into mp_attrs(bld, kind, x, y, name, cost) values (b.id, p_kind, bx, by_, nm, cst) returning id into aid;
+  perform _mp_chg('land', null, 'set', box(point(floor(bx) - 2, floor(by_) - 2), point(floor(bx) + 3, floor(by_) + 3)));
+  perform _mp_sc_touch(b.id);   -- 来場者をすぐ数えなおす
+  return jsonb_build_object('id', aid, 'cost', cst, 'name', nm);
+end $$;
+-- アトラクションをこわす（返金なし）
+create or replace function public.mp_attr_del(p_attr bigint, p_as text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); pa record; a mp_attrs; b mp_blds; p mp_parcels;
+begin
+  perform _mp_ok(u);
+  select * into pa from _mp_party(u, p_as);
+  select * into a from mp_attrs where id = p_attr;
+  if not found then raise exception 'アトラクションが見つかりません'; end if;
+  select * into b from mp_blds where id = a.bld;
+  select * into p from mp_parcels where id = b.parcel;
+  if not _mp_same(p.own_u, p.own_c, false, pa.pu, pa.pc, false) then raise exception 'あなた（この名義）の建物ではありません'; end if;
+  delete from mp_attrs where id = p_attr;
+  perform _mp_chg('land', null, 'set', box(point(floor(a.x) - 2, floor(a.y) - 2), point(floor(a.x) + 3, floor(a.y) + 3)));
+  perform _mp_sc_touch(b.id);
+  return jsonb_build_object('id', p_attr, 'name', a.name);
+end $$;
 create or replace function public._mp_sc_kinds() returns jsonb
 language sql immutable as $$
   select '{
@@ -26414,6 +26532,7 @@ language sql immutable as $$
     "arena": {"n":"アリーナ","use":"leisure","spp":5,"r":200,"age":0.001,"rs":0.004,"fee":180,"w":1.0,"acc":true,"loc":true},
     "athletics": {"n":"陸上競技場","use":"leisure","spp":8,"r":200,"age":0.0008,"rs":0.002,"fee":120,"w":1.0,"acc":true,"loc":false,"pk":[3,4,5,9,10,11]},
     "amuse": {"n":"遊園地","use":"leisure","spp":15,"r":400,"age":0.002,"rs":0.004,"fee":700,"w":1.0,"acc":true,"loc":false,"pk":[3,4,5,7,8],"op":[12,1,2]},
+    "tpark": {"n":"テーマパーク","use":"leisure","spp":20,"r":600,"age":0.004,"rs":0.008,"fee":1200,"w":1.0,"acc":true,"loc":false,"pk":[3,4,5,7,8,12],"op":[1,2,6]},
     "aquarium": {"n":"水族館","use":"leisure","spp":6,"r":300,"age":0.0015,"rs":0.004,"fee":300,"w":0.9,"acc":true,"loc":true,"pk":[7,8]},
     "zoo": {"n":"動物園","use":"leisure","spp":30,"r":300,"age":0.0015,"rs":0.003,"fee":400,"w":0.9,"acc":true,"loc":false,"pk":[3,4,5,9,10,11],"op":[12,1,2]},
     "botanical": {"n":"植物園","use":"leisure","spp":40,"r":200,"age":0.0008,"rs":0.001,"fee":300,"w":0.7,"acc":true,"loc":false,"pk":[3,4,5]},
@@ -26502,9 +26621,14 @@ begin
   create temp table _scs on commit drop as
     select s.bld, s.grp, s.x, s.y, s.lv, op.ok, op.npc, op.gv, op.m2,
            -- t59h：町の景色（AIの会社・国営の会社）の施設は、客を分けあわない（プレイヤーの施設の客をへらさない）
-           case when (op.ok or op.npc) and not (p.own_c is not null and _mp_ai_quiet(p.own_c)) then floor(op.m2 / (kd -> s.grp ->> 'spp')::real)::int else 0 end cap, 0::real pool, 1::real acc,
+           case when (op.ok or op.npc) and not (p.own_c is not null and _mp_ai_quiet(p.own_c)) then floor(op.m2 / (kd -> s.grp ->> 'spp')::real)::int + coalesce(at_.cap, 0)::int else 0 end cap, 0::real pool, 1::real acc,
+           coalesce(at_.ap, 0)::real aap,   -- アトラクション（DB の更新91）：定員がふえ、来たい人も ふえる
            coalesce((b.dem -> 'fx' ->> (kd -> s.grp ->> 'use'))::real, 0) fxv, p.val::numeric / greatest(p.n * 100, 1) lvm2
       from mp_sc s join mp_blds b on b.id = s.bld join mp_parcels p on p.id = b.parcel, lateral _mp_sc_op(s.bld, h) op
+      left join lateral (select sum((_mp_attr_kinds() -> a.kind ->> 'cap')::int) cap,
+                                sum((_mp_attr_kinds() -> a.kind ->> 'ap')::real * _mp_attr_fresh(a.at, h)
+                                    * case when coalesce(_mp_attr_kinds() -> a.kind -> 'pk', '[]'::jsonb) @> to_jsonb(mo) then 1.3 else 1 end) ap
+                           from mp_attrs a where a.bld = s.bld) at_ on true
      where s.grp is not null and kd ? s.grp;
   create index on _scs (grp, x);   -- 5×5（DB の更新52）：同じ種類の近くの施設を、索引でさがす（施設が多くなっても速く）
   analyze _scs;
@@ -26520,7 +26644,7 @@ begin
   update _scs t set pool = (_mp_catch(t.x, t.y, (kd -> t.grp ->> 'r')::real) * (kd -> t.grp ->> 'age')::real
                             + coalesce((kd -> t.grp ->> 'rs')::real, 0) * coalesce((select sum(f.flow) from _sflow f where f.sx between t.x - 15 and t.x + 15 and f.sy between t.y - 15 and t.y + 15
                                                                                      and (f.sx - t.x) ^ 2 + (f.sy - t.y) ^ 2 <= 225), 0))
-                           * t.acc * greatest(0.1, 1 + t.fxv)
+                           * t.acc * greatest(0.1, 1 + t.fxv) * (1 + t.aap)
                            * case when coalesce(kd -> t.grp -> 'pk', '[]'::jsonb) @> to_jsonb(mo) then 1.3 when coalesce(kd -> t.grp -> 'op', '[]'::jsonb) @> to_jsonb(mo) then 0.75 else 1 end
    where cap > 0 and (p_only is null or t.bld = p_only);
   -- 同じ種類の施設で分けあう（通える範囲の中の定員のわりあい）。人・会社の施設は、値段の水準が高いと減る。値段（1人・1日）：地価が高いと高い（loc の種類）
@@ -32331,7 +32455,7 @@ begin
             'mp_sta_build','mp_sta_edit','mp_sta_resize','mp_sta_trk','mp_sta_trk_set','mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list',
             'mp_thru_req','mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market',
             'mp_unit_mine','mp_unit_own','mp_unit_set','mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer','mp_unko_list','mp_unko_pick','mp_unko_furi','mp_unko_make','mp_jam_now','mp_jam_list','mp_er_now','mp_er_list','mp_er_bld','mp_lic_find','mp_lic_at','mp_lic_apply','_mp_lic_pfee_of','_mp_lic_pfee','_mp_lic_have','_mp_lic_mfee','mp_lic_mine','mp_lic_cancel','mp_lic_review','mp_lic_decide',
-            'mp_sta_melt','mp_seg_snow','mp_dep_plow','mp_snow_mine','mp_seg_height','_mp_taut','_mp_prof_flat','_mp_prof_simp','_mp_hopt','_mp_prof_make2','mp_sta_height','_mp_clr_stop2','_mp_clr_pass2','_mp_leg_sig','mp_seg_sig','_mp_trmul','_mp_leg_quad','_mp_ps_names','_mp_leg_pm','_mp_leg_dz','_sec_lim','_sec_label','_sec_tell','_sec_auto','sec_admin_list','sec_admin_block','sec_admin_unblock','app_ver','_mp_sub_spec','_mp_sub_r','_mp_feed','_mp_leg_fed','_mp_route_feed','_mp_sub_name','_mp_sub_auto','_mp_sub_event','mp_sub_build','mp_sub_set','mp_sub_del','_mp_li_put','_mp_routes_fp',
+            'mp_sta_melt','mp_seg_snow','mp_dep_plow','mp_snow_mine','mp_seg_height','_mp_taut','_mp_prof_flat','_mp_prof_simp','_mp_hopt','_mp_prof_make2','mp_sta_height','_mp_clr_stop2','_mp_clr_pass2','_mp_leg_sig','mp_seg_sig','_mp_trmul','_mp_leg_quad','_mp_ps_names','_mp_leg_pm','_mp_leg_dz','_mp_attr_kinds','_mp_attr_max','_mp_attr_fresh','mp_attr_list','mp_attr_build','mp_attr_del','_sec_lim','_sec_label','_sec_tell','_sec_auto','sec_admin_list','sec_admin_block','sec_admin_unblock','app_ver','_mp_sub_spec','_mp_sub_r','_mp_feed','_mp_leg_fed','_mp_route_feed','_mp_sub_name','_mp_sub_auto','_mp_sub_event','mp_sub_build','mp_sub_set','mp_sub_del','_mp_li_put','_mp_routes_fp',
             '_mp_form_busy','_mp_form_runs','_mp_cxl_on','_mp_unko_zone','_mp_unko_zi','_mp_unko_zt','_mp_unko_rt','_mp_sched_idx','_mp_unko_trn','_mp_rail_path_x','_mp_unko_det','mp_cxl_add','mp_cxl_del','_mp_form_key','_mp_train_runs','_mp_subst_can','_mp_subst_pick','_mp_subst_has','_mp_subst_ok','_mp_subst_plan','_mp_subst_plan_all','_mp_tmp_back','mp_form_spare','mp_form_add','mp_car_tmp') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then

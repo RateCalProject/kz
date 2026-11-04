@@ -455,7 +455,7 @@ function drawElevFar(g, z) {
 // ズームで細かさ（lod）とセルの大きさを決める
 //   lod 3（t108）：Z_FAR より引いたとき。4096 マスのます目で、線路・高速・駅と空港・県の名前だけ（サーバーの更新53 の前は lod 2 と同じものが来る）
 function lodOf(z) { const e = MQ.d2 === 0 && S.tool === 'look' && !S.v3; return z < Z_FAR && !S.v3 ? [3, 4096] : z < (e ? 2.5 : 2) ? [2, 1024] : z < (e ? 9 : 7) ? [1, 384] : [0, 96]; }   // 省エネ（t63）：見るだけのときは、土地・建物を もっと近くから
-const CELL0 = { segs: [], stas: [], deps: [], subs: [], nodes: [], parcels: [], blds: [], places: [], chos: [], lanes: [], rwys: [], names: {} };   // 国土の外のセル（読まない）
+const CELL0 = { segs: [], stas: [], deps: [], subs: [], attrs: [], nodes: [], parcels: [], blds: [], places: [], chos: [], lanes: [], rwys: [], names: {} };   // 国土の外のセル（読まない）
 function needCells() {
   const [lod, cs] = lodOf(S.cam.z), v = view(), w = S.boot && S.boot.world;
   const i0 = Math.floor(v.x0 / cs), j0 = Math.floor(v.y0 / cs), i1 = Math.floor(v.x1 / cs), j1 = Math.floor(v.y1 / cs);
@@ -518,6 +518,8 @@ function prepArea(d) {
   if (d.pw) S.pwOK = true;       // 電化方式（DB の更新87）のあるサーバー
   if (d.subs2) { S.subsOK = true; for (const s of d.segs) s.pw2 = true; }   // 変電所（DB の更新89）のあるサーバー（pw2：fd がないのは 電気が来ていない線）
   d.subs = d.subs || []; for (const v of d.subs) { v.fx = v.x / 100; v.fy = v.y / 100; }
+  if (d.park2) S.parkOK = true;   // テーマパーク・アトラクション（DB の更新91）のあるサーバー
+  d.attrs = (d.attrs || []).map(a => ({ id: a[0], bld: a[1], k: a[2], x: a[3], y: a[4] }));
   for (const s of d.segs) prepSeg(s);
   for (const s of d.stas) { s.fx = s.x / 100; s.fy = s.y / 100; }
   for (const s of d.deps) { s.fx = s.x / 100; s.fy = s.y / 100; }
@@ -567,12 +569,13 @@ function prepParcel(a) {
 function visibleItems() {
   const [lod, cs] = lodOf(S.cam.z), v = view();
   const i0 = Math.floor(v.x0 / cs), j0 = Math.floor(v.y0 / cs), i1 = Math.floor(v.x1 / cs), j1 = Math.floor(v.y1 / cs);
-  const segs = new Map(), stas = new Map(), deps = new Map(), subs = new Map(), nodes = new Map(), parcels = new Map(), places = new Map(), chos = new Map(), blds = new Map(), lanes = new Map(), rwys = new Map(), names = {};
+  const segs = new Map(), stas = new Map(), deps = new Map(), subs = new Map(), attrs = new Map(), nodes = new Map(), parcels = new Map(), places = new Map(), chos = new Map(), blds = new Map(), lanes = new Map(), rwys = new Map(), names = {};
   const take = d => {
     for (const s of d.segs) segs.set(s.id, s);
     for (const s of d.stas) stas.set(s.id, s);
     for (const s of d.deps) deps.set(s.id, s);
     for (const v of (d.subs || [])) subs.set(v.id, v);   // 変電所（DB の更新89）
+    for (const a of (d.attrs || [])) attrs.set(a.id, a);   // アトラクション（DB の更新91）
     for (const n of d.nodes) nodes.set(n.id, n);
     for (const p of d.parcels) parcels.set(p.id, p);
     for (const b of (d.blds || [])) blds.set(b.id, b);
@@ -594,7 +597,7 @@ function visibleItems() {
       if (any) break;
     }
   }
-  return { segs, stas, deps, subs, nodes, parcels, places, chos, blds, lanes, rwys, names };
+  return { segs, stas, deps, subs, attrs, attrB: new Set([...attrs.values()].map(a => a.bld)), nodes, parcels, places, chos, blds, lanes, rwys, names };
 }
 // 変わったもの（ほかの人の工事など）。15秒ごと
 async function poll() {
@@ -840,6 +843,7 @@ function render() {
   // 重なりの順（下から）：平らな建物（田畑・駐車場・広場）→ 車庫 → 系統 → 駅のホーム → 高さのある建物 → 境界線 → しるし（バス停・家・えらんだもの）→ 文字
   const bs = z >= 4 ? bldsIn(it, v) : [];
   if (bs.length) drawBlds(g, bs, z, 0);
+  if (S.parkOK && z >= 5 && it.attrs && it.attrs.size) drawAttrs(g, it, z);   // アトラクション（DB の更新91）
   for (const d of it.deps.values()) if (d.k !== 'ship' && d.k !== 'air') drawDepot(g, d, z);
   if (S.subsOK && z >= 2) for (const v of it.subs.values()) drawSub(g, v, z);   // 変電所（DB の更新89）
   if (S.routeHi) drawRouteHi(g, z, it);
@@ -1190,6 +1194,106 @@ function subBuild(s, hit) {
     });
   };
   draw();
+}
+/* ---------- アトラクション（DB の更新91）：遊園地・テーマパークの乗りもの。大きさは本物ぐらい（観覧車は直径 100m） ---------- */
+const PARK_K = ['amuse', 'tpark'];
+const ATTR_N = { wheel: '観覧車', coaster: 'ジェットコースター', merry: 'メリーゴーラウンド', cups: 'コーヒーカップ', haunt: 'お化け屋敷', water: 'ウォーターライド', drop: 'フリーフォール', kart: 'ゴーカート', show: 'ショー劇場' };
+const ATTR_R = { wheel: 1, coaster: 1.6, merry: 0.4, cups: 0.4, haunt: 0.5, water: 1.2, drop: 0.35, kart: 0.9, show: 0.7 };   // 半径（マス。サーバーの _mp_attr_kinds の r と同じ）
+function drawAttrs(g, it, z) {
+  for (const a of it.attrs.values()) {
+    const x = sx(a.x), y = sy(a.y), r = Math.max(5, (ATTR_R[a.k] || 0.6) * z);
+    if (x < -r - 40 || y < -r - 40 || x > S.W + r + 40 || y > S.H + r + 40) continue;
+    g.save(); g.translate(x, y); drawAttr(g, a.k, r); g.restore();
+    if (z >= 12) label(g, T(ATTR_N[a.k] || ''), x, y + r + 9, { size: 10, color: '#7a2a52', bg: 'rgba(255,255,255,.85)' });
+  }
+}
+function drawAttr(g, k, r) {
+  const lw = Math.max(1.2, r * 0.08);
+  g.lineWidth = lw; g.lineCap = 'round'; g.lineJoin = 'round';
+  switch (k) {
+    case 'wheel': {   // 観覧車：輪・スポーク・ゴンドラ
+      g.strokeStyle = '#c8325f'; g.beginPath(); g.arc(0, 0, r * 0.9, 0, Math.PI * 2);
+      for (let i = 0; i < 12; i++) { const a = i * Math.PI / 6; g.moveTo(0, 0); g.lineTo(r * 0.9 * Math.cos(a), r * 0.9 * Math.sin(a)); }
+      g.stroke();
+      for (let i = 0; i < 12; i++) { const a = i * Math.PI / 6; g.fillStyle = ['#f6c343', '#5aa9e6', '#7bc96f', '#ef7fa8'][i % 4]; g.beginPath(); g.arc(r * 0.9 * Math.cos(a), r * 0.9 * Math.sin(a), Math.max(1.5, r * 0.09), 0, Math.PI * 2); g.fill(); }
+      break; }
+    case 'coaster': {   // ジェットコースター：まわるレールと、宙がえりの輪
+      g.strokeStyle = 'rgba(80,60,60,.35)'; g.lineWidth = lw * 2.4;
+      const path = () => { g.beginPath(); g.moveTo(-r, r * 0.35); g.bezierCurveTo(-r * 0.9, -r * 0.9, -r * 0.1, -r * 0.9, 0, -r * 0.1); g.bezierCurveTo(r * 0.1, r * 0.6, r * 0.8, r * 0.7, r, 0);
+        g.bezierCurveTo(r * 1.1, -r * 0.6, r * 0.4, -r * 0.8, r * 0.3, -r * 0.3); g.moveTo(-r, r * 0.35); g.bezierCurveTo(-r * 0.6, r * 0.9, r * 0.5, r * 0.95, r, 0); };
+      path(); g.stroke(); g.strokeStyle = '#d23c3c'; g.lineWidth = lw * 1.3; path(); g.stroke();
+      g.beginPath(); g.arc(-r * 0.45, r * 0.25, r * 0.28, 0, Math.PI * 2); g.stroke();
+      break; }
+    case 'merry': {   // メリーゴーラウンド：しまの屋根
+      for (let i = 0; i < 12; i++) { g.fillStyle = i % 2 ? '#ffffff' : '#e4607f'; g.beginPath(); g.moveTo(0, 0); g.arc(0, 0, r, i * Math.PI / 6, (i + 1) * Math.PI / 6); g.closePath(); g.fill(); }
+      g.strokeStyle = '#b8436a'; g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.stroke();
+      g.fillStyle = '#f6c343'; g.beginPath(); g.arc(0, 0, r * 0.18, 0, Math.PI * 2); g.fill();
+      break; }
+    case 'cups': {   // コーヒーカップ：3つのカップ
+      g.fillStyle = 'rgba(240,230,210,.95)'; g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.fill();
+      ['#ef7fa8', '#5aa9e6', '#f6c343'].forEach((c, i) => { const a = i * 2.094 - 1.57; g.fillStyle = c; g.beginPath(); g.arc(r * 0.5 * Math.cos(a), r * 0.5 * Math.sin(a), r * 0.32, 0, Math.PI * 2); g.fill(); });
+      break; }
+    case 'haunt': {   // お化け屋敷：紫の館
+      g.fillStyle = '#4b3361'; g.beginPath(); g.moveTo(-r, r * 0.8); g.lineTo(-r, -r * 0.2); g.lineTo(0, -r); g.lineTo(r, -r * 0.2); g.lineTo(r, r * 0.8); g.closePath(); g.fill();
+      g.fillStyle = '#f2d34b'; for (const [wx, wy] of [[-0.45, 0.05], [0.25, 0.05], [-0.45, 0.45], [0.25, 0.45]]) g.fillRect(wx * r, wy * r, r * 0.22, r * 0.18);
+      break; }
+    case 'water': {   // ウォーターライド：水路と水しぶき
+      g.strokeStyle = '#3a8fd1'; g.lineWidth = lw * 2.2; g.beginPath(); g.moveTo(-r, -r * 0.3); g.bezierCurveTo(-r * 0.4, -r * 1.1, r * 0.2, r * 0.6, r * 0.8, -r * 0.2); g.stroke();
+      g.strokeStyle = '#bfe3fb'; g.lineWidth = lw; g.stroke();
+      g.fillStyle = 'rgba(160,215,250,.9)'; g.beginPath(); g.arc(r * 0.8, -r * 0.2, r * 0.25, 0, Math.PI * 2); g.fill();
+      break; }
+    case 'drop': {   // フリーフォール：塔（上から見た輪）
+      g.fillStyle = '#9aa3ad'; g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = '#e4607f'; g.lineWidth = lw * 1.6; g.beginPath(); g.arc(0, 0, r * 0.7, 0, Math.PI * 2); g.stroke();
+      g.fillStyle = '#ffffff'; g.beginPath(); g.arc(0, 0, r * 0.3, 0, Math.PI * 2); g.fill();
+      break; }
+    case 'kart': {   // ゴーカート：楕円のコース
+      g.fillStyle = '#8fc46f'; g.strokeStyle = '#6b6e73'; g.lineWidth = lw * 2.2; g.beginPath(); g.ellipse(0, 0, r, r * 0.55, 0, 0, Math.PI * 2); g.fill(); g.stroke();
+      g.strokeStyle = '#ffffff'; g.lineWidth = lw * 0.6; g.setLineDash([r * 0.12, r * 0.12]); g.beginPath(); g.ellipse(0, 0, r, r * 0.55, 0, 0, Math.PI * 2); g.stroke(); g.setLineDash([]);
+      break; }
+    case 'show': {   // ショー劇場：屋根と星
+      g.fillStyle = '#6b4fa0'; g.beginPath(); if (g.roundRect) g.roundRect(-r, -r * 0.7, 2 * r, 1.4 * r, r * 0.25); else g.rect(-r, -r * 0.7, 2 * r, 1.4 * r); g.fill();
+      g.fillStyle = '#f6c343'; g.beginPath();
+      for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? r * 0.22 : r * 0.5; g[i ? 'lineTo' : 'moveTo'](rr * Math.cos(a), rr * Math.sin(a)); }
+      g.closePath(); g.fill();
+      break; }
+    default: g.fillStyle = '#e4607f'; g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.fill();
+  }
+}
+// 建物のシート：アトラクションの一覧・つくる・こわす（遊園地・テーマパーク）
+async function attrFill(el, bid, reload) {
+  let L;
+  try { L = await call('mp_attr_list', { p_bld: bid }); } catch (e) { el.innerHTML = /mp_attr_list|schema cache|function/i.test(e.message) ? '' : `<p class="mp-warn small">${esc(errJa(e.message))}</p>`; return; }
+  if (!L || !L.park) { el.innerHTML = ''; return; }
+  const K = L.kinds || {}, items = L.items || [], can = L.mine && items.length < L.max;
+  const st = { k: Object.keys(K)[0], q: null };
+  const draw = () => {
+    el.innerHTML = `<h4 style="margin:12px 0 4px">🎢 <span>アトラクション</span> <small class="muted">${items.length} / ${L.max}</small></h4>
+      ${items.length ? items.map(a => { const kn = (K[a.k] || {}).n || a.k; return `<div class="mp-row small" style="justify-content:space-between;margin:2px 0"><span><b>${esc(a.n)}</b>${a.n !== kn && !a.n.startsWith(kn) ? ` <small class="muted">${esc(kn)}</small>` : ''} <small class="muted">人気 ${Math.round(a.fresh * 100)}%・${esc(a.at)}</small></span>${L.mine ? `<button class="btn" data-adel="${a.id}" style="padding:2px 8px">こわす</button>` : ''}</div>`; }).join('') : '<p class="muted small" style="margin:0">まだありません</p>'}
+      ${L.mine ? `<div class="mp-row"><select class="mp-inp" data-ak style="flex:1 1 170px">${Object.entries(K).map(([k, v]) => `<option value="${k}" ${k === st.k ? 'selected' : ''}>${esc(v.n)}</option>`).join('')}</select>
+          <button class="btn" data-aest ${can ? '' : 'disabled'}>見つもる</button></div>
+        ${st.q ? `<div class="mp-row"><span class="mp-cost">工事費 ${X(st.q.cost)}</span><span class="small muted"><span>定員 +${fmt(st.q.cap)}人</span>・<span>人気 +${Math.round(st.q.ap * 100)}%</span>・<span>維持費 1日 ${X(st.q.upk)}</span></span>
+          <button class="btn main" data-ago>つくる</button></div>` : ''}
+        ${!can && items.length >= L.max ? `<p class="mp-warn small" style="margin:2px 0">この広さでは ${L.max}こまでです</p>` : ''}` : ''}
+      <p class="muted small" style="margin:2px 0 6px">アトラクションをつくると、定員と人気がふえて、来場者がふえます（人気は、つくってから2年で半分まで下がります）。土地 150区画ごとに1つ・同じものは3つまで。維持費は1日ごと。こわしても お金はもどりません</p>`;
+    const ak = el.querySelector('[data-ak]'); if (ak) ak.onchange = () => { st.k = ak.value; st.q = null; draw(); };
+    const ae = el.querySelector('[data-aest]'); if (ae) ae.onclick = async () => { const q = await api('mp_attr_build', { p_bld: bid, p_kind: st.k, p_name: null, p_as: S.as, p_dry: true }); if (q) { st.q = q; draw(); } };
+    const ag = el.querySelector('[data-ago]'); if (ag) ag.onclick = async () => {
+      const r = await api('mp_attr_build', { p_bld: bid, p_kind: st.k, p_name: null, p_as: S.as, p_dry: false });
+      if (r) { toast(T(`「${r.name}」をつくりました（${fmt(r.cost)} X）`)); refreshAround(bid); reload(); }
+    };
+    el.querySelectorAll('[data-adel]').forEach(x => x.onclick = async () => {
+      const a = items.find(i => i.id === Number(x.dataset.adel)); if (!a) return;
+      if (!await confirm2(T(`「${a.n}」をこわします（工事費はもどりません）。よろしいですか？`), { what: `「${a.n}」`, q: '本当にこわしますか？', ok: 'こわす', note: 'もとに戻せません。工事費はもどりません。' })) return;
+      if (await api('mp_attr_del', { p_attr: a.id, p_as: S.as }, 'こわしました')) { refreshAround(bid); reload(); }
+    });
+  };
+  draw();
+}
+// 建物のまわりの地図を読みなおす（アトラクションの絵）
+function refreshAround(bid) {
+  const b = S.vis && S.vis.blds ? S.vis.blds.get(bid) : null;
+  if (b && b.bb) refreshBox(b.bb[0] - 1, b.bb[1] - 1, b.bb[2] + 1, b.bb[3] + 1); else { for (const c of S.cells.values()) c.stale = true; S.dirty = true; needCells(); }
 }
 function drawRail(g, s, z) {
   const mine = s.mine, col = s.col && /^#[0-9a-f]{6}$/i.test(s.col) ? s.col : null;   // 路線カラー（2026-10-29）
@@ -4155,12 +4259,13 @@ function startMerge(P) {
   setTool('look');
   const marks = new Map([[P.id, P]]);
   S.toolState = { marks };
-  hint('合筆：となりの自分の筆をタップしてえらびます（同じ町字・建物なし）');
-  const draw = () => sheet(`<h4>合筆</h4><p class="small">${[...marks.values()].map(p => esc(p.ban)).join('・')}（<span>${marks.size}筆</span>）</p>
+  hint('合筆：となりの自分の筆をタップしてえらびます（同じ町字・建物なし。合わせて3,000区画以上なら、町字がちがっても合筆できます：テーマパークの土地）');
+  const draw = () => sheet(`<h4>合筆</h4><p class="small">${[...marks.values()].map(p => esc(p.ban)).join('・')}（<span>${marks.size}筆</span>・<span>${fmt([...marks.values()].reduce((a, p) => a + (p.n || 0), 0))}区画</span>）</p>
+    ${S.parkOK ? `<p class="muted small" style="margin:0 0 4px">合わせて 3,000区画（30ha）以上なら、町字がちがう筆も合筆できます（テーマパークの土地。区画のいちばん多い筆の地番がのこります）</p>` : ''}
     <div class="mp-row"><button class="btn main" data-ok ${marks.size >= 2 ? '' : 'disabled'}>合筆する</button></div>`, s => {
     s.querySelector('[data-ok]').onclick = async () => {
       const r = await api('mp_parcel_merge', { p_ids: [...marks.keys()], p_as: S.as, p_dry: false });
-      if (r) { toast(T(`合筆しました（${r.ban}・${fmt(r.n * 100)}㎡）`)); for (const p of marks.values()) refreshP(p); setTool('look'); }
+      if (r) { toast(T(r.xcho ? `町字をまたいで合筆しました（${r.ban}・${fmt(r.n * 100)}㎡）` : `合筆しました（${r.ban}・${fmt(r.n * 100)}㎡）`)); for (const p of marks.values()) refreshP(p); setTool('look'); }
     };
   });
   S.tapHook = (x, y) => {
@@ -7338,10 +7443,23 @@ function flatPat(g, b, z, pat) {
       dots((x, y) => hsh(x, y) % 23 === 0, 'rgba(240,120,140,.9)', 0.06);
       dots((x, y) => hsh(x, y) % 29 === 5, 'rgba(90,160,230,.9)', 0.06);
       dots((x, y) => hsh(x, y) % 31 === 9, 'rgba(250,200,60,.9)', 0.06);
+      if (S.vis && S.vis.attrB && S.vis.attrB.has(b.id)) break;   // アトラクションがある遊園地は、アトラクションの絵（DB の更新91）
       const r = Math.min(0.45, Math.min(x1 - x0, y1 - y0) * 0.18);
       g.strokeStyle = 'rgba(200,60,90,.9)'; g.lineWidth = 2 / z; g.beginPath(); g.arc(b.cx, b.cy, r, 0, Math.PI * 2);
       for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4; g.moveTo(b.cx, b.cy); g.lineTo(b.cx + r * Math.cos(a), b.cy + r * Math.sin(a)); }
       g.stroke(); break; }
+    case 'tpark': {                                                                         // テーマパーク（DB の更新91）：園路・木・人
+      if (z >= 9) lines(0.8, 'rgba(250,244,228,.95)', Math.max(2, 0.12 * z), true);
+      dots((x, y) => hsh(x, y) % 6 === 0, 'rgba(80,150,80,.6)', 0.07);
+      dots((x, y) => hsh(x, y) % 19 === 4, 'rgba(240,120,150,.85)', 0.045);
+      dots((x, y) => hsh(x, y) % 23 === 7, 'rgba(90,160,230,.85)', 0.045);
+      if (!(S.vis && S.vis.attrB && S.vis.attrB.has(b.id))) {   // アトラクションがまだないときは、まん中に観覧車
+        const r = Math.min(1, Math.min(x1 - x0, y1 - y0) * 0.12);
+        g.strokeStyle = 'rgba(200,60,90,.9)'; g.lineWidth = 2 / z; g.beginPath(); g.arc(b.cx, b.cy, r, 0, Math.PI * 2);
+        for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4; g.moveTo(b.cx, b.cy); g.lineTo(b.cx + r * Math.cos(a), b.cy + r * Math.sin(a)); }
+        g.stroke();
+      }
+      break; }
     case 'trees': dots((x, y) => (x * 7 + y * 13) % 3 === 0, 'rgba(60,120,60,.55)', 0.075); break;      // 木
     case 'water': dots((x, y) => hsh(x, y) % 4 === 0, 'rgba(110,170,215,.95)', 0.075); break;          // 池・水槽
     case 'snow': if (z >= 12) {                                                             // ゲレンデ
@@ -7377,7 +7495,7 @@ const bldPt = (b, z) => { const w = S.b25 && z >= q('zw', MQ.d25) && b.floors > 
 // 地図記号（t54l）：種類 → 記号。施設（学校・宿泊・医療・娯楽）は施設の用途から。工場は歯車、港はいかり、駐車場は P
 const SYM_K = { shrine: 'torii', temple: 'manji', church: 'cross', superonsen: 'onsen', sento: 'onsen', onsenryokan: 'onsen',
   baseball: 'stadium', soccer: 'stadium', arena: 'stadium', athletics: 'stadium', museum: 'museum', artmuseum: 'museum', science: 'museum', umus: 'museum',
-  aquarium: 'fish', fishing: 'fish', zoo: 'tree', botanical: 'tree', camp: 'tent', amuse: 'wheel', golf: 'flag', golfrange: 'flag', ski: 'mount',
+  aquarium: 'fish', fishing: 'fish', zoo: 'tree', botanical: 'tree', camp: 'tent', amuse: 'wheel', tpark: 'wheel', golf: 'flag', golfrange: 'flag', ski: 'mount',
   hospital: 'hosp', bighosp: 'hosp', erhosp: 'hosp', uhosp: 'hosp', nursing: 'care', care: 'care', dayserv: 'care', uschool: 'sch',
   gpost: 'post', wardoffice: 'hall', townhall: 'town', police: 'police', firest: 'fire', publib: 'book', civic: 'civic', pgym: 'stadium', cityhosp: 'hosp',   // t58
   cleanfac: 'gear', pwater: 'drop', natmus: 'museum', natart: 'museum', nattheater: 'theater', natstad: 'stadium',
@@ -7702,7 +7820,7 @@ async function openBld(bid) {
         ${d.mine ? `<b>入居</b><span>${d.day.occ} / ${d.day.n}</span><b>家賃</b><span>1日 ${X(d.day.rent)}</span>
           <b>家賃の水準</b><span><input type="range" min="50" max="200" step="5" value="${Math.round(d.rent_lv * 100)}" class="mp-lv" style="width:55%;vertical-align:middle"> <b class="mp-lvn">${Math.round(d.rent_lv * 100)}%</b> <button class="btn" data-lvset style="padding:2px 8px">決める</button></span>` : ''}
       </div>
-      ${scBlock(d)}${portBlock(d)}${ER_K.includes(d.kind) ? '<div data-er></div>' : ''}
+      ${scBlock(d)}${S.parkOK && PARK_K.includes(d.kind) ? '<div data-attrs></div>' : ''}${portBlock(d)}${ER_K.includes(d.kind) ? '<div data-er></div>' : ''}
       ${d.gov ? `<p class="muted small" style="margin:2px 0 6px">国の建物です（税・家賃はありません）</p>` : ''}
       ${d.gov && OFFICE_K.includes(d.kind) ? '<div class="mp-row"><button class="btn main" data-jm>🏛 住民の窓口</button><small class="muted">転入・転居・転出・住民票の写し・印鑑登録</small></div>' : ''}
       ${d.mine ? `<p class="muted small" style="margin:2px 0 6px">家賃の水準は入居募集の部屋の家賃（相場の何%か）。高いと入りにくく、出ていきやすくなります。店・事務所などを自分で使うか会社が借りると、売上が入ります</p>
@@ -7716,6 +7834,7 @@ async function openBld(bid) {
         ${us.map(row).join('')}</details>`; }).join('')}</div>
       ${d.mine ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button><button class="btn" data-del style="color:#c33">こわす</button></div>` : ''}`, b => {
       scBind(b, d, load);
+      if (q0(b, '[data-attrs]')) attrFill(q0(b, '[data-attrs]'), bid, load);   // アトラクション（DB の更新91）
       if (q0(b, '[data-er]')) erBldFill(q0(b, '[data-er]'), bid);   // 救急（DB の更新68）
       const nEl = b.querySelector('[data-n]');
       const upd = () => { if (nEl) nEl.textContent = T(`${sel.size}室えらんでいます`); };
