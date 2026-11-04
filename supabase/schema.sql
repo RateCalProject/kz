@@ -26479,10 +26479,12 @@ create table if not exists public.mp_tracks (   -- 競馬場（DB の更新92）
   bld  bigint unique references public.mp_blds(id) on delete cascade,
   x0   int not null, y0 int not null, x1 int not null, y1 int not null,   -- 区画（10m）の四角
   dir  text not null default 'h' check (dir in ('h', 'v')),             -- 長い辺の向き（h：横・v：縦）
+  nm   text,                                                           -- 管理者がつけた名前（null なら、おいた場所の地名から。DB の更新93）
   at   timestamptz not null default now()
 );
 alter table public.mp_tracks enable row level security;
 revoke all on public.mp_tracks from public, anon, authenticated;
+alter table public.mp_tracks add column if not exists nm text;   -- 管理者がつけた名前（null なら、おいた場所の地名から。DB の更新93）
 -- レースの格の重み（DB の更新92）：競馬場の来場者・場外馬券売り場の手数料（ふつうのレース 1・G1 は 12）
 create or replace function public._mp_race_w(g text) returns real
 language sql immutable as $$
@@ -26564,6 +26566,33 @@ language sql stable set search_path = public as $$
              'g', (array_agg(g.grade order by _mp_race_w(g.grade) desc, g.post))[1], 'top', (array_agg(g.nm order by _mp_race_w(g.grade) desc, g.post))[1]) x
       from g group by g.sn) z
 $$;
+-- 実在の競馬場（いまのもの・むかしのもの・トレーニングセンター・よび名）の地名か（DB の更新93）。競馬場の名前に使わない
+create or replace function public._mp_track_ng(b text) returns boolean
+language sql immutable as $$
+  select b is null or btrim(b) = '' or btrim(b) = any(array['札幌','函館','福島','新潟','中山','東京','中京','京都','阪神','小倉',
+    '門別','帯広','盛岡','水沢','浦和','船橋','大井','川崎','金沢','笠松','名古屋','園田','姫路','高知','佐賀',
+    '旭川','岩見沢','北見','上山','三条','宇都宮','足利','高崎','紀三井寺','春木','益田','福山','中津','荒尾','長居','鳴尾',
+    '府中','淀','仁川','美浦','栗東','宮崎','中央','地方','東海','九州','北海道','ばんえい'])
+$$;
+-- 競馬場の名前（おいた場所の地名から：まん中の市区町村の名前＋競馬場。実在の競馬場の地名になるときは県の名前、それもだめなら「風の芽」。
+--   ほかの会場の競馬場と同じ名前になるときは「第二」「第三」）
+create or replace function public._mp_track_autoname(p_k text, p_x int, p_y int) returns text
+language plpgsql stable set search_path = public as $$
+declare c record; ar mp_places; mu mp_places; pr mp_places; b text; vn text; i int;
+begin
+  select * into c from _mp_cell(_mp_t5(p_x), _mp_t5(p_y));
+  select * into ar from mp_places where id = c.a;
+  if ar.k = 'ward' then select * into mu from mp_places where id = ar.parent; else mu := ar; end if;
+  select * into pr from mp_places where id = mu.parent;
+  b := mu.name;
+  if _mp_track_ng(b) then b := pr.name; end if;
+  if _mp_track_ng(b) then b := '風の芽'; end if;
+  for i in 1..3 loop
+    vn := b || (array['', '第二', '第三'])[i] || '競馬場';
+    exit when not exists (select 1 from mp_tracks t join mp_blds x on x.id = t.bld where t.k <> p_k and x.name = vn);
+  end loop;
+  return vn;
+end $$;
 -- 競馬場の一覧（地図においてあるか・場所）
 create or replace function public.mp_track_list() returns jsonb
 language plpgsql stable security definer set search_path = public as $$
@@ -26573,26 +26602,32 @@ begin
   return (select jsonb_agg(jsonb_build_object('k', v.k, 'bld', t.bld, 'dir', coalesce(t.dir, 'h'), 'wh', to_jsonb(_mp_track_wh(v.k, 'h')),
             'rect', case when t.bld is not null then jsonb_build_array(t.x0, t.y0, t.x1, t.y1) end,
             'x', case when t.bld is not null then t.x0 + (t.x1 - t.x0 + 1) / 2 end, 'y', case when t.bld is not null then t.y0 + (t.y1 - t.y0 + 1) / 2 end,
-            'addr', case when t.bld is not null then _mp_addr(_mp_t5(t.x0 + (t.x1 - t.x0 + 1) / 2), _mp_t5(t.y0 + (t.y1 - t.y0 + 1) / 2), t.x0 + (t.x1 - t.x0 + 1) / 2, t.y0 + (t.y1 - t.y0 + 1) / 2) ->> 'text' end)
+            'addr', case when t.bld is not null then _mp_addr(_mp_t5(t.x0 + (t.x1 - t.x0 + 1) / 2), _mp_t5(t.y0 + (t.y1 - t.y0 + 1) / 2), t.x0 + (t.x1 - t.x0 + 1) / 2, t.y0 + (t.y1 - t.y0 + 1) / 2) ->> 'text' end,
+            'name', (select b.name from mp_blds b where b.id = t.bld), 'nm', t.nm, 'auto', t.nm is null)   -- 名前（DB の更新93）。nm：管理者がつけた名前
             order by v.o)
     from (values ('府中', 1), ('京都', 2), ('中京', 3)) v(k, o) left join mp_tracks t on t.k = v.k and t.bld is not null);
 end $$;
 -- 競馬場をおく（管理者）。p_x・p_y：まん中の区画。p_dir：h 横長・v 縦長。p_dry：しらべるだけ。
 --   もうおいてあれば、いまの競馬場をとりのぞいて、あたらしい場所におく（場所を変える）。国の筆（町字をまたいでもよい：区画のいちばん多い町字の地番）と国の建物（工事は無料）
-create or replace function public.mp_track_place(p_k text, p_x int, p_y int, p_dir text, p_dry boolean default true) returns jsonb
+drop function if exists public.mp_track_place(text, int, int, text, boolean);   -- 名前（p_name）を足した（DB の更新93）
+create or replace function public.mp_track_place(p_k text, p_x int, p_y int, p_dir text, p_dry boolean default true, p_name text default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); dr text := coalesce(p_dir, 'h'); wh int[]; x0 int; y0 int; x1 int; y1 int; ck jsonb; old mp_tracks; opid bigint; pid bigint; bid bigint; chk text; n int; cs int[];
+        cnm text := nullif(btrim(coalesce(p_name, '')), ''); bnm text;
 begin
   perform _mp_admin(u);
-  if p_k is null or p_k not in ('府中', '京都', '中京') then raise exception '競馬場は 府中・京都・中京 の3つです'; end if;
+  if p_k is null or p_k not in ('府中', '京都', '中京') then raise exception '競馬の会場は 府中・京都・中京 の3つです'; end if;
   if dr not in ('h', 'v') then raise exception '向きは 横（h）か 縦（v）です'; end if;
   if p_x is null or p_y is null then raise exception '場所がありません'; end if;
+  if char_length(cnm) > 30 then raise exception '名前は30文字までです'; end if;
   wh := _mp_track_wh(p_k, dr);
   x0 := p_x - wh[1] / 2; y0 := p_y - wh[2] / 2; x1 := x0 + wh[1] - 1; y1 := y0 + wh[2] - 1;
   select * into old from mp_tracks where k = p_k and bld is not null;
+  cnm := coalesce(cnm, old.nm);   -- 管理者が名前をつけていれば、場所を変えても そのまま（DB の更新93）
   ck := _mp_track_check(x0, y0, x1, y1, old.bld)
         || jsonb_build_object('rect', jsonb_build_array(x0, y0, x1, y1), 'dir', dr, 'moved', old.bld is not null,
-                              'addr', _mp_addr(_mp_t5(p_x), _mp_t5(p_y), p_x, p_y) ->> 'text');
+                              'addr', _mp_addr(_mp_t5(p_x), _mp_t5(p_y), p_x, p_y) ->> 'text',
+                              'name', coalesce(cnm, _mp_track_autoname(p_k, p_x, p_y)), 'auto', cnm is null);
   if p_dry then return ck; end if;
   if not (ck ->> 'ok')::boolean then raise exception 'ここには おけません（%）', _mp_track_why(ck); end if;
   -- いまの競馬場（場所を変えるとき）：筆ごととりのぞく（建物・競馬場の行も消える）
@@ -26614,11 +26649,12 @@ begin
   insert into mp_pcells(x, y, parcel) select gx, gy, pid from generate_series(x0, x1) gx, generate_series(y0, y1) gy;
   perform _mp_parcel_vals(array[pid]);
   cs := array(select q.v from generate_series(y0, y1) gy, generate_series(x0, x1) gx, lateral unnest(array[gx, gy]) with ordinality q(v, o) order by gy, gx, q.o);
-  bid := _mp_bld_make(pid, jsonb_build_object('kind', 'keiba', 'shape', 'full', 'floors', 0, 'cells', to_jsonb(cs), 'fm2', n * 100, 'plan', '[]'::jsonb), '', p_k || '競馬場', 0, false);
-  insert into mp_tracks(k, bld, x0, y0, x1, y1, dir, at) values (p_k, bid, x0, y0, x1, y1, dr, now())
-    on conflict (k) do update set bld = excluded.bld, x0 = excluded.x0, y0 = excluded.y0, x1 = excluded.x1, y1 = excluded.y1, dir = excluded.dir, at = excluded.at;
+  bnm := coalesce(cnm, _mp_track_autoname(p_k, p_x, p_y));   -- 名前：管理者がつけた名前か、おいた場所の地名から（実在の競馬場の名前にしない。DB の更新93）
+  bid := _mp_bld_make(pid, jsonb_build_object('kind', 'keiba', 'shape', 'full', 'floors', 0, 'cells', to_jsonb(cs), 'fm2', n * 100, 'plan', '[]'::jsonb), '', bnm, 0, false);
+  insert into mp_tracks(k, bld, x0, y0, x1, y1, dir, nm, at) values (p_k, bid, x0, y0, x1, y1, dr, cnm, now())
+    on conflict (k) do update set bld = excluded.bld, x0 = excluded.x0, y0 = excluded.y0, x1 = excluded.x1, y1 = excluded.y1, dir = excluded.dir, nm = excluded.nm, at = excluded.at;
   perform _mp_chg('land', null, 'set', box(point(_mp_t5(x0), _mp_t5(y0)), point(_mp_t5(x1) + 1, _mp_t5(y1) + 1)));
-  return ck || jsonb_build_object('id', bid, 'name', p_k || '競馬場');
+  return ck || jsonb_build_object('id', bid, 'name', bnm);
 end $$;
 -- 近くで競馬場をおけるところをさがす（管理者）：p_x・p_y のまわり 4km を 250m ずつ、近いところから。はやい下しらべ（マスごと）のあと、くわしくしらべる（40か所まで）
 create or replace function public.mp_track_find(p_k text, p_x int, p_y int, p_dir text) returns jsonb
@@ -26656,6 +26692,21 @@ begin
   delete from mp_tracks where k = p_k;
   perform _mp_chg('land', null, 'set', box(point(_mp_t5(t.x0), _mp_t5(t.y0)), point(_mp_t5(t.x1) + 1, _mp_t5(t.y1) + 1)));
   return jsonb_build_object('k', p_k);
+end $$;
+-- 競馬場の名前を変える（管理者。DB の更新93）：30文字まで。空にすると、おいた場所の地名から
+create or replace function public.mp_track_rename(p_k text, p_name text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); t mp_tracks; vnm text := nullif(btrim(coalesce(p_name, '')), ''); bnm text;
+begin
+  perform _mp_admin(u);
+  select * into t from mp_tracks where k = p_k;
+  if not found or t.bld is null then raise exception 'この競馬場は、まだ地図においていません'; end if;
+  if char_length(vnm) > 30 then raise exception '名前は30文字までです'; end if;
+  update mp_tracks set nm = vnm where k = p_k;
+  bnm := coalesce(vnm, _mp_track_autoname(p_k, t.x0 + (t.x1 - t.x0 + 1) / 2, t.y0 + (t.y1 - t.y0 + 1) / 2));
+  update mp_blds set name = bnm where id = t.bld;
+  perform _mp_chg('land', null, 'set', box(point(_mp_t5(t.x0), _mp_t5(t.y0)), point(_mp_t5(t.x1) + 1, _mp_t5(t.y1) + 1)));
+  return jsonb_build_object('k', p_k, 'name', bnm, 'auto', vnm is null);
 end $$;
 -- 建物のシート：競馬場（きょうのレース・来場者の見こみ・お客が乗る駅）・場外馬券売り場（きょうのレース）
 create or replace function public.mp_track_info(p_bld bigint) returns jsonb
@@ -32671,7 +32722,7 @@ begin
             'mp_sta_build','mp_sta_edit','mp_sta_resize','mp_sta_trk','mp_sta_trk_set','mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list',
             'mp_thru_req','mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market',
             'mp_unit_mine','mp_unit_own','mp_unit_set','mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer','mp_unko_list','mp_unko_pick','mp_unko_furi','mp_unko_make','mp_jam_now','mp_jam_list','mp_er_now','mp_er_list','mp_er_bld','mp_lic_find','mp_lic_at','mp_lic_apply','_mp_lic_pfee_of','_mp_lic_pfee','_mp_lic_have','_mp_lic_mfee','mp_lic_mine','mp_lic_cancel','mp_lic_review','mp_lic_decide',
-            'mp_sta_melt','mp_seg_snow','mp_dep_plow','mp_snow_mine','mp_seg_height','_mp_taut','_mp_prof_flat','_mp_prof_simp','_mp_hopt','_mp_prof_make2','mp_sta_height','_mp_clr_stop2','_mp_clr_pass2','_mp_leg_sig','mp_seg_sig','_mp_trmul','_mp_leg_quad','_mp_ps_names','_mp_leg_pm','_mp_leg_dz','_mp_race_w','_mp_track_wh','_mp_track_base','_mp_track_check','_mp_track_why','_mp_track_sta','_mp_track_riders','_mp_race_sessions','mp_track_list','mp_track_place','mp_track_find','mp_track_del','mp_track_info','_mp_attr_kinds','_mp_attr_max','_mp_attr_fresh','mp_attr_list','mp_attr_build','mp_attr_del','_sec_lim','_sec_label','_sec_tell','_sec_auto','sec_admin_list','sec_admin_block','sec_admin_unblock','app_ver','_mp_sub_spec','_mp_sub_r','_mp_feed','_mp_leg_fed','_mp_route_feed','_mp_sub_name','_mp_sub_auto','_mp_sub_event','mp_sub_build','mp_sub_set','mp_sub_del','_mp_li_put','_mp_routes_fp',
+            'mp_sta_melt','mp_seg_snow','mp_dep_plow','mp_snow_mine','mp_seg_height','_mp_taut','_mp_prof_flat','_mp_prof_simp','_mp_hopt','_mp_prof_make2','mp_sta_height','_mp_clr_stop2','_mp_clr_pass2','_mp_leg_sig','mp_seg_sig','_mp_trmul','_mp_leg_quad','_mp_ps_names','_mp_leg_pm','_mp_leg_dz','_mp_track_ng','_mp_track_autoname','mp_track_rename','_mp_race_w','_mp_track_wh','_mp_track_base','_mp_track_check','_mp_track_why','_mp_track_sta','_mp_track_riders','_mp_race_sessions','mp_track_list','mp_track_place','mp_track_find','mp_track_del','mp_track_info','_mp_attr_kinds','_mp_attr_max','_mp_attr_fresh','mp_attr_list','mp_attr_build','mp_attr_del','_sec_lim','_sec_label','_sec_tell','_sec_auto','sec_admin_list','sec_admin_block','sec_admin_unblock','app_ver','_mp_sub_spec','_mp_sub_r','_mp_feed','_mp_leg_fed','_mp_route_feed','_mp_sub_name','_mp_sub_auto','_mp_sub_event','mp_sub_build','mp_sub_set','mp_sub_del','_mp_li_put','_mp_routes_fp',
             '_mp_form_busy','_mp_form_runs','_mp_cxl_on','_mp_unko_zone','_mp_unko_zi','_mp_unko_zt','_mp_unko_rt','_mp_sched_idx','_mp_unko_trn','_mp_rail_path_x','_mp_unko_det','mp_cxl_add','mp_cxl_del','_mp_form_key','_mp_train_runs','_mp_subst_can','_mp_subst_pick','_mp_subst_has','_mp_subst_ok','_mp_subst_plan','_mp_subst_plan_all','_mp_tmp_back','mp_form_spare','mp_form_add','mp_car_tmp') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
@@ -32727,7 +32778,7 @@ alter function public.mp_seg_sig(bigint, int, boolean, boolean) set statement_ti
 alter function public.mp_sub_build(bigint, real, real, int, text, boolean) set statement_timeout = '60s';
 alter function public.mp_sub_del(bigint, boolean) set statement_timeout = '60s';
 -- 競馬場をおく・さがす（DB の更新92）は、広い土地をしらべるので60秒まで
-alter function public.mp_track_place(text, int, int, text, boolean) set statement_timeout = '60s';
+alter function public.mp_track_place(text, int, int, text, boolean, text) set statement_timeout = '60s';   -- 名前（p_name）を足した（DB の更新93）
 alter function public.mp_track_find(text, int, int, text) set statement_timeout = '60s';
 -- 線路をつくる・直す・つなぐ・こわす・設定を変える（系統の時刻を組みなおすことがある）は 60秒まで（DB の更新88。前は20秒）
 do $$

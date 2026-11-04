@@ -1313,7 +1313,7 @@ async function kbFill(el, bid) {
   if (!L) { el.innerHTML = ''; return; }
   if (L.kind === 'keiba') {
     const sta = L.sta || [];
-    el.innerHTML = `<h4 style="margin:12px 0 4px">🏇 <span>競馬場</span> <small class="muted" translate="no">${esc(L.k)}</small></h4><div class="mp-kv">
+    el.innerHTML = `<h4 style="margin:12px 0 4px">🏇 <span>競馬場</span> <small class="muted"><span>会場</span> <span translate="no">${esc(L.k)}</span></small></h4><div class="mp-kv">
       <b>広さ</b><span>${fmt(L.w)}m × ${fmt(L.h)}m</span>
       <b>きょうのレース</b><span>${raceSes(L, false)}</span>
       <b>来場者</b><span>${L.vis ? `<span>きょう 約${fmt(L.vis)}人</span> <small>（見こみ）</small>` : '—'}</span>
@@ -1329,15 +1329,26 @@ async function trkAdminFill(el, m) {
   let L;
   try { L = await call('mp_track_list', {}); } catch (e) { el.innerHTML = /mp_track_list|schema cache|function/i.test(e.message) ? '<p class="muted small">サーバーの更新（DB の更新92）のあとで使えます</p>' : `<p class="mp-warn small">${esc(errJa(e.message))}</p>`; return; }
   L = L || [];
-  el.innerHTML = L.map(t => `<div class="mp-row small" style="justify-content:space-between;margin:2px 0;flex-wrap:wrap"><span><b translate="no">${esc(t.k)}競馬場</b> ${t.bld ? `<span translate="no">${esc(t.addr || '')}</span>` : '<span class="muted">まだ地図にありません</span>'}</span>
-      <span>${t.bld ? `<button class="btn" data-tgo="${esc(t.k)}" style="padding:2px 8px">見に行く</button> ` : ''}<button class="btn" data-tput="${esc(t.k)}" style="padding:2px 8px">${t.bld ? '場所を変える' : '地図でおく'}</button>${t.bld ? ` <button class="btn" data-tdel="${esc(t.k)}" style="padding:2px 8px;color:#c33">とりのぞく</button>` : ''}</span></div>`).join('')
-    + '<p class="muted small" style="margin:2px 0 6px">競馬場は国の建物です（府中・京都・中京の3つ）。その会場のレースの時間には、来場者が近くの駅（ふちから800m）・バス停（400m）で乗り降りします。おけるのは、道路・線路・駅・持ち主のいる土地・水・山・公園のないところです。</p>';
+  const nmOK = L.some(t => 'auto' in t);   // 名前を変えられるサーバー（DB の更新93）
+  el.innerHTML = L.map(t => `<div class="mp-row small" style="justify-content:space-between;margin:2px 0;flex-wrap:wrap"><span>${t.bld
+        ? `${t.name ? `<b translate="no">${esc(t.name)}</b> ` : ''}<small class="muted"><span>会場</span> <span translate="no">${esc(t.k)}</span></small> <span translate="no">${esc(t.addr || '')}</span>`
+        : `<b><span>会場</span> <span translate="no">${esc(t.k)}</span></b> <span class="muted">まだ地図にありません</span>`}</span>
+      <span>${t.bld ? `<button class="btn" data-tgo="${esc(t.k)}" style="padding:2px 8px">見に行く</button> ` : ''}${t.bld && nmOK ? `<button class="btn" data-tren="${esc(t.k)}" style="padding:2px 8px">名前</button> ` : ''}<button class="btn" data-tput="${esc(t.k)}" style="padding:2px 8px">${t.bld ? '場所を変える' : '地図でおく'}</button>${t.bld ? ` <button class="btn" data-tdel="${esc(t.k)}" style="padding:2px 8px;color:#c33">とりのぞく</button>` : ''}</span></div>`).join('')
+    + '<p class="muted small" style="margin:2px 0 6px">競馬場は国の建物です（競馬の会場 府中・京都・中京 ごとに1つ）。名前は、おいた場所の地名からつきます（「名前」で変えられます）。その会場のレースの時間には、来場者が近くの駅（ふちから800m）・バス停（400m）で乗り降りします。おけるのは、道路・線路・駅・持ち主のいる土地・水・山・公園のないところです。</p>';
   const T0 = k => L.find(t => t.k === k);
   el.querySelectorAll('[data-tput]').forEach(x => x.onclick = () => { m.close(); trackTool(x.dataset.tput, T0(x.dataset.tput)); });
   el.querySelectorAll('[data-tgo]').forEach(x => x.onclick = () => { const t = T0(x.dataset.tgo); m.close(); setCam(t.x / 5, t.y / 5, 8); });
+  el.querySelectorAll('[data-tren]').forEach(x => x.onclick = async () => {   // 名前を変える（DB の更新93）
+    const t = T0(x.dataset.tren), nm = prompt(T('競馬場の名前（30文字まで。空にすると、おいた場所の地名から）'), t.nm || '');
+    if (nm == null) return;
+    if (await api('mp_track_rename', { p_k: t.k, p_name: nm }, '名前を変えました')) {
+      if (t.rect) refreshBox(Math.floor(t.rect[0] / 5) - 1, Math.floor(t.rect[1] / 5) - 1, Math.floor(t.rect[2] / 5) + 1, Math.floor(t.rect[3] / 5) + 1);
+      trkAdminFill(el, m);
+    }
+  });
   el.querySelectorAll('[data-tdel]').forEach(x => x.onclick = async () => {
     const t = T0(x.dataset.tdel);
-    if (!await confirm2(`${t.k}競馬場を地図からとりのぞきます（筆と建物がなくなります）。よろしいですか？`, { what: `${t.k}競馬場`, q: '本当にとりのぞきますか？', ok: 'とりのぞく', note: '筆と建物がなくなります（あとでまた おけます）。' })) return;
+    if (!await confirm2(`「${t.name || '競馬場'}」（会場 ${t.k}）を地図からとりのぞきます（筆と建物がなくなります）。よろしいですか？`, { what: `「${t.name || '競馬場'}」`, q: '本当にとりのぞきますか？', ok: 'とりのぞく', note: '筆と建物がなくなります（あとでまた おけます）。' })) return;
     if (await api('mp_track_del', { p_k: t.k }, 'とりのぞきました')) {
       if (t.rect) refreshBox(Math.floor(t.rect[0] / 5) - 1, Math.floor(t.rect[1] / 5) - 1, Math.floor(t.rect[2] / 5) + 1, Math.floor(t.rect[3] / 5) + 1);
       trkAdminFill(el, m);
@@ -1348,7 +1359,7 @@ async function trkAdminFill(el, m) {
 function trackTool(k, cur) {
   setTool('look');
   const st = S.toolState = { c: cur && cur.bld ? [cur.x, cur.y] : null, dir: (cur && cur.dir) || 'h', r: null };
-  hint(`${k}競馬場：おきたいところ（まん中）をタップします`);
+  hint(`競馬場（会場 ${k}）：おきたいところ（まん中）をタップします`);
   const rect = () => { const z = TRACK_WH[k] || [100, 50], w = st.dir === 'v' ? z[1] : z[0], h = st.dir === 'v' ? z[0] : z[1], x0 = st.c[0] - Math.floor(w / 2), y0 = st.c[1] - Math.floor(h / 2); return [x0, y0, x0 + w - 1, y0 + h - 1]; };
   S.drawTool = (g, z) => {
     if (!st.c) return;
@@ -1358,10 +1369,11 @@ function trackTool(k, cur) {
   };
   const show = () => {
     const r = st.r;
-    sheet(`<h4 translate="no">${esc(k)}競馬場</h4>
+    sheet(`<h4><span>競馬場</span> <small class="muted"><span>会場</span> <span translate="no">${esc(k)}</span></small></h4>
       ${!st.c ? '<p class="muted small">地図をタップしてください（そこが競馬場のまん中になります）</p>'
         : !r ? '<p class="muted small">しらべています…</p>'
-        : `<p class="small" style="margin:2px 0">${r.addr ? `<span translate="no">${esc(r.addr)}</span>・` : ''}${r.ok ? '<b style="color:#1a7f37">ここにおけます</b>' : `<span class="mp-warn">おけません：${esc(whyTrk(r))}</span>`}</p>`}
+        : `<p class="small" style="margin:2px 0">${r.addr ? `<span translate="no">${esc(r.addr)}</span>・` : ''}${r.ok ? '<b style="color:#1a7f37">ここにおけます</b>' : `<span class="mp-warn">おけません：${esc(whyTrk(r))}</span>`}</p>
+          ${r.name ? `<p class="small" style="margin:2px 0"><span>名前</span>：<b translate="no">${esc(r.name)}</b> <small class="muted">${r.auto ? '（おいた場所の地名から。あとで変えられます）' : ''}</small></p>` : ''}`}
       <div class="mp-row"><button class="btn" data-tdir>${st.dir === 'v' ? '横長にする' : '縦長にする'}</button><button class="btn" data-tfind ${st.c ? '' : 'disabled'}>近くでさがす</button>
         <button class="btn main" data-tok ${r && r.ok ? '' : 'disabled'}>${cur && cur.bld ? 'ここにうつす' : 'ここにおく'}</button></div>
       <p class="muted small" style="margin:2px 0">大きさ ${(st.dir === 'v' ? [...(TRACK_WH[k] || [0, 0])].reverse() : (TRACK_WH[k] || [0, 0])).map(v => fmt(v * 10) + 'm').join(' × ')}（${st.dir === 'v' ? '縦長' : '横長'}）。道路・線路・駅・持ち主のいる土地・水・山・公園のないところに おけます</p>`, sh => {
@@ -1375,7 +1387,8 @@ function trackTool(k, cur) {
       };
       q0(sh, '[data-tok]').onclick = async () => {
         if (!st.r || !st.r.ok) return;
-        if (!await confirm2(`${k}競馬場を${st.r.addr ? `「${st.r.addr}」に` : 'ここに'}${cur && cur.bld ? 'うつします（いまの競馬場はとりのぞきます）' : 'おきます'}。よろしいですか？`, { what: `${k}競馬場`, q: cur && cur.bld ? '本当にうつしますか？' : '本当におきますか？', ok: cur && cur.bld ? 'うつす' : 'おく', note: cur && cur.bld ? 'いまの競馬場の筆と建物はなくなります（場所はまた変えられます）。' : '場所はあとで変えられます。' })) return;
+        const tn = st.r.name ? `「${st.r.name}」` : '競馬場';
+        if (!await confirm2(`${tn}（会場 ${k}）を${st.r.addr ? `「${st.r.addr}」に` : 'ここに'}${cur && cur.bld ? 'うつします（いまの競馬場はとりのぞきます）' : 'おきます'}。よろしいですか？`, { what: tn, q: cur && cur.bld ? '本当にうつしますか？' : '本当におきますか？', ok: cur && cur.bld ? 'うつす' : 'おく', note: cur && cur.bld ? 'いまの競馬場の筆と建物はなくなります（場所はまた変えられます）。' : '場所はあとで変えられます。' })) return;
         const d = await api('mp_track_place', { p_k: k, p_x: st.c[0], p_y: st.c[1], p_dir: st.dir, p_dry: false }, cur && cur.bld ? 'うつしました' : 'おきました'); if (!d) return;
         const [x0, y0, x1, y1] = d.rect || rect(); refreshBox(Math.floor(x0 / 5) - 1, Math.floor(y0 / 5) - 1, Math.floor(x1 / 5) + 1, Math.floor(y1 / 5) + 1);
         if (cur && cur.rect) refreshBox(Math.floor(cur.rect[0] / 5) - 1, Math.floor(cur.rect[1] / 5) - 1, Math.floor(cur.rect[2] / 5) + 1, Math.floor(cur.rect[3] / 5) + 1);
