@@ -19262,7 +19262,7 @@ begin
     ch := _mp_seg_chain(p_a, p_b);
     if ch is null then raise exception '起点と終点のあいだに分かれ道があるか、線路がつながっていません（分かれ道はまたげません）'; end if;
     for i in 2..array_length(ch, 1) loop m := _mp_seg_join2(m, ch[i]); end loop;
-    perform _mp_renet(a.own_u, a.own_c); perform _mp_routes_fix(a.own_u, a.own_c);
+    perform _mp_renet(a.own_u, a.own_c); perform _mp_routes_fix(a.own_u, a.own_c, ch);   -- 1本にした線を通る系統だけ（DB の更新94）
   end if;
   select * into s from mp_segs where id = m;
   return jsonb_build_object('id', s.id, 'k', s.kind, 'c', s.cls, 'n', s.name, 'w', s.w, 'l', s.lanes, 'p', to_jsonb(s.pts), 'dbl', s.dbl, 'el', s.elec, 'art', s.art, 'col', s.color,
@@ -19358,7 +19358,11 @@ begin
     perform _mp_renet(pa.pu, pa.pc);
     if coalesce(p_from ? 'seg', false) or coalesce(p_to ? 'seg', false)
        or (select count(*) from unnest(array[n0, n1]) e(nd) where exists (select 1 from mp_segs s where s.id <> sid and (s.n0 = e.nd or s.n1 = e.nd))) >= 2 then
-      perform _mp_routes_fix(pa.pu, pa.pc);
+      -- 線のとちゅうから分かれた 行きどまりの線（はしの1つだけが、線のとちゅうにつながる）：道すじが変わるのは、分けた線を通る系統だけ（DB の更新94）
+      perform _mp_routes_fix(pa.pu, pa.pc,
+        case when coalesce(p_from ? 'seg', false) <> coalesce(p_to ? 'seg', false)
+              and (select count(*) from unnest(array[n0, n1]) e(nd) where exists (select 1 from mp_segs s where s.id <> sid and (s.n0 = e.nd or s.n1 = e.nd))) = 1
+             then array[coalesce((p_from ->> 'seg')::bigint, (p_to ->> 'seg')::bigint)] end);
     end if;
   end if;
   perform _mp_chg('seg', sid, 'set', _mp_bb(p_pts));
@@ -19558,7 +19562,7 @@ begin
          cost = cost + amt_::bigint
    where id = p_id;
   perform _mp_lease_set('seg', p_id, sg.own_u, sg.own_c, sg.gov);
-  if sg.kind = 'rail' then perform _mp_routes_fix(sg.own_u, sg.own_c); end if;
+  if sg.kind = 'rail' then perform _mp_routes_fix(sg.own_u, sg.own_c, array[p_id]); end if;   -- この線を通る系統だけ（DB の更新94）
   if sg.kind = 'rail' and (nq is distinct from sg.quad or nps is distinct from sg.ps) then   -- 複々線・電化方式（DB の更新87）：通る系統の時刻を計算しなおす（道すじは同じなので _mp_routes_fix ではしない）
     for rid in select distinct ro.id from mp_routes ro, jsonb_array_elements(ro.legs) l, jsonb_array_elements(coalesce(l -> 'g', '[]'::jsonb)) g
                 where ro.kind = 'rail' and ro.ok and (g ->> 0)::bigint = p_id loop
@@ -19611,7 +19615,7 @@ begin
   delete from mp_depots where seg = p_id;
   delete from mp_segs where id = p_id;
   delete from mp_nodes n where n.id in (sg.n0, sg.n1) and n.name is null and not exists (select 1 from mp_segs s where s.n0 = n.id or s.n1 = n.id);
-  if sg.kind = 'rail' then perform _mp_renet(sg.own_u, sg.own_c); perform _mp_routes_fix(sg.own_u, sg.own_c); end if;
+  if sg.kind = 'rail' then perform _mp_renet(sg.own_u, sg.own_c); perform _mp_routes_fix(sg.own_u, sg.own_c, array[p_id]); end if;   -- 消した線を通っていた系統だけ（DB の更新94）
   perform _mp_chg('seg', p_id, 'del', sg.bb);
 end $$;
 
@@ -20768,14 +20772,22 @@ language sql stable set search_path = public as $$
                                            coalesce(t.cplx::text, '-')), ',' order by t.id), ''))
     from mp_trains t where t.route = any(ids)
 $$;
-create or replace function public._mp_routes_fix(pu uuid, pc int) returns void
+drop function if exists public._mp_routes_fix(uuid, int);   -- p_only を足した（DB の更新94）
+create or replace function public._mp_routes_fix(pu uuid, pc int, p_only bigint[] default null) returns void
 language plpgsql set search_path = public as $$
 declare r mp_routes; i int; leg jsonb; lg jsonb; bad text; ids bigint[] := '{}'; lgs jsonb[] := '{}'; bads text[] := '{}'; same boolean[] := '{}'; k int;
         fp0 text;   -- DB の更新88
+        near boolean[] := '{}';   -- DB の更新94
 begin
   -- 1. 系統ごとに、線路の道すじを出しなおす
+  --    p_only（DB の更新94）：その線を通らない系統は、道すじが変わらないので出しなおさない（線を分けて行きどまりの線をつないだ・線を1本にした・消した・
+  --    設定を変えたときで、新しくつながったところがないとき。道すじは線の長さとつながりだけで決まるので）
   for r in select * from mp_routes x where x.kind = 'rail' and ((x.own_u is not distinct from pu and x.own_c is not distinct from pc)
              or exists (select 1 from mp_thru t where t.hu is not distinct from pu and t.hc is not distinct from pc and t.gu is not distinct from x.own_u and t.gc is not distinct from x.own_c)) loop
+    if p_only is not null and not exists (select 1 from jsonb_array_elements(r.legs) l, jsonb_array_elements(coalesce(l -> 'g', '[]'::jsonb)) g where (g ->> 0)::bigint = any(p_only)) then
+      ids := ids || r.id; lgs := lgs || r.legs; bads := bads || case when r.ok then null else coalesce(r.why, '') end; same := same || true; near := near || false;
+      continue;
+    end if;
     lg := '[]'::jsonb; bad := null;
     for i in 1..array_length(r.stops, 1) - 1 loop
       leg := _mp_rail_path(r.own_u, r.own_c, r.stops[i], r.stops[i + 1]);
@@ -20784,9 +20796,19 @@ begin
     end loop;
     ids := ids || r.id; lgs := lgs || lg; bads := bads || bad;
     same := same || coalesce((bad is null and r.ok and r.legs = lg) or (bad is not null and not r.ok and r.why is not distinct from bad), false);
+    near := near || coalesce(bad is null and r.ok and r.legs <> lg and _mp_legs_near(r.legs, lg), false);   -- DB の更新94
   end loop;
   -- 2.（2026-10-28）どの系統も前とまったく同じなら、何もしない（時刻も前のまま）。前は線路を1本つくるたびに、ぜんぶの系統の時刻を組みなおしていて、8秒の制限をこえていた
   if coalesce(array_length(ids, 1), 0) = 0 or true = all(same) then return; end if;
+  -- 2.5 道すじが ほとんど同じ系統（線のとちゅうから分かれ道をつくって、通る線が2つに分かれただけ）は、道すじだけ書きかえて、時刻は前のまま（DB の更新94）。
+  --     前は ここでも時刻をぜんぶ組みなおしていて、列車の多い系統が通る線から分かれ道をつくると 1系統 3秒くらい かかっていた
+  for k in 1..array_length(ids, 1) loop
+    if not same[k] and near[k] then
+      update mp_routes set legs = lgs[k] where id = ids[k];   -- 走る時間のメモ（runt）も前のまま（時刻と同じ道すじの見かた）
+      same[k] := true;
+    end if;
+  end loop;
+  if true = all(same) then return; end if;
   -- 3. 道すじが変わった系統だけ、書きかえて時刻を組みなおす（DB の更新88）。
   --    前は どれか1つ変わると、ぜんぶの系統（乗り入れもふくむ）を組みなおしていて、大きい路線網のまん中で線を分けると（分かれ道をつくると）20秒の制限をこえていた
   fp0 := _mp_routes_fp(ids);   -- 組みなおす前の、列車の時刻・待避・注意・走れるか
@@ -22968,6 +22990,25 @@ language sql stable set search_path = public as $$
   select coalesce(array_agg(coalesce((select bool_and(_mp_feed(s.id) is not null) from jsonb_array_elements(coalesce(l -> 'g', '[]'::jsonb)) g join mp_segs s on s.id = (g ->> 0)::bigint where s.elec), true) order by k), '{}')
     from jsonb_array_elements(coalesce(legs, '[]'::jsonb)) with ordinality q(l, k)
 $$;
+-- 制限速度どおりに走ったときの秒（駅と駅のあいだ1つ。くらべる用。DB の更新94）
+create or replace function public._mp_ptime(p jsonb) returns real
+language sql immutable as $$
+  select coalesce(sum((e ->> 0)::real / greatest((e ->> 1)::real, 1) * 3.6), 0)::real from jsonb_array_elements(coalesce(p, '[]'::jsonb)) e
+$$;
+-- 系統の道すじ（legs）が ほとんど同じか（DB の更新94）：駅と駅のあいだの数・電化・単線が同じで、長さのちがいが 1m まで、
+--   制限速度どおりに走ったときの秒のちがいが 1秒まで、複々線・電化方式・デッドセクション・変電所・信号が同じ。
+--   ちがってよいのは、通る線の番号と位置（線を2つに分けたとき）と、分けたところの制限速度の少しのちがい（カーブの見かたの点が少しずれる）
+create or replace function public._mp_legs_near(a jsonb, b jsonb) returns boolean
+language sql stable set search_path = public as $$
+  select jsonb_array_length(coalesce(a, '[]'::jsonb)) = jsonb_array_length(coalesce(b, '[]'::jsonb))
+     and not exists (select 1 from jsonb_array_elements(coalesce(a, '[]'::jsonb)) with ordinality x(l, k)
+                       join jsonb_array_elements(coalesce(b, '[]'::jsonb)) with ordinality y(m, j) on j = x.k
+                      where (x.l - 'g' - 'p' - 'd') is distinct from (y.m - 'g' - 'p' - 'd')
+                         or abs(coalesce((x.l ->> 'd')::real, 0) - coalesce((y.m ->> 'd')::real, 0)) > 1
+                         or abs(_mp_ptime(x.l -> 'p') - _mp_ptime(y.m -> 'p')) > 1)
+     and _mp_leg_quad(a) = _mp_leg_quad(b) and _mp_leg_pm(a) = _mp_leg_pm(b) and _mp_leg_dz(a) = _mp_leg_dz(b)
+     and _mp_leg_fed(a) = _mp_leg_fed(b) and _mp_leg_sig(a) = _mp_leg_sig(b)
+$$;
 -- 系統が通る線路のうち、変電所ごとの長さの割合（{変電所: 割合}。電化した線だけ。DB の更新89）
 create or replace function public._mp_route_feed(legs jsonb) returns jsonb
 language sql stable set search_path = public as $$
@@ -23684,13 +23725,16 @@ begin
   -- 公道の区画は、まわりを通る国の線だけで見る。地価はマスごとに1回（同じマスの区画は同じ地価）
   with c as (select distinct cells[2 * i - 1] x, cells[2 * i] y from generate_series(1, coalesce(array_length(cells, 1), 0) / 2) i),
        pub as materialized (select * from _mp_pub_of(cells)),
-       tv as materialized (select z.tx, z.ty, coalesce(_mp_cval(z.tx, z.ty), 120) cv from (select distinct _mp_t5(c.x) tx, _mp_t5(c.y) ty from c) z),
-       v as (select c.x, c.y, p.own_u lu, p.own_c lc, p.id pid, tv.cv
+       v0 as materialized (select c.x, c.y, p.own_u lu, p.own_c lc, p.id pid
                from c left join pub on pub.x = c.x and pub.y = c.y
-                      join tv on tv.tx = _mp_t5(c.x) and tv.ty = _mp_t5(c.y)
                       left join mp_pcells pcl on pcl.x = c.x and pcl.y = c.y left join mp_parcels p on p.id = pcl.parcel
               where pub.x is null),
-       pf as materialized (select d.pid, _mp_land_fee(d.pid, pu, pc) f from (select distinct v.pid from v where v.pid is not null) d),
+       -- 地価・貸出料は、使用料が前から決まっていなくて、使用料のいる区画（国の土地・他人の筆）だけ しらべる（DB の更新94。線を2つに分けるときは しらべなくてよい）
+       nd as materialized (select v0.* from v0 where not (prev ? (v0.x || ',' || v0.y))
+                             and ((v0.pid is null and rk <> 'sta') or (v0.pid is not null and not _mp_same(v0.lu, v0.lc, false, pu, pc, false)))),
+       tv as materialized (select z.tx, z.ty, coalesce(_mp_cval(z.tx, z.ty), 120) cv from (select distinct _mp_t5(nd.x) tx, _mp_t5(nd.y) ty from nd) z),
+       v as (select v0.*, tv.cv from v0 left join tv on tv.tx = _mp_t5(v0.x) and tv.ty = _mp_t5(v0.y)),
+       pf as materialized (select d.pid, _mp_land_fee(d.pid, pu, pc) f from (select distinct nd.pid from nd where nd.pid is not null) d),
        ins as (insert into mp_leases(x, y, ref_kind, ref, pay_u, pay_c, fee)
                select v.x, v.y, rk, rid, pu, pc,
                       coalesce((prev ->> (v.x || ',' || v.y))::numeric,
@@ -31410,7 +31454,7 @@ begin
   update mp_segs set prof = pf, st = nw, rack = rk, hm = nhm, hopt = ho, vlim = vl, cost = cost + amt::bigint where id = p_id;
   update mp_nodes set z = pf[2] where id = sg.n0 and (z is null or z0 is null);
   update mp_nodes set z = pf[array_length(pf, 1)] where id = sg.n1 and (z is null or z1 is null);
-  if sg.kind = 'rail' and vl is distinct from sg.vlim then perform _mp_routes_fix(sg.own_u, sg.own_c); end if;
+  if sg.kind = 'rail' and vl is distinct from sg.vlim then perform _mp_routes_fix(sg.own_u, sg.own_c, array[p_id]); end if;   -- この線を通る系統だけ（DB の更新94）
   perform _mp_chg('seg', p_id, 'set', sg.bb);
   for s in select id, x, y from mp_stations where seg = p_id loop
     perform _mp_chg('sta', s.id, 'set', box(point(s.x / 100.0 - 3, s.y / 100.0 - 3), point(s.x / 100.0 + 3, s.y / 100.0 + 3)));
@@ -32722,7 +32766,7 @@ begin
             'mp_sta_build','mp_sta_edit','mp_sta_resize','mp_sta_trk','mp_sta_trk_set','mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list',
             'mp_thru_req','mp_train_autoform','mp_train_bulk','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market',
             'mp_unit_mine','mp_unit_own','mp_unit_set','mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer','mp_unko_list','mp_unko_pick','mp_unko_furi','mp_unko_make','mp_jam_now','mp_jam_list','mp_er_now','mp_er_list','mp_er_bld','mp_lic_find','mp_lic_at','mp_lic_apply','_mp_lic_pfee_of','_mp_lic_pfee','_mp_lic_have','_mp_lic_mfee','mp_lic_mine','mp_lic_cancel','mp_lic_review','mp_lic_decide',
-            'mp_sta_melt','mp_seg_snow','mp_dep_plow','mp_snow_mine','mp_seg_height','_mp_taut','_mp_prof_flat','_mp_prof_simp','_mp_hopt','_mp_prof_make2','mp_sta_height','_mp_clr_stop2','_mp_clr_pass2','_mp_leg_sig','mp_seg_sig','_mp_trmul','_mp_leg_quad','_mp_ps_names','_mp_leg_pm','_mp_leg_dz','_mp_track_ng','_mp_track_autoname','mp_track_rename','_mp_race_w','_mp_track_wh','_mp_track_base','_mp_track_check','_mp_track_why','_mp_track_sta','_mp_track_riders','_mp_race_sessions','mp_track_list','mp_track_place','mp_track_find','mp_track_del','mp_track_info','_mp_attr_kinds','_mp_attr_max','_mp_attr_fresh','mp_attr_list','mp_attr_build','mp_attr_del','_sec_lim','_sec_label','_sec_tell','_sec_auto','sec_admin_list','sec_admin_block','sec_admin_unblock','app_ver','_mp_sub_spec','_mp_sub_r','_mp_feed','_mp_leg_fed','_mp_route_feed','_mp_sub_name','_mp_sub_auto','_mp_sub_event','mp_sub_build','mp_sub_set','mp_sub_del','_mp_li_put','_mp_routes_fp',
+            'mp_sta_melt','mp_seg_snow','mp_dep_plow','mp_snow_mine','mp_seg_height','_mp_taut','_mp_prof_flat','_mp_prof_simp','_mp_hopt','_mp_prof_make2','mp_sta_height','_mp_clr_stop2','_mp_clr_pass2','_mp_leg_sig','mp_seg_sig','_mp_trmul','_mp_leg_quad','_mp_ps_names','_mp_leg_pm','_mp_leg_dz','_mp_ptime','_mp_legs_near','_mp_track_ng','_mp_track_autoname','mp_track_rename','_mp_race_w','_mp_track_wh','_mp_track_base','_mp_track_check','_mp_track_why','_mp_track_sta','_mp_track_riders','_mp_race_sessions','mp_track_list','mp_track_place','mp_track_find','mp_track_del','mp_track_info','_mp_attr_kinds','_mp_attr_max','_mp_attr_fresh','mp_attr_list','mp_attr_build','mp_attr_del','_sec_lim','_sec_label','_sec_tell','_sec_auto','sec_admin_list','sec_admin_block','sec_admin_unblock','app_ver','_mp_sub_spec','_mp_sub_r','_mp_feed','_mp_leg_fed','_mp_route_feed','_mp_sub_name','_mp_sub_auto','_mp_sub_event','mp_sub_build','mp_sub_set','mp_sub_del','_mp_li_put','_mp_routes_fp',
             '_mp_form_busy','_mp_form_runs','_mp_cxl_on','_mp_unko_zone','_mp_unko_zi','_mp_unko_zt','_mp_unko_rt','_mp_sched_idx','_mp_unko_trn','_mp_rail_path_x','_mp_unko_det','mp_cxl_add','mp_cxl_del','_mp_form_key','_mp_train_runs','_mp_subst_can','_mp_subst_pick','_mp_subst_has','_mp_subst_ok','_mp_subst_plan','_mp_subst_plan_all','_mp_tmp_back','mp_form_spare','mp_form_add','mp_car_tmp') loop
     execute format('revoke all on function %s from public, anon', f.sig);
     if left(f.proname, 1) = '_' then
