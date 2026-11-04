@@ -4152,7 +4152,7 @@ function showSta(s) {
   const air = s.k === 'air', port = s.k === 'ship' || air, pdep = port ? [...S.vis.deps.values()].find(d => d.k === s.k && d.b != null && d.b === s.b) : null;
   const gov = air && s.o === 'gov', adm = gov && S.admin;   // 国の空港（t54q）：だれでも使える。名前・使用料は管理者
   sheet(`<h4>${s.k === 'rail' ? '🚉 ' : air ? '✈ ' : port ? '⚓ ' : '🚏 '}<span>${esc(s.n)}</span>${s.k === 'rail' ? '<span>駅</span>' : gov ? '<span>（国の空港）</span>' : air ? '<span>（空港）</span>' : port ? '<span>（港）</span>' : ''}</h4><p class="small muted" data-addr translate="no" style="margin:0"></p>
-    <div class="mp-kv"><b>持ち主</b><span><span>${s.o === 'gov' ? '国' : esc(S.vis.names[s.o] || '')}</span>${s.mine ? '<small>（あなた）</small>' : ''}</span>
+    <div class="mp-kv"><b>持ち主</b><span><span>${s.o === 'gov' ? '国' : esc(S.vis.names[s.o] || '')}</span>${s.mine && s.o !== 'gov' ? '<small>（あなた）</small>' : ''}</span>
       ${wxRow(s.fx, s.fy)}${snowStaRow(s)}
       ${s.k === 'rail' ? `<b>ホーム</b><span>${s.pl} m・${s.tr}番線まで</span>` : ''}
       ${s.k === 'rail' && S.hgtOK ? `<b>高さ</b><span>${STA_LV[s.zl || 'G']}</span>` : ''}
@@ -5015,7 +5015,7 @@ function staSheet(kind, hit, hit2) {
         <span class="muted small">20m の車両 ${Math.floor(st.plat / 20)}両まで</span></div>
       <div class="mp-row">番線 <span class="mp-seg">${[1, 2, 3, 4, 6].map(n => `<button data-t="${n}" class="${st.tracks === n ? 'on' : ''}">${n}</button>`).join('')}</span></div>
       <p class="muted small" style="margin:4px 0 0">起点と終点のあいだが、ホームになります（20m単位）。もう一度タップすると、えらびなおせます</p>` : ''}
-    <div class="mp-row">${st.q ? `<span class="mp-cost">工事費 ${X(st.q.cost)}</span><span class="small"><span>維持費 1日 ${X(st.q.up_day)}</span>${st.q.lease ? `<span>・使用料 1日 ${X(st.q.lease)}</span>` : ''}${st.q.zl ? `<span>・${st.q.zl === 'U' ? '地下駅（工事費 2.5倍）' : '高架駅（工事費 1.5倍）'}</span>` : ''}</span>` : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button><span class="muted small">工事費を出してから、つくれます</span>'}</div>
+    <div class="mp-row">${st.q ? `${S.as === 'gov' && !st.q.cost ? '<span>工事費なし（国の工事は無料）</span>' : `<span class="mp-cost">工事費 ${X(st.q.cost)}</span>`}<span class="small">${st.q.up_day ? `<span>維持費 1日 ${X(st.q.up_day)}</span>` : ''}${st.q.lease ? `<span>・使用料 1日 ${X(st.q.lease)}</span>` : ''}${st.q.zl ? `<span>・${st.q.zl === 'U' ? '地下駅（工事費 2.5倍）' : '高架駅（工事費 1.5倍）'}</span>` : ''}</span>` : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button><span class="muted small">工事費を出してから、つくれます</span>'}</div>
     ${st.q ? needH(st.q.need) : ''}
     <div class="mp-row"><button class="btn main" data-ok ${st.q && !hasNeed(st.q) ? '' : 'disabled'}>つくる（${esc(asName())}）</button></div>`, s => {
     s.querySelector('[data-nm]').onchange = e => { st.name = e.target.value; };
@@ -5082,7 +5082,7 @@ async function depTap(x, y) {
     <div class="mp-row"><input class="mp-inp" data-nm value="${esc(st.name)}"></div>
     <div class="mp-row"><span class="mp-seg">${sizes.map(s => `<button data-s="${s[0]}" class="${st.size === s[0] ? 'on' : ''}">${s[1]}</button>`).join('')}</span>
       <button class="btn" data-side>反対側にする</button></div>
-    <div class="mp-row">${st.q ? `<span class="mp-cost">工事費 ${X(st.q.cost)}</span><span class="small">使用料 1日 ${X(st.q.lease)}・維持費 1日 ${X(st.q.up_day)}</span>` : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button><span class="muted small">工事費を出してから、つくれます</span>'}</div>
+    <div class="mp-row">${st.q ? (S.as === 'gov' && !st.q.cost ? '<span>工事費なし（国の工事は無料）</span>' : `<span class="mp-cost">工事費 ${X(st.q.cost)}</span><span class="small">使用料 1日 ${X(st.q.lease)}・維持費 1日 ${X(st.q.up_day)}</span>`) : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button><span class="muted small">工事費を出してから、つくれます</span>'}</div>
     ${st.q ? needH(st.q.need) : ''}
     <div class="mp-row"><button class="btn main" data-ok ${st.q && !hasNeed(st.q) ? '' : 'disabled'}>つくる（${esc(asName())}）</button></div>`, s => {
     s.querySelector('[data-nm]').onchange = e => { st.name = e.target.value; };
@@ -5131,7 +5131,7 @@ function depSheetRail(h1, h2) {
     <div class="mp-row"><span>長さ</span> ${step('len', 20)}</div>
     <div class="mp-row"><span>留置線</span> ${step('n', 1)} <button class="btn" data-side>反対側にする</button></div>
     <p class="small" style="margin:4px 0 0">20m の車両 ${Math.floor(st.len / 20) * st.n}両まで（${Math.floor(st.len / 20)}両 × ${st.n}本）</p>
-    <div class="mp-row">${st.q ? `<span class="mp-cost">工事費 ${X(st.q.cost)}</span><span class="small">使用料 1日 ${X(st.q.lease)}・維持費 1日 ${X(st.q.up_day)}</span>` : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button><span class="muted small">工事費を出してから、つくれます</span>'}</div>
+    <div class="mp-row">${st.q ? (S.as === 'gov' && !st.q.cost ? '<span>工事費なし（国の工事は無料）</span>' : `<span class="mp-cost">工事費 ${X(st.q.cost)}</span><span class="small">使用料 1日 ${X(st.q.lease)}・維持費 1日 ${X(st.q.up_day)}</span>`) : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button><span class="muted small">工事費を出してから、つくれます</span>'}</div>
     ${st.q ? needH(st.q.need) : ''}
     <div class="mp-row"><button class="btn main" data-ok ${st.q && !hasNeed(st.q) ? '' : 'disabled'}>つくる（${esc(asName())}）</button></div>
     <p class="muted small" style="margin:4px 0 0">起点と終点のあいだに、線路にそって車両基地をつくります（20m単位）。もう一度タップすると、えらびなおせます</p>`, s => {
@@ -6197,11 +6197,12 @@ async function openDia(rid) {
   const m = modal(['系統', '<p class="muted small">読みこんでいます…</p>'], null, 'mp-wide');
   let D = null, tab = 'dia';
   const lf = { kinds: new Set(), sers: new Set(), dirs: new Set(), sort: 'dep', err: false, sel: null, day: '' };   // 列車一覧の絞り込み（空はぜんぶ）・並べ替え・エラーだけ・えらんで消す（sel：えらんだ列車）・日（'' ぜんぶ・'*' 毎日のダイヤ・日付。DB の更新100）
-  const load = async () => { D = await api('mp_dia', { p_route: rid }); if (!D) return m.close(); S.routeHi = { legs: D.legs, color: D.color, kind: D.kind }; S.dirty = true; draw(); };
+  const load = async () => { D = await api('mp_dia', { p_route: rid }); if (!D) return m.close(); if (D.gov && D.mine && S.as !== 'gov') { D.mine = false; D.govLock = true; }   // 国の系統は、名義「国」のときだけ編集（DB の更新101）
+    S.routeHi = { legs: D.legs, color: D.color, kind: D.kind }; S.dirty = true; draw(); };
   m.onclose = () => { S.routeHi = null; S.dirty = true; };
   const draw = () => {
     m.set(D.name, `<p class="small" style="margin:0"><b style="color:${esc(D.color)}">■</b> <span>${KIND_L[D.kind] || D.kind}</span>・<span>${esc(D.owner)}</span>・<span>${D.km[D.km.length - 1]}km・停車 ${D.dwell}秒</span>
-        ${D.ok ? '' : `<br><span class="mp-warn"><span>走れません：</span> <span>${esc(D.why || '')}</span></span>`}${D.last && D.last.revenue != null ? (D.last.load != null && D.last.speed != null ? `<br>さいきんの1時間：${fmt(D.last.served || 0)}人・${X(D.last.revenue || 0)}・${D.last.tph}本・混み具合${D.last.load}%・平均${D.last.speed}km/h${D.last.fee || D.last.meal || D.last.bag || D.last.kb ? `<br><small class="muted">うち ${[D.last.fee ? T(`料金 ${X(D.last.fee)}`) : '', D.last.meal ? T(`食堂 ${X(D.last.meal)}`) : '', D.last.bag ? T(`荷物と郵便 ${X(D.last.bag)}`) : '', D.last.kb ? T(`競馬場のお客 ${fmt(D.last.kb)}人`) : ''].filter(Boolean).join('・')}</small>` : ''}`
+        ${D.ok ? '' : `<br><span class="mp-warn"><span>走れません：</span> <span>${esc(D.why || '')}</span></span>`}${D.govLock ? '<br><span class="muted">国の系統です。名義を「国（役所）」にすると、列車を編集できます</span>' : ''}${D.last && D.last.revenue != null ? (D.last.load != null && D.last.speed != null ? `<br>さいきんの1時間：${fmt(D.last.served || 0)}人・${X(D.last.revenue || 0)}・${D.last.tph}本・混み具合${D.last.load}%・平均${D.last.speed}km/h${D.last.fee || D.last.meal || D.last.bag || D.last.kb ? `<br><small class="muted">うち ${[D.last.fee ? T(`料金 ${X(D.last.fee)}`) : '', D.last.meal ? T(`食堂 ${X(D.last.meal)}`) : '', D.last.bag ? T(`荷物と郵便 ${X(D.last.bag)}`) : '', D.last.kb ? T(`競馬場のお客 ${fmt(D.last.kb)}人`) : ''].filter(Boolean).join('・')}</small>` : ''}`
           : `<br><span>さいきんの1時間：${fmt(D.last.served || 0)}人・${X(D.last.revenue || 0)}・${D.last.tph || 0}本</span>`) : ''}${D.last && (D.last.cancel || D.last.shop) ? `<span class="mp-warn">${D.last.cancel ? `・<span>運休${D.last.cancel}本</span>` : ''}${D.last.shop ? `・<span>工事中で運休${D.last.shop}本</span>` : ''}</span>` : ''}</p>
       ${D.parent ? `<p class="small" style="margin:4px 0 0">🔀 <span>支線</span>：<span>本線は</span> <a href="#" data-gor="${D.parent.id}" translate="no">${esc(D.parent.name)}</a>${(D.parent.jct || []).length ? `（<span>分かれる駅</span>：<span translate="no">${D.parent.jct.map(esc).join('・')}</span>）` : ''}</p>` : ''}
       ${(D.branches || []).length ? `<p class="small" style="margin:4px 0 0">🔀 <span>支線</span>：${D.branches.map(x => `<a href="#" data-gor="${x.id}" translate="no">${esc(x.name)}</a>${(x.jct || []).length ? `（<span translate="no">${x.jct.map(esc).join('・')}</span>）` : ''}`).join('・')}</p>` : ''}
