@@ -69,6 +69,10 @@ header .wrap{display:flex;align-items:center;gap:12px;height:52px}
 .bn-x{border:0;background:transparent;font-size:20px;line-height:1;padding:0 2px 0 8px;color:inherit;opacity:.65}
 .logo{font-weight:800;letter-spacing:.02em;font-size:17px}
 .logo small{font-weight:600;color:var(--muted);font-size:12px;margin-left:4px}
+/* Pre（正式公開の前）のしるし：名前のよこ。STAGE が '' になると消える */
+.kz-stage{display:inline-block;margin-left:6px;padding:2px 6px 1px;border:1.5px solid currentColor;border-radius:999px;color:inherit;font-size:10px;font-weight:800;letter-spacing:.06em;line-height:1.2;vertical-align:2px;white-space:nowrap;opacity:.85}   /* 色は名前と同じ（どのテーマでも読める） */
+.kz-stage[hidden]{display:none}
+h1 .kz-stage{font-size:13px;margin-left:8px;vertical-align:6px}
 .bal{margin-left:auto;font-weight:700;font-variant-numeric:tabular-nums;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:5px 12px;white-space:nowrap}
 .bal span{color:var(--muted);font-weight:600;font-size:12px;margin-left:3px}
 .bal.flash{animation:flash .8s}
@@ -1296,7 +1300,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 </head>
 <body>
 <header><div class="wrap">
-  <div class="logo" translate="no">風の芽<small>経済組</small><small class="logo-rm hidden">Kazenome-EconomicGroup</small></div>
+  <div class="logo" translate="no">風の芽<small>経済組</small><small class="logo-rm hidden">Kazenome-EconomicGroup</small><span class="kz-stage">Pre</span></div>
   <button class="world hidden" id="worldBtn" type="button" aria-label="世界（地図）"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg><span>世界</span></button>
   <button class="bell hidden" id="bell" aria-label="通知"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span class="bn hidden" id="bellN">0</span></button>
   <div class="bal hidden" id="bal"><b class="num" id="balNum">0</b><span>X</span></div>
@@ -1544,7 +1548,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 <!-- ログイン -->
 <section id="vLogin" class="center hidden">
   <div class="langs lg-lang" id="lgLang" translate="no"></div>
-  <h1 translate="no">風の芽経済組<small class="logo-rm hidden" style="display:block;font-size:13px;font-weight:700;color:var(--muted);margin-top:2px">Kazenome-EconomicGroup</small></h1>
+  <h1 translate="no">風の芽経済組<span class="kz-stage">Pre</span><small class="logo-rm hidden" style="display:block;font-size:13px;font-weight:700;color:var(--muted);margin-top:2px">Kazenome-EconomicGroup</small></h1>
   <p class="notice"><b>架空の通貨 AiliNaX（X）で遊ぶ経済ゲーム！</b><br>競馬にカジノ、会社と株、鉄道と街づくりまで、ぜんぶ無料。はじめてのログインで 11万 X プレゼント！ お正月（新・旧）と建国記念の日にも 8万 X ずつ配ります。</p>
   <div class="mailform hidden" id="oauthBox"></div>
   <div class="seg" id="lgMode"><button type="button" data-k="pw" class="on">パスワード</button><button type="button" data-k="link">メールのリンク</button></div>
@@ -5914,15 +5918,17 @@ const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick 
 let coT = null, jbT = null;
 // 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
 const MAPV = '152';
+const STAGE = 'Pre';   // 正式公開の前（Pre）。名前のよこと、バージョンの表記に出す。正式公開のときは '' にする
+document.querySelectorAll('.kz-stage').forEach(e => { e.textContent = STAGE; e.hidden = !STAGE; });
 const DBV = 98;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）
-{ const e = document.getElementById('verLogin'); if (e) e.textContent = 'v' + MAPV; }   // バージョン表記（ログインの画面）
+{ const e = document.getElementById('verLogin'); if (e) e.textContent = 'v' + MAPV + (STAGE ? ' ' + STAGE : ''); }   // バージョン表記（ログインの画面）
 // バージョン表記（設定 → プロフィール）：画面の版・サーバーに入っている DB の更新の番号。管理者には、サーバーの更新がまだのとき知らせる
 async function verShow() {
   const el = $('#verLine'); if (!el) return;
-  el.textContent = 'バージョン：画面 v' + MAPV;
+  el.textContent = 'バージョン：画面 v' + MAPV + (STAGE ? ' ' + STAGE : '');
   let v = null; try { v = await call('app_ver'); } catch (e) { v = null; }
   const db = v && v.db;
-  el.innerHTML = `バージョン：画面 v${MAPV}${db ? `・サーバー ${db}` : ''}${db && db < DBV && ME.role === 'admin' ? '<br><b style="color:var(--lose)">サーバーに まだ入っていない更新があります（update.sh）</b>' : ''}`;
+  el.innerHTML = `バージョン：画面 v${MAPV}${STAGE ? ' ' + STAGE : ''}${db ? `・サーバー ${db}` : ''}${db && db < DBV && ME.role === 'admin' ? '<br><b style="color:var(--lose)">サーバーに まだ入っていない更新があります（update.sh）</b>' : ''}`;
 }
 let mapLoading = null;
 function mapScripts() {
