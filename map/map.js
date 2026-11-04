@@ -1295,6 +1295,106 @@ function refreshAround(bid) {
   const b = S.vis && S.vis.blds ? S.vis.blds.get(bid) : null;
   if (b && b.bb) refreshBox(b.bb[0] - 1, b.bb[1] - 1, b.bb[2] + 1, b.bb[3] + 1); else { for (const c of S.cells.values()) c.stale = true; S.dirty = true; needCells(); }
 }
+/* ---------- 競馬場（国の建物）・場外馬券売り場（DB の更新92） ---------- */
+const TRACK_WH = { '府中': [112, 52], '京都': [102, 52], '中京': [92, 46] };   // 区画（横長）。サーバーの _mp_track_wh と同じ
+const RACE_G = g => /^(G1|G2|G3|L|OP)$/.test(g || '');
+const RACE_GN = { G1: 'G1', G2: 'G2', G3: 'G3', L: 'リステッド', OP: 'オープン' };
+const whyTrk = r => [r.owned ? `持ち主のいる土地 ${fmt(r.owned)}区画` : '', r.busy ? `道路・線路・駅など ${fmt(r.busy)}区画` : '', r.water ? `海・川・湖 ${fmt(r.water)}区画` : '',
+  r.mount ? `山 ${fmt(r.mount)}区画` : '', r.park ? `公園 ${fmt(r.park)}区画` : ''].filter(Boolean).join('・') || '—';
+// きょうのレース（ひとつづきのレースごと）
+function raceSes(L, withK) {
+  const ses = L.today || [], d = new Date(), hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  if (!ses.length) return '<span class="muted">きょうのレースはありません</span>';
+  return ses.map(x => `<span${x.t < hm ? ' class="muted"' : ''}><span translate="no">${esc(x.t)}</span>〜 ${withK ? `<span translate="no">${esc(x.k)}</span> ` : ''}<span>${x.n}レース</span>${RACE_G(x.g) ? ` <small>（<span translate="no">${esc(x.top || '')}</span> ${esc(RACE_GN[x.g] || x.g)}）</small>` : ''}</span>`).join('<br>');
+}
+async function kbFill(el, bid) {
+  let L;
+  try { L = await call('mp_track_info', { p_bld: bid }); } catch (e) { el.innerHTML = /mp_track_info|schema cache|function/i.test(e.message) ? '' : `<p class="mp-warn small">${esc(errJa(e.message))}</p>`; return; }
+  if (!L) { el.innerHTML = ''; return; }
+  if (L.kind === 'keiba') {
+    const sta = L.sta || [];
+    el.innerHTML = `<h4 style="margin:12px 0 4px">🏇 <span>競馬場</span> <small class="muted" translate="no">${esc(L.k)}</small></h4><div class="mp-kv">
+      <b>広さ</b><span>${fmt(L.w)}m × ${fmt(L.h)}m</span>
+      <b>きょうのレース</b><span>${raceSes(L, false)}</span>
+      <b>来場者</b><span>${L.vis ? `<span>きょう 約${fmt(L.vis)}人</span> <small>（見こみ）</small>` : '—'}</span>
+      <b>お客が乗る駅</b><span>${sta.length ? sta.map(x => `<span><span translate="no">${esc(x.n)}</span> <small>（${x.k === 'bus' ? 'バス停・' : ''}${fmt(x.m)}m・${x.f}%）</small></span>`).join('<br>') : '<span class="muted">まだありません</span>'}</span></div>
+      <p class="muted small" style="margin:2px 0 6px">その会場のレースの時間には、来場者が近くの駅（競馬場のふちから800m）・バス停（400m）で乗り降りします（行きと帰り。G1 などの大きなレースは とても多い）。列車をふやしておくと、たくさん運べます。</p>`;
+  } else {
+    el.innerHTML = `<h4 style="margin:12px 0 4px">🏇 <span>きょうのレース</span></h4><div class="mp-kv"><b>レース</b><span>${raceSes(L, true)}</span></div>`;
+  }
+}
+// 管理：競馬場（国）の一覧・地図でおく・場所を変える・とりのぞく
+async function trkAdminFill(el, m) {
+  if (!el) return;
+  let L;
+  try { L = await call('mp_track_list', {}); } catch (e) { el.innerHTML = /mp_track_list|schema cache|function/i.test(e.message) ? '<p class="muted small">サーバーの更新（DB の更新92）のあとで使えます</p>' : `<p class="mp-warn small">${esc(errJa(e.message))}</p>`; return; }
+  L = L || [];
+  el.innerHTML = L.map(t => `<div class="mp-row small" style="justify-content:space-between;margin:2px 0;flex-wrap:wrap"><span><b translate="no">${esc(t.k)}競馬場</b> ${t.bld ? `<span translate="no">${esc(t.addr || '')}</span>` : '<span class="muted">まだ地図にありません</span>'}</span>
+      <span>${t.bld ? `<button class="btn" data-tgo="${esc(t.k)}" style="padding:2px 8px">見に行く</button> ` : ''}<button class="btn" data-tput="${esc(t.k)}" style="padding:2px 8px">${t.bld ? '場所を変える' : '地図でおく'}</button>${t.bld ? ` <button class="btn" data-tdel="${esc(t.k)}" style="padding:2px 8px;color:#c33">とりのぞく</button>` : ''}</span></div>`).join('')
+    + '<p class="muted small" style="margin:2px 0 6px">競馬場は国の建物です（府中・京都・中京の3つ）。その会場のレースの時間には、来場者が近くの駅（ふちから800m）・バス停（400m）で乗り降りします。おけるのは、道路・線路・駅・持ち主のいる土地・水・山・公園のないところです。</p>';
+  const T0 = k => L.find(t => t.k === k);
+  el.querySelectorAll('[data-tput]').forEach(x => x.onclick = () => { m.close(); trackTool(x.dataset.tput, T0(x.dataset.tput)); });
+  el.querySelectorAll('[data-tgo]').forEach(x => x.onclick = () => { const t = T0(x.dataset.tgo); m.close(); setCam(t.x / 5, t.y / 5, 8); });
+  el.querySelectorAll('[data-tdel]').forEach(x => x.onclick = async () => {
+    const t = T0(x.dataset.tdel);
+    if (!await confirm2(`${t.k}競馬場を地図からとりのぞきます（筆と建物がなくなります）。よろしいですか？`, { what: `${t.k}競馬場`, q: '本当にとりのぞきますか？', ok: 'とりのぞく', note: '筆と建物がなくなります（あとでまた おけます）。' })) return;
+    if (await api('mp_track_del', { p_k: t.k }, 'とりのぞきました')) {
+      if (t.rect) refreshBox(Math.floor(t.rect[0] / 5) - 1, Math.floor(t.rect[1] / 5) - 1, Math.floor(t.rect[2] / 5) + 1, Math.floor(t.rect[3] / 5) + 1);
+      trkAdminFill(el, m);
+    }
+  });
+}
+// 管理：競馬場を地図でおく（まん中をタップ → しらべる → おく）。もうあれば場所を変える
+function trackTool(k, cur) {
+  setTool('look');
+  const st = S.toolState = { c: cur && cur.bld ? [cur.x, cur.y] : null, dir: (cur && cur.dir) || 'h', r: null };
+  hint(`${k}競馬場：おきたいところ（まん中）をタップします`);
+  const rect = () => { const z = TRACK_WH[k] || [100, 50], w = st.dir === 'v' ? z[1] : z[0], h = st.dir === 'v' ? z[0] : z[1], x0 = st.c[0] - Math.floor(w / 2), y0 = st.c[1] - Math.floor(h / 2); return [x0, y0, x0 + w - 1, y0 + h - 1]; };
+  S.drawTool = (g, z) => {
+    if (!st.c) return;
+    const [x0, y0, x1, y1] = st.r && st.r.rect ? st.r.rect : rect(), ok = st.r && st.r.ok, W = (x1 - x0 + 1) / 5 * z, H = (y1 - y0 + 1) / 5 * z;
+    g.fillStyle = ok ? 'rgba(40,150,60,.2)' : st.r ? 'rgba(210,40,40,.18)' : 'rgba(120,120,120,.15)'; g.fillRect(sx(x0 / 5), sy(y0 / 5), W, H);
+    g.strokeStyle = ok ? '#1f7a33' : st.r ? '#c33' : '#777'; g.lineWidth = 2; g.setLineDash([6, 4]); g.strokeRect(sx(x0 / 5), sy(y0 / 5), W, H); g.setLineDash([]);
+  };
+  const show = () => {
+    const r = st.r;
+    sheet(`<h4 translate="no">${esc(k)}競馬場</h4>
+      ${!st.c ? '<p class="muted small">地図をタップしてください（そこが競馬場のまん中になります）</p>'
+        : !r ? '<p class="muted small">しらべています…</p>'
+        : `<p class="small" style="margin:2px 0">${r.addr ? `<span translate="no">${esc(r.addr)}</span>・` : ''}${r.ok ? '<b style="color:#1a7f37">ここにおけます</b>' : `<span class="mp-warn">おけません：${esc(whyTrk(r))}</span>`}</p>`}
+      <div class="mp-row"><button class="btn" data-tdir>${st.dir === 'v' ? '横長にする' : '縦長にする'}</button><button class="btn" data-tfind ${st.c ? '' : 'disabled'}>近くでさがす</button>
+        <button class="btn main" data-tok ${r && r.ok ? '' : 'disabled'}>${cur && cur.bld ? 'ここにうつす' : 'ここにおく'}</button></div>
+      <p class="muted small" style="margin:2px 0">大きさ ${(st.dir === 'v' ? [...(TRACK_WH[k] || [0, 0])].reverse() : (TRACK_WH[k] || [0, 0])).map(v => fmt(v * 10) + 'm').join(' × ')}（${st.dir === 'v' ? '縦長' : '横長'}）。道路・線路・駅・持ち主のいる土地・水・山・公園のないところに おけます</p>`, sh => {
+      q0(sh, '[data-tdir]').onclick = () => { st.dir = st.dir === 'v' ? 'h' : 'v'; check(); };
+      q0(sh, '[data-tfind]').onclick = async () => {
+        if (!st.c) return;
+        toast(T('さがしています…'));
+        const f = await api('mp_track_find', { p_k: k, p_x: st.c[0], p_y: st.c[1], p_dir: st.dir }); if (!f) return;
+        if (f.x == null) return toast(T('近く（4km）に おけるところが見つかりませんでした'));
+        st.c = [f.x, f.y]; setCam(f.x / 5, f.y / 5, S.cam.z); check();
+      };
+      q0(sh, '[data-tok]').onclick = async () => {
+        if (!st.r || !st.r.ok) return;
+        if (!await confirm2(`${k}競馬場を${st.r.addr ? `「${st.r.addr}」に` : 'ここに'}${cur && cur.bld ? 'うつします（いまの競馬場はとりのぞきます）' : 'おきます'}。よろしいですか？`, { what: `${k}競馬場`, q: cur && cur.bld ? '本当にうつしますか？' : '本当におきますか？', ok: cur && cur.bld ? 'うつす' : 'おく', note: cur && cur.bld ? 'いまの競馬場の筆と建物はなくなります（場所はまた変えられます）。' : '場所はあとで変えられます。' })) return;
+        const d = await api('mp_track_place', { p_k: k, p_x: st.c[0], p_y: st.c[1], p_dir: st.dir, p_dry: false }, cur && cur.bld ? 'うつしました' : 'おきました'); if (!d) return;
+        const [x0, y0, x1, y1] = d.rect || rect(); refreshBox(Math.floor(x0 / 5) - 1, Math.floor(y0 / 5) - 1, Math.floor(x1 / 5) + 1, Math.floor(y1 / 5) + 1);
+        if (cur && cur.rect) refreshBox(Math.floor(cur.rect[0] / 5) - 1, Math.floor(cur.rect[1] / 5) - 1, Math.floor(cur.rect[2] / 5) + 1, Math.floor(cur.rect[3] / 5) + 1);
+        setTool('look');
+      };
+    });
+  };
+  const check = async () => {
+    if (!st.c) return show();
+    st.r = null; S.dirty = true; show();
+    const c0 = st.c.join(',') + st.dir, r = await api('mp_track_place', { p_k: k, p_x: st.c[0], p_y: st.c[1], p_dir: st.dir, p_dry: true });
+    if (S.toolState !== st || c0 !== st.c.join(',') + st.dir) return;   // しらべているあいだに、ほかをタップした
+    st.r = r; S.dirty = true; show();
+  };
+  S.tapHook = (x, y) => { st.c = [Math.floor(x * 5), Math.floor(y * 5)]; check(); };
+  S.toolEnd = () => { S.tapHook = null; S.toolState = null; S.drawTool = null; };
+  if (st.c) { setCam(st.c[0] / 5, st.c[1] / 5, 8); check(); } else show();
+  S.dirty = true;
+}
 function drawRail(g, s, z) {
   const mine = s.mine, col = s.col && /^#[0-9a-f]{6}$/i.test(s.col) ? s.col : null;   // 路線カラー（2026-10-29）
   const w = Math.max(1.8, (s.q ? 0.52 : s.dbl ? 0.34 : 0.22) * z);   // 複々線（DB の更新86）は太く
@@ -5736,7 +5836,7 @@ async function openSC() {
   const m = modal(['施設と工場', '<p class="muted small">読みこんでいます…</p>'], null, 'mp-wide');
   const d = await api('mp_sc_list', { p_as: S.as }); if (!d) return m.close();
   const sum = (b, ks) => ks.reduce((a, k) => a + Number((b.day || {})[k] || 0), 0);
-  const ui = b => FAC_UI[((S.boot.sck || {})[b.grp] || {}).use] || FAC_UI.school;
+  const ui = b => { const k = (S.boot.sck || {})[b.grp] || {}, u = FAC_UI[k.use] || FAC_UI.school; return k.kb ? { ...u, who: '客', day: '24時間の手数料' } : u; };   // 場外馬券売り場（DB の更新92）
   const what = b => b.grp ? `<span>${ui(b).who} ${fmt(b.n || 0)} / ${fmt(b.cap || 0)}人</span>` : b.prod === 'railcar' ? '<span>鉄道車両</span>' : `<span>${esc(GN(b.prod))}</span>`;
   const stock = b => gSort(b.stock).map(([g, q]) => qG(g, q)).join('・');
   const tk = d.trk || {}, cap = (tk.load || 0) * (((S.boot.scr || {}).trk) || 300) / 24 * (1 + 0.1 * Math.min(3, tk.tt || 0));
@@ -5910,7 +6010,7 @@ async function openDia(rid) {
   m.onclose = () => { S.routeHi = null; S.dirty = true; };
   const draw = () => {
     m.set(D.name, `<p class="small" style="margin:0"><b style="color:${esc(D.color)}">■</b> <span>${KIND_L[D.kind] || D.kind}</span>・<span>${esc(D.owner)}</span>・<span>${D.km[D.km.length - 1]}km・停車 ${D.dwell}秒</span>
-        ${D.ok ? '' : `<br><span class="mp-warn"><span>走れません：</span> <span>${esc(D.why || '')}</span></span>`}${D.last && D.last.revenue != null ? (D.last.load != null && D.last.speed != null ? `<br>さいきんの1時間：${fmt(D.last.served || 0)}人・${X(D.last.revenue || 0)}・${D.last.tph}本・混み具合${D.last.load}%・平均${D.last.speed}km/h${D.last.fee || D.last.meal || D.last.bag ? `<br><small class="muted">うち ${[D.last.fee ? T(`料金 ${X(D.last.fee)}`) : '', D.last.meal ? T(`食堂 ${X(D.last.meal)}`) : '', D.last.bag ? T(`荷物と郵便 ${X(D.last.bag)}`) : ''].filter(Boolean).join('・')}</small>` : ''}`
+        ${D.ok ? '' : `<br><span class="mp-warn"><span>走れません：</span> <span>${esc(D.why || '')}</span></span>`}${D.last && D.last.revenue != null ? (D.last.load != null && D.last.speed != null ? `<br>さいきんの1時間：${fmt(D.last.served || 0)}人・${X(D.last.revenue || 0)}・${D.last.tph}本・混み具合${D.last.load}%・平均${D.last.speed}km/h${D.last.fee || D.last.meal || D.last.bag || D.last.kb ? `<br><small class="muted">うち ${[D.last.fee ? T(`料金 ${X(D.last.fee)}`) : '', D.last.meal ? T(`食堂 ${X(D.last.meal)}`) : '', D.last.bag ? T(`荷物と郵便 ${X(D.last.bag)}`) : '', D.last.kb ? T(`競馬場のお客 ${fmt(D.last.kb)}人`) : ''].filter(Boolean).join('・')}</small>` : ''}`
           : `<br><span>さいきんの1時間：${fmt(D.last.served || 0)}人・${X(D.last.revenue || 0)}・${D.last.tph || 0}本</span>`) : ''}${D.last && (D.last.cancel || D.last.shop) ? `<span class="mp-warn">${D.last.cancel ? `・<span>運休${D.last.cancel}本</span>` : ''}${D.last.shop ? `・<span>工事中で運休${D.last.shop}本</span>` : ''}</span>` : ''}</p>
       ${D.parent ? `<p class="small" style="margin:4px 0 0">🔀 <span>支線</span>：<span>本線は</span> <a href="#" data-gor="${D.parent.id}" translate="no">${esc(D.parent.name)}</a>${(D.parent.jct || []).length ? `（<span>分かれる駅</span>：<span translate="no">${D.parent.jct.map(esc).join('・')}</span>）` : ''}</p>` : ''}
       ${(D.branches || []).length ? `<p class="small" style="margin:4px 0 0">🔀 <span>支線</span>：${D.branches.map(x => `<a href="#" data-gor="${x.id}" translate="no">${esc(x.name)}</a>${(x.jct || []).length ? `（<span translate="no">${x.jct.map(esc).join('・')}</span>）` : ''}`).join('・')}</p>` : ''}
@@ -7115,6 +7215,7 @@ async function openAdmin() {
     <h4 style="margin:10px 0 4px">名前・町字</h4><div class="mp-row"><button class="btn" data-names>地図で名前・町字をなおす</button></div>
     <h4 style="margin:10px 0 4px">用途地域をぬる</h4><div class="mp-row"><select class="mp-inp" style="width:auto" data-z>${Object.entries(PAL.ZN).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}<option value="-">なし</option><option value="">もとにもどす</option></select>
       <button class="btn" data-paint>地図でぬる</button></div>
+    <h4 style="margin:10px 0 4px">🏇 競馬場（国）</h4><div data-trk><p class="muted small">読みこんでいます…</p></div>
     <h4 style="margin:10px 0 4px">値段・設定</h4>
     <div class="mp-kv">${Object.keys(rates).map(k => `<b>${esc(RATE_NAME[k] || k)}</b><span><input class="mp-inp" style="width:140px" data-rate="${k}" value="${rates[k]}"></span>`).join('')}</div>
     <div class="mp-row"><button class="btn main" data-save>設定を保存</button></div>`, b => {
@@ -7125,6 +7226,7 @@ async function openAdmin() {
     };
     b.querySelector('[data-paint]').onclick = () => { const z = b.querySelector('[data-z]').value; m.close(); zonePaint(z || null); };
     b.querySelector('[data-names]').onclick = () => { m.close(); namesTool(); };
+    trkAdminFill(b.querySelector('[data-trk]'), m);   // 競馬場（DB の更新92）
   });
 }
 // マスの四角をえらぶ（管理：用途地域・町字の分割）。2か所タップ → onPick([x0, y0, x1, y1])
@@ -7378,7 +7480,7 @@ function drawBlds(g, bs, z, pass) {
     if (b.floors <= 0) {   // 田畑・駐車場・広場・グラウンド・緑地・ゴルフ場など（平ら）
       const pat = FLAT_PAT[b.kind] || (pOf(b.kind) || {}).pat, soft = SOFT_PAT.has(pat);
       g.fillStyle = col[0]; g.fill(b.base);
-      if (pat && z >= 9) flatPat(g, b, z, pat);
+      if (pat && (z >= 9 || (pat === 'keiba' && z >= 4))) flatPat(g, b, z, pat);   // 競馬場は遠くからも（DB の更新92）
       if ((pOf(b.kind) || {}).air && z >= 6) drawApron(g, b, z);   // 空港の駐機場の線（t57：滑走路は国が別に引く）
       g.strokeStyle = b.own === 2 ? '#1f5bd6' : soft ? 'rgba(60,90,40,.28)' : 'rgba(60,60,60,.55)'; g.lineWidth = (b.own === 2 ? 1.6 : 1) / z; g.stroke(b.baseEdge);
       if ((pat === 'pave' || pat === 'avenue' || pat === 'green') && z >= 9) {   // 広場・並木道・緑地の木
@@ -7460,6 +7562,31 @@ function flatPat(g, b, z, pat) {
         g.stroke();
       }
       break; }
+    case 'keiba': {                                                                         // 競馬場（DB の更新92）：芝（外）・ダート（内）・内馬場の池・スタンド・駐車場・ゴール板
+      const W = x1 - x0, H = y1 - y0, hz = W >= H, sd = Math.min(W, H), st = sd * 0.2, mg = sd * 0.05;
+      const ox = x0 + mg, oy = y0 + mg, ow = W - 2 * mg - (hz ? 0 : st), oh = H - 2 * mg - (hz ? st : 0), R = Math.min(ow, oh) / 2;
+      const oval = k => { g.beginPath(); const w2 = ow - 2 * k, h2 = oh - 2 * k; if (w2 <= 0 || h2 <= 0) return false;
+        if (typeof g.roundRect === 'function') g.roundRect(ox + k, oy + k, w2, h2, Math.max(0.01, R - k)); else g.rect(ox + k, oy + k, w2, h2); return true; };
+      const tw = Math.min(0.6, R * 0.16), dw = Math.min(0.5, R * 0.13);   // 芝 30m・ダート 25m
+      if (oval(0)) { g.fillStyle = '#5f9f52'; g.fill(); }
+      if (oval(tw)) { g.fillStyle = '#b98d5e'; g.fill(); }
+      if (oval(tw + dw)) { g.fillStyle = '#a9d48f'; g.fill(); }
+      const pr = Math.min(ow, oh) * 0.12;   // 内馬場の池
+      g.fillStyle = 'rgba(110,170,215,.9)'; g.beginPath(); g.ellipse(ox + ow / 2, oy + oh / 2, hz ? pr * 2 : pr, hz ? pr : pr * 2, 0, 0, Math.PI * 2); g.fill();
+      if (z >= 9) { g.strokeStyle = 'rgba(255,255,255,.95)'; g.lineWidth = 1.2 / z; for (const k of [0.02, tw, tw + dw]) if (oval(k)) g.stroke(); }   // 白いさく（ラチ）
+      // スタンド（ゴール前の直線のそと。横長は下・縦長は右）と、その両よこの駐車場
+      const ax = hz ? x0 + W * 0.28 : x1 - st + mg * 0.3, ay = hz ? y1 - st + mg * 0.3 : y0 + H * 0.28, aw = hz ? W * 0.44 : st * 0.6, ah = hz ? st * 0.6 : H * 0.44;
+      g.fillStyle = '#9ea3aa'; g.fillRect(ax, ay, aw, ah);
+      g.fillStyle = '#7d828a'; if (hz) g.fillRect(ax, ay, aw, ah * 0.35); else g.fillRect(ax + aw * 0.65, ay, aw * 0.35, ah);   // 屋根
+      if (z >= 12) { g.strokeStyle = 'rgba(255,255,255,.55)'; g.lineWidth = 1 / z; g.beginPath();
+        for (let k = 1; k < 8; k++) { if (hz) { const yy = ay + ah * 0.35 + ah * 0.65 * k / 8; g.moveTo(ax, yy); g.lineTo(ax + aw, yy); } else { const xx = ax + aw * 0.65 * k / 8; g.moveTo(xx, ay); g.lineTo(xx, ay + ah); } }
+        g.stroke(); }
+      g.fillStyle = 'rgba(150,150,150,.55)';
+      if (hz) { g.fillRect(x0 + W * 0.06, ay, W * 0.18, ah); g.fillRect(x0 + W * 0.76, ay, W * 0.18, ah); } else { g.fillRect(ax, y0 + H * 0.06, aw, H * 0.18); g.fillRect(ax, y0 + H * 0.76, aw, H * 0.18); }
+      g.strokeStyle = '#d32f2f'; g.lineWidth = Math.max(2 / z, 0.05); g.beginPath();   // ゴール板
+      if (hz) { const gx = x0 + W * 0.62; g.moveTo(gx, oy + oh - tw); g.lineTo(gx, oy + oh); } else { const gy = y0 + H * 0.62; g.moveTo(ox + ow - tw, gy); g.lineTo(ox + ow, gy); }
+      g.stroke();
+      break; }
     case 'trees': dots((x, y) => (x * 7 + y * 13) % 3 === 0, 'rgba(60,120,60,.55)', 0.075); break;      // 木
     case 'water': dots((x, y) => hsh(x, y) % 4 === 0, 'rgba(110,170,215,.95)', 0.075); break;          // 池・水槽
     case 'snow': if (z >= 12) {                                                             // ゲレンデ
@@ -7498,11 +7625,11 @@ const SYM_K = { shrine: 'torii', temple: 'manji', church: 'cross', superonsen: '
   aquarium: 'fish', fishing: 'fish', zoo: 'tree', botanical: 'tree', camp: 'tent', amuse: 'wheel', tpark: 'wheel', golf: 'flag', golfrange: 'flag', ski: 'mount',
   hospital: 'hosp', bighosp: 'hosp', erhosp: 'hosp', uhosp: 'hosp', nursing: 'care', care: 'care', dayserv: 'care', uschool: 'sch',
   gpost: 'post', wardoffice: 'hall', townhall: 'town', police: 'police', firest: 'fire', publib: 'book', civic: 'civic', pgym: 'stadium', cityhosp: 'hosp',   // t58
-  cleanfac: 'gear', pwater: 'drop', natmus: 'museum', natart: 'museum', nattheater: 'theater', natstad: 'stadium',
+  cleanfac: 'gear', pwater: 'drop', natmus: 'museum', natart: 'museum', nattheater: 'theater', natstad: 'stadium', keiba: 'horse', kbshop: 'horse',   // 競馬場・場外馬券売り場（DB の更新92）
   postoffice: 'post', cityhall: 'hall', prefhall: 'pref', govhall: 'gov', kantei: 'gov', diet: 'diet', court: 'court', natlib: 'book', milhq: 'mil', thermal: 'power', solar: 'power', wind: 'power', truckterm: 'truck', busterm: 'bus', water: '', garbage: '' };
 // 重なったときに先に出すもの（小さいほど先）
 const SYM_P = { pref: 0, diet: 0, hall: 0, court: 0, gov: 0, town: 0, police: 1, fire: 1, book: 1, mil: 1, hosp: 1, civic: 3, theater: 4, drop: 6, sch: 2, torii: 3, manji: 3, cross: 3, stadium: 4, museum: 4, wheel: 4, fish: 5, tree: 5, hotel: 5, onsen: 5, mount: 5,
-  flag: 6, tent: 6, star: 6, post: 6, clinic: 7, care: 7, power: 8, truck: 8, bus: 8, gear: 9, anchor: 9, P: 10 };
+  horse: 4, flag: 6, tent: 6, star: 6, post: 6, clinic: 7, care: 7, power: 8, truck: 8, bus: 8, gear: 9, anchor: 9, P: 10 };
 function symOf(b) {
   if (SYM_K[b.kind] != null) return SYM_K[b.kind] || null;
   const p = pOf(b.kind) || {};
@@ -7562,6 +7689,7 @@ function symDraw(g, k, X, Y) {
     case 'power': path(() => { g.moveTo(1.5, -6.5); g.lineTo(-4, 1); g.lineTo(-0.5, 1); g.lineTo(-1.8, 6.5); g.lineTo(4, -1.5); g.lineTo(0.6, -1.5); g.closePath(); }, '#8a6d00', 1.2, '#ffd23f'); break;
     case 'truck': path(() => { g.rect(-6.5, -3.5, 8, 6); g.rect(1.5, -1, 4.5, 3.5); }, '#2d4f73', 1.3, '#dbe8f5'); g.fillStyle = '#2d4f73'; for (const x of [-4, 3.5]) { g.beginPath(); g.arc(x, 3.6, 1.5, 0, Math.PI * 2); g.fill(); } break;
     case 'bus': disc(6, '#2a7de1', '#fff'); g.font = 'bold 8px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#fff'; g.fillText('B', 0, 0.5); break;
+    case 'horse': path(() => { g.moveTo(-4.6, -5.5); g.lineTo(-4.6, 0); g.arc(0, 0, 4.6, Math.PI, 0, true); g.lineTo(4.6, -5.5); }, '#7a4a1f', 2.2); break;   // 蹄鉄（競馬場・場外馬券売り場。DB の更新92）
     case 'gear': g.restore(); gearSym(g, X, Y, 5); return;
     case 'anchor': path(() => { g.arc(0, -4.5, 1.6, 0, Math.PI * 2); g.moveTo(0, -2.9); g.lineTo(0, 5.5); g.moveTo(-3.5, -1); g.lineTo(3.5, -1); g.moveTo(-5.5, 1.5); g.quadraticCurveTo(-5, 5.5, 0, 5.5); g.quadraticCurveTo(5, 5.5, 5.5, 1.5); }, '#24527a', 1.5); break;
     case 'P': g.fillStyle = W; if (typeof g.roundRect === 'function') { g.beginPath(); g.roundRect(-6, -6, 12, 12, 2.5); g.fill(); g.beginPath(); g.roundRect(-5, -5, 10, 10, 2); g.fillStyle = '#1f5fbf'; g.fill(); } else { g.fillRect(-6, -6, 12, 12); g.fillStyle = '#1f5fbf'; g.fillRect(-5, -5, 10, 10); }
@@ -7657,8 +7785,9 @@ function bFeats(p, o) {
   const f = [], ft = (t, c) => f.push(`<span class="mp-ft${c ? ' ' + c : ''}">${t}</span>`), ok = o && o.ok !== false && o.total_m2;
   const kd = p.sc ? (S.boot.sck || {})[p.sc] : null;
   if (kd) {
-    const ui = FAC_UI[kd.use] || FAC_UI.leisure;
+    const ui0 = FAC_UI[kd.use] || FAC_UI.leisure, ui = kd.kb ? { ...ui0, come: '客が馬券を買う', cap: '1日に入れる人', fee: '手数料', unit: '1人 1日' } : ui0;   // 場外馬券売り場（DB の更新92）
     ft(`<span>${ui.come}</span>`, 'in');
+    if (kd.kb) ft('手数料は、レースのある時間に入る（G1 などは多い）', 'in');
     if (ok) ft(`<span>${ui.cap} ${fmt(Math.floor(o.total_m2 / kd.spp))}人</span>`, 'in');
     ft(`<span>${ui.fee}</span> <span>${ui.unit}</span> <span>${X(kd.fee)}</span>`);
     if (kd.acc) ft(kd.use === 'school' ? '駅が近いと生徒がふえる' : '駅が近いと客がふえる', 'up');
@@ -7820,7 +7949,7 @@ async function openBld(bid) {
         ${d.mine ? `<b>入居</b><span>${d.day.occ} / ${d.day.n}</span><b>家賃</b><span>1日 ${X(d.day.rent)}</span>
           <b>家賃の水準</b><span><input type="range" min="50" max="200" step="5" value="${Math.round(d.rent_lv * 100)}" class="mp-lv" style="width:55%;vertical-align:middle"> <b class="mp-lvn">${Math.round(d.rent_lv * 100)}%</b> <button class="btn" data-lvset style="padding:2px 8px">決める</button></span>` : ''}
       </div>
-      ${scBlock(d)}${S.parkOK && PARK_K.includes(d.kind) ? '<div data-attrs></div>' : ''}${portBlock(d)}${ER_K.includes(d.kind) ? '<div data-er></div>' : ''}
+      ${scBlock(d)}${S.parkOK && PARK_K.includes(d.kind) ? '<div data-attrs></div>' : ''}${d.kind === 'keiba' || d.kind === 'kbshop' ? '<div data-kb></div>' : ''}${portBlock(d)}${ER_K.includes(d.kind) ? '<div data-er></div>' : ''}
       ${d.gov ? `<p class="muted small" style="margin:2px 0 6px">国の建物です（税・家賃はありません）</p>` : ''}
       ${d.gov && OFFICE_K.includes(d.kind) ? '<div class="mp-row"><button class="btn main" data-jm>🏛 住民の窓口</button><small class="muted">転入・転居・転出・住民票の写し・印鑑登録</small></div>' : ''}
       ${d.mine ? `<p class="muted small" style="margin:2px 0 6px">家賃の水準は入居募集の部屋の家賃（相場の何%か）。高いと入りにくく、出ていきやすくなります。店・事務所などを自分で使うか会社が借りると、売上が入ります</p>
@@ -7835,6 +7964,7 @@ async function openBld(bid) {
       ${d.mine ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button><button class="btn" data-del style="color:#c33">こわす</button></div>` : ''}`, b => {
       scBind(b, d, load);
       if (q0(b, '[data-attrs]')) attrFill(q0(b, '[data-attrs]'), bid, load);   // アトラクション（DB の更新91）
+      if (q0(b, '[data-kb]')) kbFill(q0(b, '[data-kb]'), bid);   // 競馬場・場外馬券売り場（DB の更新92）
       if (q0(b, '[data-er]')) erBldFill(q0(b, '[data-er]'), bid);   // 救急（DB の更新68）
       const nEl = b.querySelector('[data-n]');
       const upd = () => { if (nEl) nEl.textContent = T(`${sel.size}室えらんでいます`); };
@@ -7874,13 +8004,15 @@ async function openBld(bid) {
 /* ---- 建物の事業（t54k）：学校（生徒・授業料）・工場（つくるもの・在庫・仕入れ・売上）・田畑と港（つくるもの）・鉄道車両工場 ---- */
 function scBlock(d) {
   const s = d.sc; if (!s) return '';
-  const ui = FAC_UI[s.use] || (s.kind === 'school' ? FAC_UI.school : FAC_UI.leisure);
+  const ui0 = FAC_UI[s.use] || (s.kind === 'school' ? FAC_UI.school : FAC_UI.leisure);
+  const ui = s.grp === 'kbshop' ? { ...ui0, ic: '🏇', who: '客', fee: '手数料', unit: '1人 1日', day: '24時間の手数料', come: '客が馬券を買う' } : ui0;   // 場外馬券売り場（DB の更新92）
   const opRow = s.gov ? '' : `<b>動かしている</b><span>${s.op ? `<span>${esc(s.who || '')}</span>` : s.npc ? `<span>${ui.npc}（入居募集）</span>`
     : `<span class="mp-warn">止まっています</span> <small>（自分で使うか、会社が借りると動きます）</small>${d.mine && d.units.length ? ' <button class="btn main" data-scself style="padding:2px 10px">自分で使う</button>' : ''}`}</span>`;
   if (s.kind === 'fac' || s.kind === 'school') {   // 施設（t54l）：学校・宿泊・医療と福祉・娯楽
     const k = (S.boot.sck || {})[s.grp] || {}, lv = Math.round((s.lv || 1) * 100), mo = new Date().getMonth() + 1;
     const ssn = (k.pk || k.op) ? `<b>季節</b><span>${k.pk ? `<span>多い月</span> ${monthsTxt(k.pk)} <small>（1.3倍）</small>` : ''}${k.pk && k.op ? '・' : ''}${k.op ? `<span>少ない月</span> ${monthsTxt(k.op)} <small>（0.75倍）</small>` : ''}${(k.pk || []).includes(mo) ? ' <b style="color:#23864a">いまは多い月</b>' : (k.op || []).includes(mo) ? ' <b style="color:#c0392b">いまは少ない月</b>' : ''}</span>` : '';
-    const how = s.use === 'school' || s.kind === 'school' ? '<span>生徒は、まわりの人（その年ごろの人）から通ってきます。同じ種類の学校が近くにあると分けあいます。</span>'
+    const how = s.grp === 'kbshop' ? '<span>客は、まわりの人と、近くの駅の乗り降りする人から来て、馬券を買います。同じ種類の売り場が近くにあると分けあいます。</span><span>手数料（町の人の馬券の売上の 5%）は、レースのある時間に、その時間のレースの数と格に合わせて入ります（G1 などの大きなレースは多い）。</span>'
+      : s.use === 'school' || s.kind === 'school' ? '<span>生徒は、まわりの人（その年ごろの人）から通ってきます。同じ種類の学校が近くにあると分けあいます。</span>'
       : s.use === 'hotel' ? '<span>宿泊客は、近くの駅の乗り降りする人（旅の人）と、まわりの人から来ます。同じ種類の宿が近くにあると分けあいます。地価が高いところは宿泊料も高くなります。</span>'
       : s.use === 'hospital' ? '<span>患者・利用者は、まわりの人から来ます。同じ種類の病院・施設が近くにあると分けあいます。</span>'
       : '<span>来場者は、まわりの人と、近くの駅の乗り降りする人から来ます。同じ種類の施設が近くにあると分けあいます。</span>';
@@ -7893,7 +8025,7 @@ function scBlock(d) {
       ${s.can && s.day != null ? `<b>${ui.day}</b><span>${X(s.day)}</span>` : ''}
       ${s.can ? `<b>${ui.lv}</b><span><input type="range" min="50" max="200" step="5" value="${lv}" class="mp-sclv" style="width:55%;vertical-align:middle"> <b class="mp-sclvn">${lv}%</b> <button class="btn" data-sclv style="padding:2px 8px">決める</button></span>` : ''}
       </div>
-      <p class="muted small" style="margin:2px 0 6px">${how}${k.acc ? '<span>駅・バス停が近いとふえます。</span>' : ''}<span>近くの駅・バス停の乗る人にふえます（次の日から）。</span>${s.gov ? '' : `<span>自分で使うか会社が借りると、${ui.fee}（人件費などをひいた分）が1時間ごとに入ります。水準が高いと減ります。</span>`}</p>`;
+      <p class="muted small" style="margin:2px 0 6px">${how}${k.acc ? '<span>駅・バス停が近いとふえます。</span>' : ''}<span>近くの駅・バス停の乗る人にふえます（次の日から）。</span>${s.gov ? '' : `<span>自分で使うか会社が借りると、${ui.fee}（人件費などをひいた分）が${s.grp === 'kbshop' ? 'レースのある時間に' : '1時間ごとに'}入ります。水準が高いと減ります。</span>`}</p>`;
   }
   const st = s.stock || {}, stock = Object.keys(st).length ? gSort(st).map(([g, q]) => qG(g, q)).join('・') : '<span class="muted">なし</span>';
   const prodSel = s.can && s.opts ? `<b>つくるもの</b><span><select class="mp-inp" data-scprod style="width:auto"><option value="">ふつう（いままでどおり）</option>${s.opts.map(g => `<option value="${g}" ${s.prod === g ? 'selected' : ''}>${esc(GN(g))}</option>`).join('')}</select> <button class="btn" data-scprodset style="padding:2px 8px">決める</button></span>` : '';
