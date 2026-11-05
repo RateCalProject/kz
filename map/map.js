@@ -5817,6 +5817,7 @@ function openHelp() {
     <p><b>1時間の型（パターンダイヤ）</b>：系統の画面の「⏱ 1時間の型」で、毎時 同じ分に出る列車の型（行ごとに 種別・下り／上り／両方・発車の分・走る区間）をつくり、何時から何時まで くりかえして、1日のダイヤを組めます。停車駅は 種別の停車駅のパターンどおりです。その時間帯の列車を消して つくりなおすこともでき、「↶ 取り消す」で もどせます。型は系統に のこります。ダイヤグラムの線は 種別ごとの色で、種別で しぼりこめます。</p>
     <p><b>留置線と折り返し</b>：編成が終着駅に着いて、同じ駅から つぎの列車で出るまで、その駅の番線を1本つかいます。待つ編成と止まる列車で 番線が足りなくなると注意が出ます。駅の画面の「🅿 留置線をつくる」で、駅の近くの線路をなぞって 留置線をつくると、8分以上 待つ編成は 着いて3分で留置線へ入り、番線をあけて待ちます。ダイヤグラムでは 終着駅の横に 待つあいだの点線（留置線は灰色の破線）が出ます。</p>
     <p><b>電化と区間で しぼりこむ</b>：ダイヤグラム・時刻表・列車の一覧は、編成の電化（直流・交流・交直流・非電化）と、走る区間（始発駅 → 終着駅）でも しぼりこめます。「運用を自動で組む」の編成も 電化で しぼりこめます。</p>
+    <p><b>あてる先ごとの運用</b>：「運用を自動で組む」の「あてる先ごとに」で、あてる先（種別・区間・向き・時間帯・走る線の電化で決める 列車のまとまり）を いくつもつくり、それぞれに使う編成をえらんで わりあてます。列車は 上から順に 最初にあてはまる あてる先に入ります（どれにも入らない列車は いまのまま）。</p>
     <p><b>種別ごとの運用</b>：「運用を自動で組む」の「種別ごと」で、種別ごとに使う編成をえらべます。系統の画面の「運用番号を種別ごとに」で、運用番号を 種別ごとに まとめられます（例：快速は 101・102…）。運用の画面では、種別で しぼりこめます。</p>
     <p><b>車歴と譲渡</b>：車両ごとに、新製・転属・譲渡・廃車が車歴にのこります（車両をえらんで「車歴」。廃車した車両は「廃車した車両」）。編成は「ゆずる」、編成に入っていない車両はえらんで「ゆずる」で、ほかの人・会社にゆずれます。まん中にも運転台つきの Tc を入れられます（中間封じ込め）。</p>
     <p><b>乗り入れ（他社直通）</b>：ほかの人・会社の駅か線路をタップ →「乗り入れを申請」。持ち主が許可する（線路使用料：1列車・1km）と、系統にその持ち主の駅を入れて、持ち主の線路を走れます。線路をつなぐこともできます（どちらかの向きに許可があれば）。運賃は系統の持ち主に、走った km ぶんの線路使用料は1時間ごとに線路の持ち主に入ります。同じ駅の番線は、ほかの持ち主の列車ともかさならないように見ます。持ち主が「やめる」と、その線路・駅を使う系統は走れなくなります。≡ →「乗り入れ」で、許可・ことわる・使用料を変える・やめる。</p>
@@ -7416,7 +7417,9 @@ function ordPane(pane, D, load, openT) {
 }
 async function autoForm(D, reload) {
   // 種別ごと（DB の更新97）：保存してある えらびかた も いっしょに読む（まだのサーバーでは null）
-  const [cl, kf] = await Promise.all([api('mp_cars_list', { p_as: S.as }), call('mp_train_autoform_k', { p_route: D.id, p_map: null, p_as: S.as, p_dry: true }).catch(() => null)]);
+  const GRP = 'agrp' in D;   // あてる先ごと（DB の更新106）
+  const [cl, kf] = await Promise.all([api('mp_cars_list', { p_as: S.as }), GRP ? call('mp_train_autoform_g', { p_route: D.id, p_groups: null, p_as: S.as, p_dry: true }).catch(() => null)
+    : call('mp_train_autoform_k', { p_route: D.id, p_map: null, p_as: S.as, p_dry: true }).catch(() => null)]);
   if (!cl) return;
   const forms = cl.forms.filter(f => fKind(f) === D.kind);
   if (!forms.length) return toast(D.kind === 'air' ? '飛行機がありません（≡ →「車両と編成」で空港をえらんで注文してください）' : D.kind === 'ship' ? '船がありません（≡ →「車両と編成」で港をえらんで注文してください）' : '編成がありません（車両と編成で組んでください）');
@@ -7436,20 +7439,24 @@ async function autoForm(D, reload) {
   const fid = new Set(forms.map(f => f.id)), kmap = new Map(kinds.map(k => [k, new Set()])), saved = (kf && kf.kform) || {};
   for (const k of kinds) for (const id of saved[k] || []) if (fid.has(id) && ![...kmap.values()].some(z => z.has(id))) kmap.get(k).add(id);
   let mode = kinds.length > 1 && [...kmap.values()].some(z => z.size) ? 'kind' : 'all', ek = null;   // mode：all いっしょに・kind 種別ごと。ek：編成をえらんでいる種別
+  // あてる先ごと（DB の更新106）：あてる先 [{n, k, z, d, t0, t1, pw, f}]。保存した あてる先 → 種別ごとの えらびかた → 種別ごとに1つずつ
+  const G = GRP ? autoGrp(D, daily, kinds, forms, kf, kmap) : null;
+  if (GRP && G.list.some(g => g.f.size)) mode = 'grp';
   const m = modal(['運用を自動で組む', '']);
   const elsewhere = f => f.trains > D.trains.filter(t => t.form === f.id).length;   // ほかの系統の列車にも入っている編成（「ぜんぶえらぶ」ではえらばない）
   const fLabel = f => `${D.kind === 'ship' || D.kind === 'air' ? `便${f.trains}本` : D.kind === 'bus' ? `${f.perf.n}台・列車${f.trains}本` : `${f.perf.n}両・列車${f.trains}本`}`;
   const filters = () => `${counted && ns.length > 1 ? `<div class="mp-row small" style="align-items:center"><span>${unit === '台' ? '台数' : '両数'}</span><span class="mp-seg" style="flex-wrap:wrap"><button data-an="" class="${fn == null ? 'on' : ''}">すべて</button>${ns.map(n => `<button data-an="${n}" class="${fn === n ? 'on' : ''}">${T(`${n}${unit}`)}</button>`).join('')}</span></div>` : ''}
       ${sers.length > 1 ? `<div class="mp-row small" style="align-items:center"><span>形式</span><span class="mp-seg" style="flex-wrap:wrap"><button data-as="" class="${fsr == null ? 'on' : ''}">すべて</button>${sers.map(c => `<button data-as="${esc(c)}" class="${fsr === c ? 'on' : ''}"><span translate="no">${esc(serN(c))}</span></button>`).join('')}</span></div>` : ''}
       ${D.kind === 'rail' && pwsF.length > 1 ? `<div class="mp-row small" style="align-items:center"><span>電化</span><span class="mp-seg" style="flex-wrap:wrap"><button data-ap="" class="${fpw == null ? 'on' : ''}">すべて</button>${pwsF.map(c => `<button data-ap="${c}" class="${fpw === c ? 'on' : ''}"><span>${PW_L[c]}</span><small>（${forms.filter(f => fPw(f) === c).length}）</small></button>`).join('')}</span></div>` : ''}`;
-  const modeRow = () => kinds.length > 1 ? `<div class="mp-row small" style="align-items:center"><span>使う編成</span><span class="mp-seg"><button data-mode="all" class="${mode === 'all' ? 'on' : ''}">いっしょに</button><button data-mode="kind" class="${mode === 'kind' ? 'on' : ''}">種別ごとに</button></span></div>` : '';
+  const modeRow = () => GRP ? `<div class="mp-row small" style="align-items:center"><span>使う編成</span><span class="mp-seg"><button data-mode="all" class="${mode === 'all' ? 'on' : ''}">いっしょに</button><button data-mode="grp" class="${mode === 'grp' ? 'on' : ''}">あてる先ごとに</button></span></div>`
+    : kinds.length > 1 ? `<div class="mp-row small" style="align-items:center"><span>使う編成</span><span class="mp-seg"><button data-mode="all" class="${mode === 'all' ? 'on' : ''}">いっしょに</button><button data-mode="kind" class="${mode === 'kind' ? 'on' : ''}">種別ごとに</button></span></div>` : '';
   const bindCommon = b => {
     b.querySelectorAll('[data-mode]').forEach(x => x.onclick = () => { mode = x.dataset.mode; ek = null; draw(); });
     b.querySelectorAll('[data-an]').forEach(x => x.onclick = () => { fn = x.dataset.an === '' ? null : Number(x.dataset.an); draw(); });
     b.querySelectorAll('[data-as]').forEach(x => x.onclick = () => { fsr = x.dataset.as === '' ? null : x.dataset.as; draw(); });
     b.querySelectorAll('[data-ap]').forEach(x => x.onclick = () => { fpw = x.dataset.ap === '' ? null : x.dataset.ap; draw(); });
   };
-  const done = r => { if (r) { toast(T(`${r.ok}本にわりあてました（${r.used}編成）`) + (r.none ? SEP() + T(`・${r.none}本は編成が足りません`) : '') + (r.busy ? SEP() + T(`・${r.busy}編成はほかの種別の列車に入っているので使いませんでした`) : '')); m.close(); reload(); } };
+  const done = r => { if (r) { toast(T(`${r.ok}本にわりあてました（${r.used}編成）`) + (r.none ? SEP() + T(`・${r.none}本は編成が足りません`) : '') + (r.busy ? SEP() + T(mode === 'grp' ? `・${r.busy}編成は わりあてなおさない列車に入っているので使いませんでした` : `・${r.busy}編成はほかの種別の列車に入っているので使いませんでした`) : '')); m.close(); reload(); } };
   // 種別ごと：まとめて わりあてる（まだのサーバー＝DB の更新97の前 では、種別ごとに順に。えらびかたの保存はなし）
   const runKind = async () => {
     const mp = {}; for (const [k, z] of kmap) if (z.size) mp[k] = [...z];
@@ -7464,6 +7471,7 @@ async function autoForm(D, reload) {
   };
   const draw = () => {
     const vis = forms.filter(f => (fn == null || f.perf.n === fn) && (fsr == null || f.perf.series === fsr) && (fpw == null || fPw(f) === fpw));
+    if (mode === 'grp') return G.draw(m, { modeRow, filters, bindCommon, vis, fLabel, elsewhere, fu, done, redraw: draw });   // あてる先ごと（DB の更新106）
     if (mode === 'kind' && ek == null) {   // 種別ごと：種別の一覧
       const on = kinds.filter(k => kmap.get(k).size), busyF = daily.some(t => !kmap.get(t.kind).size && t.form);
       const nm = id => (forms.find(f => f.id === id) || {}).name || id;
@@ -7525,6 +7533,128 @@ async function autoForm(D, reload) {
     });
   };
   draw();
+}
+
+/* ---------- 運用を自動で組む：あてる先ごと（DB の更新106）。あてる先 = 種別・区間・向き・時間帯・走る線の電化で決める 毎日の列車のまとまり。
+   列車は 上から順に 最初にあてはまる あてる先に入る。あてる先ごとに 使う編成をえらぶ（1つの編成は1つの あてる先だけ） ---------- */
+const LPW_L = [[0, 'すべて'], [1, '直流の区間だけ'], [2, '交流の区間だけ'], [3, '直流と交流の両方'], [4, '非電化の区間がある']];
+function autoGrp(D, daily, kinds, forms, kf, kmap) {
+  const fid = new Set(forms.map(f => f.id));
+  const mk = o => ({ n: o.n || '', k: new Set(o.k || []), z: new Set(o.z || []), d: o.d || 0, t0: o.t0 == null ? null : o.t0, t1: o.t1 == null ? null : o.t1, pw: o.pw || 0,
+                     f: new Set((o.f || []).filter(id => fid.has(id))) });
+  let list = (kf && Array.isArray(kf.agrp) && kf.agrp.length) ? kf.agrp.map(mk)
+    : [...kmap.entries()].filter(([, z]) => z.size).map(([k, z]) => mk({ k: [k], f: [...z] }));
+  if (!list.length) list = kinds.map(k => mk({ k: [k] }));
+  for (const g of list) for (const id of [...g.f]) if (list.some(h => h !== g && h.f.has(id) && list.indexOf(h) < list.indexOf(g))) g.f.delete(id);   // 1つの編成は1つだけ
+  const stN = id => (D.stops.find(x => String(x.id) === String(id)) || {}).name || '';
+  const secOf = t => { const sc = t.sched || []; return sc.length > 1 ? sc[0][0] + '>' + sc[sc.length - 1][0] : ''; };
+  const secL = k => { if (!k) return '—'; const [a, z] = k.split('>'); return stN(a) + ' → ' + stN(z); };
+  const ftOf = t => t.sched && t.sched[0] && t.sched[0][2] != null ? t.sched[0][2] : t.dep;
+  const pwOk = (pw, lp) => !pw ? true : pw === 1 ? lp === 1 : pw === 2 ? lp === 2 : pw === 3 ? (lp & 3) === 3 : pw === 4 ? !!(lp & 4) : true;
+  const match = (g, t) => (!g.k.size || g.k.has(t.kind)) && (!g.z.size || g.z.has(secOf(t))) && (!g.d || g.d === t.dir)
+    && (g.t0 == null || ftOf(t) >= g.t0) && (g.t1 == null || ftOf(t) < g.t1) && pwOk(g.pw, t.lpw || 0);
+  const grpOf = t => list.findIndex(g => match(g, t));
+  const secs = (() => { const c = new Map(); for (const t of daily) { const k = secOf(t); if (k) c.set(k, (c.get(k) || 0) + 1); } return [...c.keys()].sort((a, b) => c.get(b) - c.get(a)); })();
+  const lps = new Set(daily.map(t => t.lpw || 0));
+  const hm = v => v == null ? '' : String(Math.floor(v / 3600)).padStart(2, '0') + ':' + String(Math.floor(v / 60) % 60).padStart(2, '0');
+  // あてる先の まとめ（HTML。ことばごとに span：訳せるように。駅の名前は訳さない）
+  const sum = g => [g.k.size ? [...g.k].map(k => `<span>${esc(kindL(k))}</span>`).join('・') : '<span>すべての種別</span>',
+    g.z.size ? `<span translate="no">${esc([...g.z].map(secL).slice(0, 2).join('・') + (g.z.size > 2 ? '…' : ''))}</span>` : '',
+    g.d ? `<span>${g.d === 1 ? '下り' : '上り'}</span>` : '', g.t0 != null || g.t1 != null ? `<span translate="no">${hm(g.t0) || '0:00'}〜${hm(g.t1) || '24:00'}</span>` : '',
+    g.pw ? `<span>${LPW_L[g.pw][1]}</span>` : ''].filter(Boolean).join('／');
+  // 走れるか：交流の区間には 交流・交直流（か 非電化の車）、直流の区間には 直流・交直流（か 非電化の車）、非電化の区間には 非電化の車
+  const fPw = f => pwCls(!!(f.perf && f.perf.elec), (f.perf && f.perf.ps) || 0);
+  const fOk = (f, lp) => { const c = fPw(f); if (lp & 4) return c === 'n'; if ((lp & 1) && !(c === 'd' || c === 'x' || c === 'n')) return false; if ((lp & 2) && !(c === 'a' || c === 'x' || c === 'n')) return false; return true; };
+  let eg = null, sub = null;   // eg：えらんでいる あてる先・sub：cond（条件）か forms（編成）
+  const st = () => {   // いまの あてる先：列車の数・わりあてなおさない列車（あてる先に入らない・編成をえらんでいない あてる先）・その編成（使えない）
+    const by = list.map(() => []), keep = [];
+    for (const t of daily) { const i = grpOf(t); if (i >= 0 && list[i].f.size) by[i].push(t); else { if (i >= 0) by[i].push(t); keep.push(t); } }
+    const busy = new Set(keep.filter(t => t.form).map(t => t.form));
+    return { by, keep, busy };
+  };
+  const draw = (m, c) => {
+    const S2 = st(), nm = id => (forms.find(f => f.id === id) || {}).name || id;
+    if (eg == null) {   // あてる先の一覧
+      const on = list.some((g, i) => g.f.size && S2.by[i].length);
+      m.set('運用を自動で組む', `<p class="small" style="margin-top:0"><span>あてる先（種別・区間・向き・時間帯・走る線の電化で決める 列車のまとまり）ごとに 使う編成をえらんで、わりあてます（始発駅にいて、2分前にあいている編成）。列車は 上から順に 最初にあてはまる あてる先に入ります。</span></p>
+        ${c.modeRow()}
+        <div class="mp-list">${list.map((g, i) => { const z = [...g.f], lp = S2.by[i].reduce((a, t) => a | (t.lpw || 0), 0), bad = z.filter(id => { const f = forms.find(y => y.id === id); return f && !fOk(f, lp); }).length;
+          return `<div class="mp-item"><div class="mp-row" style="align-items:center;margin:0;gap:4px">
+            <b style="flex:1 1 auto"><span>${i + 1}.</span> ${g.n ? `<span translate="no">${esc(g.n)}</span>：` : ''}${sum(g)} <small class="muted">（<span>${S2.by[i].length}本</span>）</small></b>
+            <button class="btn" style="flex:none;padding:2px 8px" data-gup="${i}" ${i ? '' : 'disabled'}>↑</button><button class="btn" style="flex:none;padding:2px 8px" data-gx="${i}">×</button></div>
+            <div class="mp-row small" style="margin:2px 0"><button class="btn" data-gc="${i}">条件</button><button class="btn ${z.length ? '' : 'main'}" data-gf="${i}">${z.length ? '編成を変える' : '編成をえらぶ'}</button></div>
+            <small>${z.length ? `<span>${z.length}${c.fu}えらんでいます</span>：<span translate="no">${z.slice(0, 6).map(id => esc(nm(id))).join('・')}${z.length > 6 ? '…' : ''}</span>${bad ? `<br><span class="mp-warn">${esc(T(`走れない区間のある編成が ${bad}${c.fu}`))}</span>` : ''}`
+              : '<span class="muted">えらんでいません（この あてる先の列車は、いまのまま）</span>'}</small></div>`; }).join('')}</div>
+        <div class="mp-row"><button class="btn" data-gadd ${list.length >= 20 ? 'disabled' : ''}>＋ あてる先を足す</button></div>
+        <p class="small muted" style="margin:2px 0">${S2.keep.length ? `<span>${esc(T(`わりあてなおさない列車 ${S2.keep.length}本（いまのまま）`))}</span>${S2.busy.size ? SEP() + `<span>${esc(T(`その列車の編成 ${S2.busy.size}${c.fu}は使いません`))}</span>` : ''}` : `<span>${esc(T('すべての毎日の列車を わりあてなおします'))}</span>`}</p>
+        <div class="mp-row"><button class="btn main" data-gok ${on ? '' : 'disabled'}>わりあてる</button></div>
+        <p class="muted small"><span>1つの編成は1つの あてる先だけで使います。あてる先は この系統に保存して、次にひらいたときに出します。</span></p>`, b => {
+        c.bindCommon(b);
+        b.querySelectorAll('[data-gup]').forEach(x => x.onclick = () => { const i = Number(x.dataset.gup); if (i > 0) { const a = list[i - 1]; list[i - 1] = list[i]; list[i] = a; } c.redraw(); });
+        b.querySelectorAll('[data-gx]').forEach(x => x.onclick = () => { list.splice(Number(x.dataset.gx), 1); c.redraw(); });
+        b.querySelectorAll('[data-gc]').forEach(x => x.onclick = () => { eg = Number(x.dataset.gc); sub = 'cond'; c.redraw(); });
+        b.querySelectorAll('[data-gf]').forEach(x => x.onclick = () => { eg = Number(x.dataset.gf); sub = 'forms'; c.redraw(); });
+        b.querySelector('[data-gadd]').onclick = () => { list.push(mk({})); eg = list.length - 1; sub = 'cond'; c.redraw(); };
+        b.querySelector('[data-gok]').onclick = async () => {
+          const groups = list.map(g => ({ n: g.n, k: [...g.k], z: [...g.z], d: g.d, t0: g.t0, t1: g.t1, pw: g.pw, f: [...g.f] }));
+          c.done(await api('mp_train_autoform_g', { p_route: D.id, p_groups: groups, p_as: S.as, p_dry: false }));
+        };
+      });
+      return;
+    }
+    const g = list[eg];
+    if (sub === 'cond') {   // 条件
+      const mine = daily.filter(t => match(g, t)).length, got = S2.by[eg].length;
+      const secsK = [...new Set([...g.z, ...secs.filter(k => !g.k.size || daily.some(t => g.k.has(t.kind) && secOf(t) === k))])];   // えらんだ種別の列車が走る区間（えらんだ区間はのこす）
+      const chips = (attr, items, label) => items.map(v => `<button data-${attr}="${esc(String(v))}" class="${g[attr === 'ck' ? 'k' : 'z'].has(v) ? 'on' : ''}">${label(v)}</button>`).join('');
+      m.set('あてる先の条件', `<div class="mp-row"><input class="mp-inp" data-gn value="${esc(g.n)}" maxlength="20" placeholder="${esc(T('名前（なくてもよい）'))}"></div>
+        <div class="mp-row small" style="align-items:center"><span style="min-width:3.5em">種別</span><span class="mp-seg" style="flex-wrap:wrap"><button data-ck="*" class="${g.k.size ? '' : 'on'}">すべて</button>${chips('ck', kinds, k => `${kindSw(kindCol(D, k))}<span>${esc(kindL(k))}</span>`)}</span></div>
+        ${secsK.length > 1 || g.z.size ? `<div class="mp-row small" style="align-items:center"><span style="min-width:3.5em">区間</span><span class="mp-seg" style="flex-wrap:wrap"><button data-cz="*" class="${g.z.size ? '' : 'on'}">すべて</button>${chips('cz', secsK.slice(0, 24), k => `<span translate="no">${esc(secL(k))}</span><small>（${daily.filter(t => secOf(t) === k && (!g.k.size || g.k.has(t.kind))).length}）</small>`)}</span></div>` : ''}
+        <div class="mp-row small" style="align-items:center"><span style="min-width:3.5em">向き</span><span class="mp-seg">${[[0, 'すべて'], [1, '下り'], [-1, '上り']].map(([v, l]) => `<button data-cd="${v}" class="${g.d === v ? 'on' : ''}">${l}</button>`).join('')}</span></div>
+        <div class="mp-row small" style="align-items:center"><span style="min-width:3.5em">時間帯</span><span>始発を出る</span><input class="mp-inp mp-num" style="width:5em" data-ct0 value="${hm(g.t0)}" placeholder="0:00"><span>〜</span><input class="mp-inp mp-num" style="width:5em" data-ct1 value="${hm(g.t1)}" placeholder="24:00"></div>
+        ${lps.size > 1 || g.pw ? `<div class="mp-row small" style="align-items:center"><span style="min-width:3.5em">電化</span><span class="mp-seg" style="flex-wrap:wrap">${LPW_L.map(([v, l]) => `<button data-cp="${v}" class="${g.pw === v ? 'on' : ''}">${l}</button>`).join('')}</span></div>` : ''}
+        <p class="small" style="margin:4px 0"><b>${esc(T(`あてはまる列車 ${mine}本`))}</b>${got !== mine ? `<span>${esc(T(`（この あてる先に入るのは ${got}本。上の あてる先が先にとります）`))}</span>` : ''}</p>
+        <div class="mp-row"><button class="btn main" data-cok>決める</button></div>
+        <p class="muted small"><span>えらばない条件は「すべて」です。時間帯は 始発駅を出る時刻（はじめの時刻から、おわりの時刻の前まで）。電化は 列車が走る線の電化です。</span></p>`, b => {
+        const tog = (set, v) => { if (v === '*') set.clear(); else if (set.has(v)) set.delete(v); else set.add(v); c.redraw(); };
+        b.querySelector('[data-gn]').onchange = e => { g.n = e.target.value.trim().slice(0, 20); };
+        b.querySelectorAll('[data-ck]').forEach(x => x.onclick = () => tog(g.k, x.dataset.ck));
+        b.querySelectorAll('[data-cz]').forEach(x => x.onclick = () => tog(g.z, x.dataset.cz));
+        b.querySelectorAll('[data-cd]').forEach(x => x.onclick = () => { g.d = Number(x.dataset.cd); c.redraw(); });
+        b.querySelectorAll('[data-cp]').forEach(x => x.onclick = () => { g.pw = Number(x.dataset.cp); c.redraw(); });
+        const tm = v => { const t = String(hw(v)).trim(); if (!t) return null; const p = parseHM(t); return p == null || !Number.isFinite(p) ? null : Math.max(0, Math.min(86400, p)); };
+        b.querySelector('[data-ct0]').onchange = e => { g.t0 = tm(e.target.value); c.redraw(); };
+        b.querySelector('[data-ct1]').onchange = e => { g.t1 = tm(e.target.value); if (g.t1 === 0) g.t1 = null; c.redraw(); };
+        b.querySelector('[data-cok]').onclick = () => { const n = b.querySelector('[data-gn]'); if (n) g.n = n.value.trim().slice(0, 20); eg = null; sub = null; c.redraw(); };
+      });
+      return;
+    }
+    // 編成をえらぶ
+    const z = g.f, other = id => list.findIndex(h => h !== g && h.f.has(id)), lp = S2.by[eg].reduce((a, t) => a | (t.lpw || 0), 0);
+    const can = f => other(f.id) < 0 && !S2.busy.has(f.id) && fOk(f, lp);
+    m.set('運用を自動で組む', `<p class="small" style="margin-top:0"><b>${eg + 1}. ${g.n ? `<span translate="no">${esc(g.n)}</span>：` : ''}${sum(g)}</b>（<span>${S2.by[eg].length}本</span>）<br><span>この あてる先の列車に使う編成をえらんでください</span></p>
+      ${c.filters()}
+      <div class="mp-row small" style="align-items:center"><button class="btn" data-aall ${c.vis.some(f => can(f) && !c.elsewhere(f) && !z.has(f.id)) ? '' : 'disabled'}>表示中をぜんぶえらぶ</button><button class="btn" data-anone ${z.size ? '' : 'disabled'}>ぜんぶはずす</button><b><span>${z.size}${c.fu}えらんでいます</span></b></div>
+      <div class="mp-cars">${c.vis.map(f => { const o = other(f.id); return `<span class="mp-car ${z.has(f.id) ? 'on' : ''}" data-f="${f.id}"${!can(f) && !z.has(f.id) ? ' style="opacity:.55"' : ''}>${esc(f.name)}<span class="n">${c.fLabel(f)}${o >= 0 ? `<br><span>${esc(T(`${o + 1}つめの あてる先にえらんだ`))}</span>` : S2.busy.has(f.id) ? '<br><span>わりあてなおさない列車で使用中</span>' : !fOk(f, lp) ? '<br><span>走れない区間がある</span>' : c.elsewhere(f) ? '<br><span>ほかの系統で使用中</span>' : ''}</span></span>`; }).join('')}</div>
+      <div class="mp-row"><button class="btn main" data-gback>決める</button></div>
+      <p class="muted small"><span>ほかの あてる先にえらんだ編成・わりあてなおさない列車に入っている編成・走れない区間（電化）がある編成は、えらべません。</span>${SEP()}<span>「表示中をぜんぶえらぶ」では、ほかの系統で使用中の編成はえらびません（えらぶときはタップ）。</span></p>`, b => {
+      c.bindCommon(b);
+      b.querySelector('[data-aall]').onclick = () => { for (const f of c.vis) if (can(f) && !c.elsewhere(f)) z.add(f.id); c.redraw(); };
+      b.querySelector('[data-anone]').onclick = () => { z.clear(); c.redraw(); };
+      b.querySelectorAll('[data-f]').forEach(x => x.onclick = () => {
+        const id = Number(x.dataset.f), f = forms.find(y => y.id === id);
+        if (z.has(id)) { z.delete(id); return c.redraw(); }
+        if (!f) return;
+        const o = other(id);
+        if (o >= 0) return toast(T(`${o + 1}つめの あてる先にえらんでいます（そちらで はずすと、えらべます）`));
+        if (S2.busy.has(id)) return toast(T('わりあてなおさない列車に入っています（その列車も あてる先に入れると、えらべます）'));
+        if (!fOk(f, lp)) return toast(T('この あてる先には、走れない区間（電化）があります'));
+        z.add(id); c.redraw();
+      });
+      b.querySelector('[data-gback]').onclick = () => { eg = null; sub = null; c.redraw(); };
+    });
+  };
+  return { list, draw };
 }
 
 /* ---- 運用：運用番号・編成・列車の数。運用ファイル（JSON）の書き出し・読みこみ ---- */
