@@ -221,7 +221,7 @@ function m3Terrain(rc) {
       .map(([dx, dy]) => S.chunks.get(ckey(cx + dx, cy + dy)) || (mode === 'l' && LO.m.get(ckey(cx + dx, cy + dy))) ? 'y' : 'n').join('');
     const old = M3.cm.get(k), rq = mode === 'f' ? RK.get(k) : null, rk = rq ? rq.key : '';
     if (old && old.st === st && old.nb === nb && old.mode === mode && (old.rk || '') === rk) continue;
-    todo.push({ k, c, cx, cy, st, nb, mode, dist, rk, rs: rq ? rq.segs : null });
+    todo.push({ k, c, cx, cy, st, nb, mode, dist, rk, rs: rq ? rq.segs : null, rd: rq ? rq.roads : null });
   }
   // 1フレームに作るのは少しずつ（時間で区切る：速い端末はすぐそろい、遅い端末はカクつかない）。近いものから（t63）
   todo.sort((a, b) => a.dist - b.dist);
@@ -231,7 +231,7 @@ function m3Terrain(rc) {
     const old = M3.cm.get(t.k);
     if (old) { M3.grpT.remove(old.mesh); m3Dispose(old.mesh); }
     const mesh = m3TerraMesh(T3, t); M3.grpT.add(mesh);
-    if (t.rs) try { m3Carve(mesh, t.cx, t.cy, t.st, t.rs); } catch (e) { console.error(e); }   // 線路の切り通し（t66）
+    if (t.rs) try { m3Carve(mesh, t.cx, t.cy, t.st, t.rs, t.rd); } catch (e) { console.error(e); }   // 線路の切り通し（t66・DB の更新111）
     // H：網の点の高さ（建物・道路・列車を、この網の上に。m3Surf）。gen：作った順の番号（上に のせるものを作りなおす合図）
     M3.cm.set(t.k, { mesh, st: t.st, nb: t.nb, mode: t.mode, H: mesh.userData.H, gen: ++M3.tg, rk: t.rk }); n++;
     const nr = rc.near; if (t.cx * CS <= nr.x1 + 1 && t.cx * CS + CS >= nr.x0 - 1 && t.cy * CS <= nr.y1 + 1 && t.cy * CS + CS >= nr.y0 - 1) M3.tgN++;
@@ -239,7 +239,7 @@ function m3Terrain(rc) {
   if (n < todo.length) M3.dirty = true;
   for (const [k, o] of M3.cm) if (!keep.has(k)) { M3.grpT.remove(o.mesh); m3Dispose(o.mesh); M3.cm.delete(k); M3.tg++; }
 }
-/* ---------- 線路の切り通し（t66・DB の更新108）：縦断のある地面の線路（つくり G）の まわりの 地形の網を、レールより下に
+/* ---------- 線路の切り通し（t66・DB の更新108・111 の 深い切り通し C）：縦断のある地面の線路（つくり G）の まわりの 地形の網を、レールより下に
    （地面が線路を おおわない。線路は 縦断どおり なめらかに）。レールから 0.22マスは レールの高さ、その外は 1マスで 14m 上がる坂（0.9マスまで） ---------- */
 // チャンクごとの 縦断のある線路：{ key（id と 縦断・つくりの長さ。かわったら 作りなおす）, segs }
 // 縦断のない線路（DB の更新108 の前の線・決められなかった線）の 仮の縦断（3D だけ。t67）：地形の網と おなじ ならした標高（まわり 6 マスの重み）を 線にそって。
@@ -384,20 +384,45 @@ function m3RailKeys() {
       a.segs.push(sg); a.key += sg.id + ':' + (sg.pf ? sg.pf.length + ':' + sg.st.length : 'v' + vp.m + ':' + vp.sig) + ',';
     }
   }
+  // 線路のあるチャンクの 道路（切り通しの上を わたる道の下は けずらない。DB の更新111）
+  if (out.size) for (const s of it.segs.values()) {
+    if (s.k !== 'road' || !s.bb || !(s.np >= 2) || !s.P) continue;
+    const x0 = Math.floor((s.bb[0] - 1.5) / CS), x1 = Math.floor((s.bb[2] + 1.5) / CS), y0 = Math.floor((s.bb[1] - 1.5) / CS), y1 = Math.floor((s.bb[3] + 1.5) / CS);
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) > 400) continue;
+    for (let cx = x0; cx <= x1; cx++) for (let cy = y0; cy <= y1; cy++) { const a2 = out.get(ckey(cx, cy)); if (!a2) continue; (a2.roads || (a2.roads = [])).push(s); a2.key += 'r' + s.id + ','; }
+  }
   return out;
 }
-function m3Carve(mesh, cx, cy, st, segs) {
+function m3Carve(mesh, cx, cy, st, segs, roads) {
   const g = mesh.geometry, pos = g && g.attributes.position; if (!pos) return false;
-  const A = pos.array, nv = pos.count, ox = cx * CS, oy = cy * CS, R = 0.9, W0 = 0.22, K = 14 * M3_U * M3_VEX;
+  // 地面 G：レールの高さの底（W0）から 1マスで 14m の坂。切り通し C（DB の更新111。8〜15m 低い）：広い底（W0C）から 1マスで 26m の坂（深く けずる）。
+  //   網の点の あいだ（sp）が あらいほど 底を広く（点と点の あいだで 地面が レールを おおわないように）
+  const sp = mesh.userData && mesh.userData.tk && mesh.userData.tk.lvl > 0 ? 0.5 : Math.max(0.5, st || 1);
+  const W0 = Math.max(0.22, 0.4 * sp), W0C = Math.max(0.3, 0.75 * sp), RG = W0 + 0.68, RC = W0C + 0.65, R = Math.max(RG, RC);
+  const A = pos.array, nv = pos.count, ox = cx * CS, oy = cy * CS, K = 14 * M3_U * M3_VEX, KC = 26 * M3_U * M3_VEX, DEEP = 3 * M3_U * M3_VEX;
+  // 道路：深く けずる点が 道路の上なら けずらない（切り通しを わたる道は 地面の高さのまま。道が 切り通しの底へ しずまないように）
+  const RD = [];
+  for (const r of roads || []) { const hw = Math.max(6, (r.w || 0.2) * 50) / 100 + 0.12; for (let i = 0; i + 1 < r.np; i++) { const ax = r.P[2 * i], ay = r.P[2 * i + 1], bx = r.P[2 * i + 2], by = r.P[2 * i + 3]; if (Math.max(ax, bx) < ox - 2 || Math.min(ax, bx) > ox + CS + 2 || Math.max(ay, by) < oy - 2 || Math.min(ay, by) > oy + CS + 2) continue; RD.push(ax, ay, bx, by, hw * hw); } }
+  const onRoad = (x, z) => {
+    for (let q = 0; q < RD.length; q += 5) {
+      const ax = RD[q], ay = RD[q + 1], dx = RD[q + 2] - ax, dy = RD[q + 3] - ay, l2 = dx * dx + dy * dy;
+      let t = l2 > 0 ? ((x - ax) * dx + (z - ay) * dy) / l2 : 0; t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const ex = ax + dx * t - x, ey = ay + dy * t - z; if (ex * ex + ey * ey < RD[q + 4]) return true;
+    }
+    return false;
+  };
   const cut = (x, z, y, sg, acc, ax, ay, ux, uy, L, vp) => {   // 点 (x, z) の高さ y を、線の区間（ax, ay から ux, uy の向きに L）の切り通しで けずった高さ
     let t = (x - ax) * ux + (z - ay) * uy; t = t < 0 ? 0 : t > L ? L : t;
     const px = ax + ux * t, py = ay + uy * t, d = Math.hypot(x - px, z - py); if (d > R) return y;
     const s = acc + t;
-    let zr;
+    let zr, c = 'G';
     if (vp) { if (m3VW(vp, s)) return y; zr = m3VZ(vp, s); }   // 縦断のない線：仮の縦断（水の上は 橋）（t67）
-    else { const c = sg.st[Math.min(sg.st.length - 1, Math.max(0, Math.round(s)))] || 'G'; if (c !== 'G') return y; zr = pfZ(sg.pf, s); }
-    const lim = zr * M3_U * M3_VEX - 0.25 * M3_U + Math.max(0, d - W0) * K;
-    return y > lim ? lim : y;
+    else { c = sg.st[Math.min(sg.st.length - 1, Math.max(0, Math.round(s)))] || 'G'; if (c !== 'G' && c !== 'C') return y; zr = pfZ(sg.pf, s); }
+    if (c === 'C' ? d > RC : d > RG) return y;
+    const lim = zr * M3_U * M3_VEX - 0.25 * M3_U + (c === 'C' ? Math.max(0, d - W0C) * KC : Math.max(0, d - W0) * K);
+    if (y <= lim) return y;
+    if (y - lim > DEEP && RD.length && onRoad(x, z)) return y;   // 切り通しを わたる道の下（DB の更新111）
+    return lim;
   };
   // 網の点を 1マスの目ごとに
   const grid = new Map(), gk = (a, b) => (a + 8) * 4099 + (b + 8);

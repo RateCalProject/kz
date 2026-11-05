@@ -23410,7 +23410,7 @@ begin
                      * case sg.slp when 3 then 1.25 when 1 then 1.05 else 1 end * case sg.nw when 1 then 0.5 when 2 then 0.25 else 1 end lv
                 from sr join mp_segs sg on sg.id = sr.sid where sg.kind = 'rail'),
        tl as materialized (select sl.lv, _mp_tiles(sl.pts) tl, _mp_st_tiles(sl.pts, sl.st) cd from sl where sl.lv >= 0.02),   -- 1本に1回だけ（まとめないと マスごとに計算しなおす）
-       pt as materialized (select t.tl[2 * c.i - 1] x, t.tl[2 * c.i] y, least(3, t.lv * case c.code when 'V' then 1.15 when 'B' then 1.6 else 1 end) lv
+       pt as materialized (select t.tl[2 * c.i - 1] x, t.tl[2 * c.i] y, least(3, t.lv * case c.code when 'V' then 1.15 when 'B' then 1.6 when 'C' then 0.6 else 1 end) lv
                 from tl t cross join lateral unnest(t.cd) with ordinality c(code, i) where c.code <> 'T' and 2 * c.i <= coalesce(array_length(t.tl, 1), 0))
   select p.x + dx, p.y + dy, least(3, sum(p.lv * case when dx = 0 and dy = 0 then 0.5 when dx = 0 or dy = 0 then 0.25 else 0.15 end))::real
     from pt p cross join generate_series(-1, 1) dx cross join generate_series(-1, 1) dy
@@ -32302,17 +32302,39 @@ language sql stable set search_path = public as $$
   select hs.s0, hs.s1, (g - 10)::real, 1e9::real, '滑走路「' || r.name || '」' from hs join mp_rwys r on hs.what = 'rwy' and r.id = hs.ref, lateral (select _mp_gz(r.x0 / 100.0, r.y0 / 100.0) g) q
 $$;
 
--- つくり（1マスごとの1文字）：水の上 B 橋（水の 8m より下なら T）・地面より 6m 高い V 高架・8m 低い T トンネル（地下）・ほか G 地面（盛り土・切り通し）
+-- つくり（1マスごとの1文字）：水の上 B 橋（水の 8m より下なら T）・地面より 6m 高い V 高架・15m 低い T トンネル（地下）・8m〜15m 低い C 切り通し（DB の更新111）・ほか G 地面（盛り土・浅い切り通し）
 create or replace function public._mp_st_code(z real, g real, t text) returns text
 language sql immutable as $$
-  select case when t in ('S', 'R', 'L', 'D') then case when z <= g - 8 then 'T' else 'B' end when z - g >= 6 then 'V' when z - g <= -8 then 'T' else 'G' end
+  select case when t in ('S', 'R', 'L', 'D') then case when z <= g - 8 then 'T' else 'B' end when z - g >= 6 then 'V' when z - g <= -15 then 'T' when z - g <= -8 then 'C' else 'G' end
 $$;
+-- つくり（1マスごとの1文字）の 短い切れはしを ならす（DB の更新111）：
+--   切り通しに かこまれた 2マスまでの トンネル（片がわが地面でも）は 切り通しに・トンネルに はさまれた 1マスの 切り通しは トンネルに（線の はしの区間は そのまま）
+create or replace function public._mp_st_tidy(s text) returns text
+language plpgsql immutable as $$
+declare zc text[] := '{}'; zn int[] := '{}'; zi int := 1; zj int; zk int; zx text; zo text := '';
+begin
+  if s is null or position('C' in s) = 0 then return s; end if;
+  while zi <= length(s) loop
+    zx := substr(s, zi, 1); zj := zi;
+    while zj < length(s) and substr(s, zj + 1, 1) = zx loop zj := zj + 1; end loop;
+    zc := zc || zx; zn := zn || (zj - zi + 1); zi := zj + 1;
+  end loop;
+  for zk in 2..coalesce(array_length(zc, 1), 0) - 1 loop
+    if zc[zk] = 'T' and zn[zk] <= 2 and zc[zk - 1] in ('C', 'G') and zc[zk + 1] in ('C', 'G') and 'C' in (zc[zk - 1], zc[zk + 1]) then zc[zk] := 'C';
+    elsif zc[zk] = 'C' and zn[zk] = 1 and zc[zk - 1] = 'T' and zc[zk + 1] = 'T' then zc[zk] := 'T';
+    end if;
+  end loop;
+  for zk in 1..coalesce(array_length(zc, 1), 0) loop zo := zo || repeat(zc[zk], zn[zk]); end loop;
+  return zo;
+end $$;
+revoke all on function public._mp_st_tidy(text) from public, anon, authenticated;
 -- 工事費の倍率（1マス）：地面は地形（平地 1〜高い山 2.5。水の上は橋と同じ）・高架 3・トンネル 4.5（水の下は橋より少し高い）・橋（川 4・湖 6・海 8・深い海 10。陸の上は高架と同じ）
 create or replace function public._mp_smul(code text, t text) returns real
 language sql immutable as $$
   select (case code when 'V' then 3
                     when 'T' then case t when 'R' then 5 when 'L' then 7 when 'S' then 9 when 'D' then 11 else 4.5 end
                     when 'B' then case t when 'R' then 4 when 'L' then 6 when 'S' then 8 when 'D' then 10 else 3 end
+                    when 'C' then case t when 'F' then 2.2 when 'B' then 2.2 when 'H' then 2.5 when 'M' then 3 when 'K' then 3.5 else 2 end   -- 切り通し（DB の更新111）
                     else case t when 'F' then 1.2 when 'B' then 1.2 when 'H' then 1.5 when 'M' then 2 when 'K' then 2.5 when 'R' then 4 when 'L' then 6 when 'S' then 8 when 'D' then 10 else 1 end end)::real
 $$;
 
@@ -32409,7 +32431,7 @@ declare sm record; ss real[] := '{}'; gg real[] := '{}'; tt text[] := '{}'; S re
         o_s0 real[] := '{}'; o_s1 real[] := '{}'; o_zb real[] := '{}'; o_zt real[] := '{}'; o_g real[] := '{}'; o_lv boolean[] := '{}'; o_nm text[] := '{}'; o_k text[] := '{}';
         o_ka int[] := '{}'; o_kb int[] := '{}'; ord int[]; no int := 0; fi int;
         za real; zb_ real; zm real; ka int; kb int; side text; sides text[]; z2 real[]; lo2 real[]; hi2 real[]; mg real := 0; st text := ''; zz real; lx int := 0; xs jsonb := '[]'::jsonb;
-        tun int := 0; via int := 0; brg int := 0; acc real; cnt int; G real; off real; wr real[] := '{}'; w0 real; nu int;
+        tun int := 0; via int := 0; brg int := 0; cut int := 0; acc real; cnt int; G real; off real; wr real[] := '{}'; w0 real; nu int;
         gb real[]; ge real[]; tw int := 20; wv real; jj int; zlv real[] := '{}'; zq record;
         zt real := (opt ->> 'zt')::real; zr boolean := coalesce(opt -> 'zr' = 'true'::jsonb, false); gm real := (opt ->> 'gm')::real; gx real := (opt ->> 'gx')::real; tz boolean; fl boolean := mode = 'fl';
         blo real[]; bhi real[]; gmx real; gmn real; wt boolean; al real; g0 real;
@@ -32593,7 +32615,9 @@ begin
     zz := _mp_pz(pf, ss[j]);
     st := st || _mp_st_code(zz, gg[j], tt[j]);
   end loop;
+  st := _mp_st_tidy(st);   -- 短い切れはし をならす（DB の更新111）
   tun := 50 * (length(st) - length(replace(st, 'T', ''))); via := 50 * (length(st) - length(replace(st, 'V', ''))); brg := 50 * (length(st) - length(replace(st, 'B', '')));
+  cut := 50 * (length(st) - length(replace(st, 'C', '')));   -- 切り通し（DB の更新111）
   for i in 1..no loop
     za := _mp_pz(pf, (o_s0[i] + o_s1[i]) / 2);
     side := case when za >= o_zt[i] - 0.01 then 'over' when za <= o_zb[i] + 0.01 then 'under' else 'level' end;
@@ -32601,7 +32625,7 @@ begin
     xs := xs || jsonb_build_array(jsonb_build_array(round(o_s0[i]::numeric, 1), side, o_nm[i]));
   end loop;
   return jsonb_build_object('ok', true, 'prof', to_jsonb(pf), 'st', st, 'g', (select jsonb_agg(round(v::numeric)) from unnest(gg) v), 'maxg', round(mg::numeric),
-    'tun', tun, 'via', via, 'brg', brg, 'lx', lx, 'xs', xs, 'ns', ns);
+    'tun', tun, 'via', via, 'brg', brg, 'cut', cut, 'lx', lx, 'xs', xs, 'ns', ns);
 end $$;
 -- 縦断を決めて、しらべる（いままでの呼び出し。数値 opt なし。DB の更新84 から _mp_prof_make2 を呼ぶ）
 create or replace function public._mp_prof_make(p int[], kind text, cls text, z0 real, z1 real, mode text, rack boolean, upf real[], cells int[], tiles int[], ea real, eb real, oseg bigint[], xonly boolean, fx real[]) returns jsonb
@@ -32721,7 +32745,7 @@ end $$;
 -- 線のつくり（1マスごと。縦断がなければ null）
 create or replace function public._mp_st_of(p int[], pf real[]) returns text
 language sql stable set search_path = public as $$
-  select case when pf is null then null else (select string_agg(_mp_st_code(_mp_pz(pf, g.s), g.g, g.t), '' order by g.i) from _mp_gsamp(p) g) end
+  select case when pf is null then null else _mp_st_tidy((select string_agg(_mp_st_code(_mp_pz(pf, g.s), g.g, g.t), '' order by g.i) from _mp_gsamp(p) g)) end
 $$;
 
 -- 線のマス（_mp_tiles と同じ順）ごとの、はじめからの長さ（そのマスに入ったところ）

@@ -492,14 +492,14 @@ function prepSeg(s) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (let i = 0; i < p.length; i += 2) { const x = p[i] / 100, y = p[i + 1] / 100; P[i] = x; P[i + 1] = y; if (x < x0) x0 = x; if (y < y0) y0 = y; if (x > x1) x1 = x; if (y > y1) y1 = y; }
   s.P = P; s.bb = [x0, y0, x1, y1]; s.np = n;
-  // 高さ（t108）：縦断のある線は、点ごとの長さ（マス）と、つくりの区間 [はじめの点, おわりの点, G 地面・V 高架・T トンネル・B 橋]
+  // 高さ（t108）：縦断のある線は、点ごとの長さ（マス）と、つくりの区間 [はじめの点, おわりの点, G 地面（切り通し C もふくむ）・V 高架・T トンネル・B 橋]
   s.runs = null; s.L = null;
   if (s.pf) {
     const L = new Float32Array(n);
     for (let i = 1; i < n; i++) L[i] = L[i - 1] + Math.hypot(P[2 * i] - P[2 * i - 2], P[2 * i + 1] - P[2 * i - 1]);
     s.L = L;
     if (s.st && /[TVB]/.test(s.st)) {
-      const st = s.st, m = st.length, code = i => st[Math.min(m - 1, Math.max(0, Math.round(L[i])))] || 'G', runs = [];
+      const st = s.st, m = st.length, code = i => { const c = st[Math.min(m - 1, Math.max(0, Math.round(L[i])))] || 'G'; return c === 'C' ? 'G' : c; }, runs = [];   // 切り通し C（DB の更新111）は 地面と おなじに描く
       let a = 0, c = code(0);
       for (let i = 1; i < n; i++) { const k = code(i); if (k !== c) { runs.push([a, i, c]); a = i; c = k; } }
       runs.push([a, n - 1, c]); s.runs = runs;
@@ -3852,7 +3852,7 @@ function segProf(s) {
   if (!prof) { prof = []; g.forEach((v, k) => { if (v != null) prof.push(Math.min(k, len), v + (s.c === 'exp' ? 10 : 0)); }); }
   return { prof, g, st: s.st || null, len };
 }
-// 縦断の図：地面（茶色のぬり）・線の高さ（地面 黒・高架 茶・トンネル 点線・橋 青）・点（えらんだ点はオレンジ・手で決めた点は赤）・交差（▲ 上・▼ 下・● 踏切）
+// 縦断の図：地面（茶色のぬり）・線の高さ（地面 黒・切り通し 緑（DB の更新111）・高架 茶・トンネル 点線・橋 青）・点（えらんだ点はオレンジ・手で決めた点は赤）・交差（▲ 上・▼ 下・● 踏切）
 function profChart(cv, d, o) {
   o = o || {};
   const dpr = Math.min(2, window.devicePixelRatio || 1), W = cv.clientWidth || 300, H = cv.clientHeight || 130;
@@ -3885,7 +3885,7 @@ function profChart(cv, d, o) {
     g.stroke(); g.setLineDash([]);
   }
   // 線の高さ（1マスごとのつくりの色）
-  const st = d.st || '', col = { G: '#333', V: '#9a5b2e', T: '#666', B: '#1f6fbf' };
+  const st = d.st || '', col = { G: '#333', V: '#9a5b2e', T: '#666', B: '#1f6fbf', C: '#2f7d4a' };   // C：切り通し（DB の更新111）
   g.lineWidth = 2.5; g.lineCap = 'round';
   for (let k = 0; k < Math.ceil(len); k++) {
     const a = k, b = Math.min(len, k + 1), c = st[Math.min(st.length - 1, k)] || 'G';
@@ -3921,7 +3921,7 @@ function profChart(cv, d, o) {
 // 縦断のまとめ（ことば）：いちばん急な勾配・トンネル・高架・橋・踏切・上下を通るもの
 function profSum(q) {
   const ps = [`最急 ${q.maxg}‰`];
-  if (q.tun) ps.push(`トンネル・地下 ${fmt(q.tun)}m`); if (q.via) ps.push(`高架 ${fmt(q.via)}m`); if (q.brg) ps.push(`橋 ${fmt(q.brg)}m`); if (q.lx) ps.push(`踏切 ${q.lx}`);
+  if (q.tun) ps.push(`トンネル・地下 ${fmt(q.tun)}m`); if (q.cut) ps.push(`切り通し ${fmt(q.cut)}m`); if (q.via) ps.push(`高架 ${fmt(q.via)}m`); if (q.brg) ps.push(`橋 ${fmt(q.brg)}m`); if (q.lx) ps.push(`踏切 ${q.lx}`);
   const grp = side => { const m = new Map(); for (const x of q.xs || []) if (x[1] === side) { const k = /^建物/.test(x[2]) ? '建物' : x[2]; m.set(k, (m.get(k) || 0) + 1); } return [...m].map(([k, v]) => `<span>${esc(k)}</span>` + (v > 1 ? `×${v}` : '')).join('・'); };
   const ov = grp('over'), un = grp('under');
   return `<span>${ps.join('・')}</span>${ov ? `<br><small class="muted">▲ 上を通る：${ov}</small>` : ''}${un ? `<br><small class="muted">▼ 下を通る：${un}</small>` : ''}`;
@@ -4280,7 +4280,7 @@ async function segMerge(s, hit) {
 function hgtLine(s) {
   if (!s.pf) return s.c === 'exp' ? '高さ：地面から 10m（高架）' : '高さ：地面どおり';
   const n = c => ((s.st || '').split(c).length - 1) * 50, ps = [];
-  if (n('T')) ps.push(`トンネル・地下 ${fmt(n('T'))}m`); if (n('V')) ps.push(`高架 ${fmt(n('V'))}m`); if (n('B')) ps.push(`橋 ${fmt(n('B'))}m`);
+  if (n('T')) ps.push(`トンネル・地下 ${fmt(n('T'))}m`); if (n('C')) ps.push(`切り通し ${fmt(n('C'))}m`); if (n('V')) ps.push(`高架 ${fmt(n('V'))}m`); if (n('B')) ps.push(`橋 ${fmt(n('B'))}m`);
   return `高さ：${esc(hmName(s.hm, s.ho) || '地形に合わせる')}${s.ho && s.ho.gm ? `・勾配の上限 ${s.ho.gm}‰` : ''}${s.rk ? '・アプト式' : ''}${ps.length ? '（' + ps.join('・') + '）' : ''}`;
 }
 // 住所をシートと上の帯に
