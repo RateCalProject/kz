@@ -1747,8 +1747,12 @@ function frame() {
   jamStep();   // 渋滞（DB の更新67）
   erStep();    // 救急（DB の更新68）
   if (S.v3) {   // 3D（map3d.js）
-    if (S.layer.run && now() - RUN.drawn > (MQ.fps < 60 ? 240 : 120)) S.v3.dirty = true;   // 走行位置：ときどき描きなおす（省エネのときは少なく）
-    if (S.dirty || S.v3.dirty) { S.dirty = false; S.v3.dirty = false; try { m3Frame(); } catch (e) { console.error(e); } RUN.drawn = now(); }
+    // 視点が止まっていても、列車・踏切・水面などは 毎フレーム うごかす（t66：前は 0.12秒ごとで ガクガクした）。
+    //   地形・建物の読みこみ（m3Frame まるごと）は 1秒ごと。うごくものが見えないときは 0.5秒ごと
+    const t = now();
+    if (t - (S.v3.full || 0) > 1000) S.v3.dirty = true;
+    if (S.dirty || S.v3.dirty) { S.dirty = false; S.v3.dirty = false; S.v3.full = t; try { m3Frame(); } catch (e) { console.error(e); } RUN.drawn = t; }
+    else if (window.m3RunFrame && t - RUN.drawn >= (window.m3Moving && window.m3Moving() ? 0 : 500)) { try { window.m3RunFrame(); } catch (e) { console.error(e); } RUN.drawn = t; }
     requestAnimationFrame(frame); return;
   }
   if (S.dirty) {

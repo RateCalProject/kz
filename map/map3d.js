@@ -178,6 +178,21 @@ function m3Frame() {
   m3Labels();   // 建物の名前（t61）
   if (Math.abs(m3Surf(M3.tx, M3.ty) - M3.gy) > 0.002) M3.dirty = true;
 }
+// うごくものだけ（t66）：視点が止まっているとき、列車・バス・踏切・信号を 毎フレーム（地形・建物は そのまま。m3Frame は ときどき）
+function m3RunFrame() {
+  if (!M3.on || !M3.r) return;
+  if (M3.nearQ) { try { m3Runs(M3.nearQ); } catch (e) { console.error(e); } }
+  m3SigTick();
+  M3.r.render(M3.sc, M3.cam);
+  m3Labels();
+}
+// 毎フレーム描く うごくものが 見えているか：列車・バス（走行位置の しるし）・踏切が しまっている・水面（川・海）・天気
+function m3Moving() {
+  if (!M3.on) return false;
+  if (S.layer.run && ((M3.runHit && M3.runHit.length) || (M3.run && M3.run.visible))) return true;
+  const RL = window.M3RAIL; if (RL && RL.dbg && RL.dbg.xa && RL.dbg.xa.list && RL.dbg.xa.list.some(c => c.cl || c.tg)) return true;
+  return !!M3.anim;   // 水面・天気など（それぞれが立てる）
+}
 // 3D のときのチャンクの片づけ（遠いものから。2D の trimChunks は 2D の見えかたで決めるので使わない）
 function trimChunks3(v) {
   if (S.chunks.size < 900) return;
@@ -188,7 +203,7 @@ function trimChunks3(v) {
 /* ---------- 地形：チャンクごとの網（遠いほどあらく） ---------- */
 function m3Terrain(rc) {
   const v = rc.big, T3 = M3.T, cx0 = Math.floor(v.x0 / CS), cy0 = Math.floor(v.y0 / CS), cx1 = Math.floor(v.x1 / CS), cy1 = Math.floor(v.y1 / CS);
-  const keep = new Set(), todo = [];
+  const keep = new Set(), todo = [], RK = m3RailKeys();   // 線路の切り通し（t66）：チャンクにかかる 縦断のある線路
   // 海ぞいのチャンク（近いところ）は、半マスごとの網（t64）：陸を水ぎわまで平らに、がけは水のがわに（水ぎわの建物が うかないように）
   //   はんいは 建物を出すところ（近いとき）まで。画質で上限
   const lv = Math.max(0, Math.min(3, Number(MQ.d3) || 0)), HR = M3.d < 150 ? Math.min([64, 100, 140, 180][lv], Math.max(64, rc.RB + 48)) : 0;
@@ -203,9 +218,9 @@ function m3Terrain(rc) {
     // となりがあるか（へりをつなぐため。くわしい地形は、ならすときに まわり 8 つ を使うので 8 つとも。t64）
     const nb = [[1, 0], [0, 1], [1, 1], [-1, 0], [0, -1], [-1, -1], [1, -1], [-1, 1]]
       .map(([dx, dy]) => S.chunks.get(ckey(cx + dx, cy + dy)) || (mode === 'l' && LO.m.get(ckey(cx + dx, cy + dy))) ? 'y' : 'n').join('');
-    const old = M3.cm.get(k);
-    if (old && old.st === st && old.nb === nb && old.mode === mode) continue;
-    todo.push({ k, c, cx, cy, st, nb, mode, dist });
+    const old = M3.cm.get(k), rq = mode === 'f' ? RK.get(k) : null, rk = rq ? rq.key : '';
+    if (old && old.st === st && old.nb === nb && old.mode === mode && (old.rk || '') === rk) continue;
+    todo.push({ k, c, cx, cy, st, nb, mode, dist, rk, rs: rq ? rq.segs : null });
   }
   // 1フレームに作るのは少しずつ（時間で区切る：速い端末はすぐそろい、遅い端末はカクつかない）。近いものから（t63）
   todo.sort((a, b) => a.dist - b.dist);
@@ -215,12 +230,68 @@ function m3Terrain(rc) {
     const old = M3.cm.get(t.k);
     if (old) { M3.grpT.remove(old.mesh); m3Dispose(old.mesh); }
     const mesh = m3TerraMesh(T3, t); M3.grpT.add(mesh);
+    if (t.rs) try { m3Carve(mesh, t.cx, t.cy, t.st, t.rs); } catch (e) { console.error(e); }   // 線路の切り通し（t66）
     // H：網の点の高さ（建物・道路・列車を、この網の上に。m3Surf）。gen：作った順の番号（上に のせるものを作りなおす合図）
-    M3.cm.set(t.k, { mesh, st: t.st, nb: t.nb, mode: t.mode, H: mesh.userData.H, gen: ++M3.tg }); n++;
+    M3.cm.set(t.k, { mesh, st: t.st, nb: t.nb, mode: t.mode, H: mesh.userData.H, gen: ++M3.tg, rk: t.rk }); n++;
     const nr = rc.near; if (t.cx * CS <= nr.x1 + 1 && t.cx * CS + CS >= nr.x0 - 1 && t.cy * CS <= nr.y1 + 1 && t.cy * CS + CS >= nr.y0 - 1) M3.tgN++;
   }
   if (n < todo.length) M3.dirty = true;
   for (const [k, o] of M3.cm) if (!keep.has(k)) { M3.grpT.remove(o.mesh); m3Dispose(o.mesh); M3.cm.delete(k); M3.tg++; }
+}
+/* ---------- 線路の切り通し（t66・DB の更新108）：縦断のある地面の線路（つくり G）の まわりの 地形の網を、レールより下に
+   （地面が線路を おおわない。線路は 縦断どおり なめらかに）。レールから 0.22マスは レールの高さ、その外は 1マスで 14m 上がる坂（0.9マスまで） ---------- */
+// チャンクごとの 縦断のある線路：{ key（id と 縦断・つくりの長さ。かわったら 作りなおす）, segs }
+function m3RailKeys() {
+  const it = visibleItems(), out = new Map();
+  if (!it || !it.segs) return out;
+  for (const sg of it.segs.values()) {
+    if (sg.k !== 'rail' || !sg.pf || !sg.st || !sg.bb || !(sg.np >= 2)) continue;
+    const x0 = Math.floor((sg.bb[0] - 1) / CS), x1 = Math.floor((sg.bb[2] + 1) / CS), y0 = Math.floor((sg.bb[1] - 1) / CS), y1 = Math.floor((sg.bb[3] + 1) / CS);
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) > 400) continue;
+    for (let cx = x0; cx <= x1; cx++) for (let cy = y0; cy <= y1; cy++) {
+      const k = ckey(cx, cy); let a = out.get(k); if (!a) out.set(k, a = { key: '', segs: [] });
+      a.segs.push(sg); a.key += sg.id + ':' + sg.pf.length + ':' + sg.st.length + ',';
+    }
+  }
+  return out;
+}
+function m3Carve(mesh, cx, cy, st, segs) {
+  const g = mesh.geometry, pos = g && g.attributes.position; if (!pos) return false;
+  const A = pos.array, nv = pos.count, ox = cx * CS, oy = cy * CS, R = 0.9, W0 = 0.22, K = 14 * M3_U * M3_VEX;
+  const cut = (x, z, y, sg, acc, ax, ay, ux, uy, L) => {   // 点 (x, z) の高さ y を、線の区間（ax, ay から ux, uy の向きに L）の切り通しで けずった高さ
+    let t = (x - ax) * ux + (z - ay) * uy; t = t < 0 ? 0 : t > L ? L : t;
+    const px = ax + ux * t, py = ay + uy * t, d = Math.hypot(x - px, z - py); if (d > R) return y;
+    const s = acc + t, c = sg.st[Math.min(sg.st.length - 1, Math.max(0, Math.round(s)))] || 'G'; if (c !== 'G') return y;
+    const lim = pfZ(sg.pf, s) * M3_U * M3_VEX - 0.25 * M3_U + Math.max(0, d - W0) * K;
+    return y > lim ? lim : y;
+  };
+  // 網の点を 1マスの目ごとに
+  const grid = new Map(), gk = (a, b) => (a + 8) * 4099 + (b + 8);
+  for (let v = 0; v < nv; v++) { const a = Math.floor(A[v * 3] - ox), b = Math.floor(A[v * 3 + 2] - oy); if (a < -3 || b < -3 || a > CS + 3 || b > CS + 3) continue; const k = gk(a, b); let L = grid.get(k); if (!L) grid.set(k, L = []); L.push(v); }
+  const H = mesh.userData.H, hn = H ? Math.round(Math.sqrt(H.length)) : 0, hs = hn > 1 ? CS / (hn - 1) : 1;
+  let ch = false;
+  for (const sg of segs) {
+    const P = sg.P; let acc = 0;
+    for (let i = 0; i + 1 < sg.np; i++) {
+      const ax = P[2 * i], ay = P[2 * i + 1], bx = P[2 * i + 2], by = P[2 * i + 3], dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy);
+      if (L < 1e-6) continue;
+      const lo = Math.min(ax, bx) - R, hi = Math.max(ax, bx) + R, lo2 = Math.min(ay, by) - R, hi2 = Math.max(ay, by) + R;
+      if (hi < ox - 1 || lo > ox + CS + 1 || hi2 < oy - 1 || lo2 > oy + CS + 1) { acc += L; continue; }
+      const ux = dx / L, uy = dy / L;
+      for (let a = Math.floor(lo - ox); a <= Math.floor(hi - ox); a++) for (let b = Math.floor(lo2 - oy); b <= Math.floor(hi2 - oy); b++) {
+        const vs = grid.get(gk(a, b)); if (!vs) continue;
+        for (const v of vs) { const y0 = A[v * 3 + 1], y = cut(A[v * 3], A[v * 3 + 2], y0, sg, acc, ax, ay, ux, uy, L); if (y < y0) { A[v * 3 + 1] = y; ch = true; } }
+      }
+      // H（m3Surf の点：ox + 0.5 + i × hs）
+      if (H) for (let j = Math.max(0, Math.floor((lo2 - oy - 0.5) / hs)); j <= Math.min(hn - 1, Math.ceil((hi2 - oy - 0.5) / hs)); j++)
+        for (let k = Math.max(0, Math.floor((lo - ox - 0.5) / hs)); k <= Math.min(hn - 1, Math.ceil((hi - ox - 0.5) / hs)); k++) {
+          const o = j * hn + k, y = cut(ox + 0.5 + k * hs, oy + 0.5 + j * hs, H[o], sg, acc, ax, ay, ux, uy, L); if (y < H[o]) H[o] = y;
+        }
+      acc += L;
+    }
+  }
+  if (ch) { pos.needsUpdate = true; g.computeVertexNormals(); g.computeBoundingSphere(); }
+  return ch;
 }
 // チャンクの網（t64c）：地形のファイル（map/m3terra.js の M3TERRA）があれば それで（川・岸・浜など）。なければ・こわれたら 前のまま
 //   M3TERRA.chunk(X, c, cx, cy, st) / M3TERRA.lo(X, cx, cy) → メッシュ（userData.H：網の点の高さ。m3Surf が使う。子に 水面などを入れてよい）
@@ -1418,5 +1489,5 @@ window.M3Look = { load: m3Arch, looks: kind => m3Arch().then(A => A.looksOf(kind
   props: () => m3Arch().then(A => A.PROP || {}) };   // 小物の型（t65）
 
 M3.surf = m3Surf;   // 地形の面の高さ（たしかめる用。t64）
-Object.assign(window, { m3Open, m3Close, m3Frame, m3Zoom, m3Target, m3Resize, m3State: M3 });
+Object.assign(window, { m3Open, m3Close, m3Frame, m3RunFrame, m3Moving, m3Zoom, m3Target, m3Resize, m3State: M3 });
 })();

@@ -18071,6 +18071,8 @@ alter table public.mp_trains add column if not exists cplx jsonb not null defaul
 create index if not exists mp_trains_cpl on public.mp_trains using gin (cpl jsonb_path_ops);
 -- t54f：駅の発着番線・種別の優先番号（0 がいちばん優先）・待避と続行
 alter table public.mp_stations add column if not exists trk jsonb;   -- 番線の順に [{d: down・up・both, m: main・side}]。null はいつもの決まり
+alter table public.mp_segs add column if not exists pfill boolean;   -- 古い線の縦断を決めたか（DB の更新108）：true 決めた・false 決められなかった（地形のまま）・null まだ
+create index if not exists mp_segs_pfill on public.mp_segs (id) where kind = 'rail' and prof is null and pfill is null;
 alter table public.mp_series add column if not exists adm boolean not null default false;   -- 管理者だけ（ためし。DB の更新107）：ほかの人の注文の一覧に出さない
 alter table public.mp_series add column if not exists mdl text;   -- 3D のモデル（map/m3car.js のキー。DB の更新107）
 alter table public.mp_stations add column if not exists pf text;   -- ホームの形（DB の更新107）：番線のあいだ（両はしも）ごとに P（ホーム）・-（なし）。はじめの T は頭端式。null は おまかせ
@@ -19994,6 +19996,7 @@ begin
   returning id into sid;
   perform _mp_occ_set(sid, case when p_kind = 'rail' then 'sta' else 'stop' end, tiles);
   if p_kind = 'rail' then perform _mp_lease_set('sta', sid, pa.pu, pa.pc, pa.gv); end if;
+  if p_kind = 'rail' then begin perform _mp_prof_redo(p_seg); exception when others then raise warning 'mp sta level: %', sqlerrm; end; end if;   -- 駅のところを水平に（DB の更新108）
   perform _mp_chg('sta', sid, 'set', box(point(pt.x - 3, pt.y - 3), point(pt.x + 3, pt.y + 3)));
   return jsonb_build_object('id', sid, 'cost', round(cost));
 end $$;
@@ -20090,6 +20093,7 @@ begin
   delete from mp_occ where what = 'sta' and ref = p_id;
   perform _mp_occ_set(p_id, 'sta', tiles);
   perform _mp_lease_set('sta', p_id, st.own_u, st.own_c, false);
+  if p_plat <> st.plat then begin perform _mp_prof_redo(st.seg); exception when others then raise warning 'mp sta level: %', sqlerrm; end; end if;   -- 駅のところを水平に（DB の更新108）
   for rr in select r.id from mp_routes r where p_id = any(r.stops) loop perform _mp_resched(rr); end loop;
   perform _mp_chg('sta', p_id, 'set', box(point(st.x / 100.0 - 3, st.y / 100.0 - 3), point(st.x / 100.0 + 3, st.y / 100.0 + 3)));
   return jsonb_build_object('ok', true, 'cost', addc, 'plat', p_plat, 'tracks', p_tracks);
@@ -23451,6 +23455,7 @@ begin
     end if;
   end loop;
   begin perform _mp_slot_tick(); exception when others then raise warning 'mp slot: %', sqlerrm; end;   -- 発着口の入札・権利の期限（t57）
+  begin perform _mp_prof_fill_some(4, 3000); exception when others then raise warning 'mp prof fill: %', sqlerrm; end;   -- 古い線路の縦断（DB の更新108）
   begin perform _mp_tmp_back(); exception when others then raise warning 'mp tmp: %', sqlerrm; end;   -- 期間つき増結の車両を入れ替え枠にもどす（DB の更新80）
   update mp_state set v = last where k = 'hour';
 end $$;
@@ -32175,7 +32180,7 @@ declare sm record; ss real[] := '{}'; gg real[] := '{}'; tt text[] := '{}'; S re
         o_ka int[] := '{}'; o_kb int[] := '{}'; ord int[]; no int := 0; fi int;
         za real; zb_ real; zm real; ka int; kb int; side text; sides text[]; z2 real[]; lo2 real[]; hi2 real[]; mg real := 0; st text := ''; zz real; lx int := 0; xs jsonb := '[]'::jsonb;
         tun int := 0; via int := 0; brg int := 0; acc real; cnt int; G real; off real; wr real[] := '{}'; w0 real; nu int;
-        gb real[]; ge real[]; tw int := 20; wv real; jj int;
+        gb real[]; ge real[]; tw int := 20; wv real; jj int; zlv real[] := '{}'; zq record;
         zt real := (opt ->> 'zt')::real; zr boolean := coalesce(opt -> 'zr' = 'true'::jsonb, false); gm real := (opt ->> 'gm')::real; gx real := (opt ->> 'gx')::real; tz boolean; fl boolean := mode = 'fl';
         blo real[]; bhi real[]; gmx real; gmn real; wt boolean; al real; g0 real;
 begin
@@ -32213,6 +32218,16 @@ begin
     an := an || wr;
     if fl then an := an || ss; end if;   -- 平坦（DB の更新84）：地面の点（1マスごと）も点にする
     for k in 1..coalesce(array_length(fx, 1), 0) / 4 loop an := an || array[least(S, greatest(0, fx[4 * k - 3])), least(S, greatest(0, fx[4 * k - 2]))]; end loop;
+    -- 駅のところは水平（DB の更新108）：opt の lv［s0, s1, …］と、この線（oseg）の駅（ホームの前後 30m まで）
+    if kind = 'rail' then
+      if jsonb_typeof(opt -> 'lv') = 'array' then zlv := array(select v::real from jsonb_array_elements_text(opt -> 'lv') v); end if;
+      if oseg is not null then
+        for zq in select pj.s zs, zt.plat zp from mp_stations zt, lateral _mp_proj(p, zt.x / 100.0, zt.y / 100.0) pj where zt.seg = any(oseg) and zt.kind = 'rail' and pj.dist < 0.15 loop
+          zlv := zlv || array[(zq.zs - zq.zp / 100.0 - 0.6)::real, (zq.zs + zq.zp / 100.0 + 0.6)::real];
+        end loop;
+      end if;
+      for k in 1..coalesce(array_length(zlv, 1), 0) / 2 loop an := an || array[least(S, greatest(0, zlv[2 * k - 1])), least(S, greatest(0, zlv[2 * k]))]; end loop;
+    end if;
     for k in 1..coalesce(array_length(upf, 1), 0) / 2 loop an := an || least(S, greatest(0, upf[2 * k - 1])); end loop;
     for zz in select v from unnest(an) v order by v loop
       if array_length(cs, 1) is null or zz > cs[array_length(cs, 1)] + 0.02 then cs := cs || zz; end if;
@@ -32243,7 +32258,10 @@ begin
     lo := array_fill(-1e9::real, array[n]); hi := array_fill(1e9::real, array[n]);
     if z0 is not null then lo[1] := z0; hi[1] := z0; end if;
     if z1 is not null then lo[n] := z1; hi[n] := z1; end if;
-    for k in 1..n - 1 loop d := d || (G * (cs[k + 1] - cs[k]) * 50)::real; end loop;   -- 勾配の上限（DB の更新84。決めなければ _mp_hd と同じ）
+    for k in 1..n - 1 loop d := d || (G * (cs[k + 1] - cs[k]) * 50)::real; end loop;
+    for k in 1..coalesce(array_length(zlv, 1), 0) / 2 loop   -- 駅のところは水平（DB の更新108）
+      for j in 1..n - 1 loop if cs[j] >= zlv[2 * k - 1] - 0.02 and cs[j + 1] <= zlv[2 * k] + 0.02 then d[j] := least(d[j], (coalesce((opt ->> 'lvg')::real, 0) / 1000 * (cs[j + 1] - cs[j]) * 50)::real); end if; end loop;   -- lvg：駅の勾配（‰。ふつうは 0）
+    end loop;   -- 勾配の上限（DB の更新84。決めなければ _mp_hd と同じ）
     -- 水の上：橋（2m より上）。地下（地下鉄）なら 川・海の下（−15m より下）
     for k in 1..coalesce(array_length(wr, 1), 0) / 2 loop
       for j in 1..n loop
@@ -32360,6 +32378,75 @@ create or replace function public._mp_prof_make(p int[], kind text, cls text, z0
 language sql stable set search_path = public as $$
   select _mp_prof_make2(p, kind, cls, z0, z1, mode, rack, upf, cells, tiles, ea, eb, oseg, xonly, fx, null::jsonb)
 $$;
+-- 線路の縦断を決めなおす（DB の更新108。お金はかからない）：いまの 高さのえらびかた（縦断のない古い線は 地形に合わせる）で。
+--   駅のところは水平（_mp_prof_make2）・駅の高さの種類（地上・高架・地下）は そのまま（いまの高さ ±6m）・車庫は地面。手で決めた縦断（man）は しない。
+--   決められないときは いまの線の急さ（150‰まで）で もう一度。'ok' か まちがいの文（そのまま）
+create or replace function public._mp_prof_redo(p_seg bigint) returns text
+language plpgsql set search_path = public as $$
+declare sg mp_segs; zmd text; zho jsonb; zfx real[]; zo record; zg real; zl text; zc real; zhp real; pr jsonb; zpf real[]; z0 real; z1 real; zcells int[]; ztiles int[]; zgx int; zmax real;
+begin
+  select * into sg from mp_segs where id = p_seg for update;
+  if not found or sg.kind <> 'rail' or coalesce(array_length(sg.pts, 1), 0) < 4 or sg.hm = 'man' then return 'skip'; end if;
+  zmd := case when sg.hm in ('el', 'ug', 'tn', 'fl') then sg.hm when sg.hm = 'tz' and coalesce(sg.hopt ? 'zt', false) then 'tz' else 'auto' end;
+  zho := nullif(case when zmd = 'tz' then sg.hopt else coalesce(sg.hopt, '{}'::jsonb) - 'zt' - 'zr' end, '{}'::jsonb);
+  zfx := _mp_dep_fx(sg.id, 0, false, sg.len);
+  for zo in select * from mp_stations t where t.seg = p_seg and t.kind = 'rail' loop
+    zg := _mp_gz(zo.x / 100.0, zo.y / 100.0); zl := coalesce(_mp_sta_lv(zo.seg, zo.at, zo.x, zo.y), 'G'); zhp := zo.plat / 100.0 + 0.1;
+    zc := case when sg.prof is null then zg else _mp_pz(sg.prof, zo.at) end;
+    zfx := zfx || array[zo.at - zhp, zo.at + zhp,
+                        case zl when 'E' then greatest(zg + 6.2, zc - 6) when 'U' then zc - 6 else greatest(zg - 7.8, zc - 6) end,
+                        case zl when 'E' then zc + 6 when 'U' then least(zg - 8.2, zc + 6) else least(zg + 5.8, zc + 6) end]::real[];
+  end loop;
+  z0 := _mp_end_z(sg.n0, p_seg); z1 := _mp_end_z(sg.n1, p_seg);
+  if sg.prof is null then   -- 古い線：となりも 縦断のない線（点の高さも まだ）なら、はしの高さは自由（決めた高さを 点の高さに）
+    if (select z from mp_nodes where id = sg.n0) is null and not exists (select 1 from mp_segs o where (o.n0 = sg.n0 or o.n1 = sg.n0) and o.id <> p_seg and o.prof is not null) then z0 := null; end if;
+    if (select z from mp_nodes where id = sg.n1) is null and not exists (select 1 from mp_segs o where (o.n0 = sg.n1 or o.n1 = sg.n1) and o.id <> p_seg and o.prof is not null) then z1 := null; end if;
+  end if;
+  zcells := _mp_seg_cells_arr(sg.pts, sg.kind, sg.w, sg.dbl); ztiles := _mp_tiles(sg.pts);
+  pr := _mp_prof_make2(sg.pts, sg.kind, sg.cls, z0, z1, zmd, sg.rack, null::real[], zcells, ztiles, least(0.4, sg.len / 3)::real, (sg.len - least(0.4, sg.len / 3))::real,
+                       array[sg.id], false, zfx, zho);
+  -- 決められない：駅のところを 5‰ まで（停車場の勾配）→ 線を 少しずつ急に（はしの高さの差が大きいとき）
+  --   縦断のある線は いまの急さより急にしない（できなければ いまのまま）
+  zmax := case when sg.prof is not null then (select max(abs(sg.prof[2 * k + 2] - sg.prof[2 * k]) / greatest((sg.prof[2 * k + 1] - sg.prof[2 * k - 1]) * 50, 1) * 1000)
+                                                 from generate_series(1, array_length(sg.prof, 1) / 2 - 1) k) end;
+  foreach zgx in array case when sg.prof is null then array[0, 50, 70, 100, 150] else array[0, greatest(36, ceil(coalesce(zmax, 35)))::int] end loop
+    exit when (pr ->> 'ok')::boolean;
+    pr := _mp_prof_make2(sg.pts, sg.kind, sg.cls, z0, z1, zmd, sg.rack, null::real[], zcells, ztiles, least(0.4, sg.len / 3)::real, (sg.len - least(0.4, sg.len / 3))::real,
+                         array[sg.id], false, zfx, coalesce(zho, '{}'::jsonb) || jsonb_build_object('lvg', 5) || case when zgx > 0 then jsonb_build_object('gx', zgx) else '{}'::jsonb end);
+  end loop;
+  if not (pr ->> 'ok')::boolean then
+    if sg.prof is null then update mp_segs set pfill = false where id = p_seg; end if;
+    return coalesce(pr ->> 'err', 'できません');
+  end if;
+  zpf := array(select v::real from jsonb_array_elements_text(pr -> 'prof') v);
+  update mp_segs set prof = zpf, st = pr ->> 'st', hm = coalesce(sg.hm, 'auto'), pfill = true where id = p_seg;
+  update mp_nodes set z = zpf[2] where id = sg.n0 and (z is null or z0 is null);
+  update mp_nodes set z = zpf[array_length(zpf, 1)] where id = sg.n1 and (z is null or z1 is null);
+  perform _mp_chg('seg', p_seg, 'set', sg.bb);
+  for zo in select id, x, y from mp_stations where seg = p_seg loop
+    perform _mp_chg('sta', zo.id, 'set', box(point(zo.x / 100.0 - 3, zo.y / 100.0 - 3), point(zo.x / 100.0 + 3, zo.y / 100.0 + 3)));
+  end loop;
+  return 'ok';
+end $$;
+-- 高さの決まっていない古い線路（縦断なし）に 縦断を決める（DB の更新108）：p_n 本まで・p_ms ミリ秒まで。決めた数
+create or replace function public._mp_prof_fill_some(p_n int, p_ms int) returns int
+language plpgsql set search_path = public as $$
+declare zt0 timestamptz := clock_timestamp(); zid bigint; zk int := 0; zr text;
+begin
+  for zid in select id from mp_segs where kind = 'rail' and prof is null and pfill is null order by id limit greatest(0, p_n) loop
+    exit when extract(epoch from clock_timestamp() - zt0) * 1000 > p_ms;
+    begin
+      zr := _mp_prof_redo(zid);
+    exception when others then
+      raise warning 'mp prof fill %: %', zid, sqlerrm;
+      update mp_segs set pfill = false where id = zid;
+      zr := 'err';
+    end;
+    if zr = 'skip' then update mp_segs set pfill = false where id = zid; end if;
+    zk := zk + 1;
+  end loop;
+  return zk;
+end $$;
 -- s の列と z の列を、縦断 [s0, z0, s1, z1, …] に
 create or replace function public._mp_prof_pack(cs real[], z real[]) returns real[]
 language sql immutable as $$ select array_agg(v order by i, o) from generate_series(1, array_length(cs, 1)) i, lateral unnest(array[round(cs[i]::numeric, 2)::real, round(z[i]::numeric, 2)::real]) with ordinality u(v, o) $$;
@@ -34363,7 +34450,7 @@ begin
             '_mp_snowzone','_mp_snowzone_at','_mp_snow_sub','_mp_snowc','_mp_snow_x','_mp_snow_km','_mp_snow_ready','_mp_snow_fac','_mp_snow_tick','_mp_snow_subsidy','_mp_snow_upkeep','_wx_snow',
             '_mp_gz','_mp_pz','_mp_seg_z','_mp_node_z','_mp_prof_sub','_mp_prof_rev','_mp_gsamp','_mp_hd','_mp_prof_solve','_mp_xing','_mp_prof_obst','_mp_st_code','_mp_smul',
             '_mp_prof_make','_mp_prof_pack','_mp_att_z','_mp_end_z','_mp_prof_ground','_mp_prof_cat','_mp_st_of','_mp_tiles_s','_mp_st_tiles','_mp_st_map','_mp_st_cost','_mp_st_muls',
-            '_mp_zl','_mp_sta_lv','_mp_sta_cost','_mp_bld_hit_z','_mp_dep_fx','_mp_chain','_mp_fix_xing',
+            '_mp_zl','_mp_sta_lv','_mp_sta_cost','_mp_bld_hit_z','_mp_dep_fx','_mp_chain','_mp_fix_xing','_mp_prof_redo','_mp_prof_fill_some',
             'mp_admin_airport','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_lvset','mp_admin_place_at','mp_admin_rates','mp_admin_rename','mp_admin_state',
             'mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote','mp_bld_set','mp_bld_look','_mp_look_cost','_mp_rot_cost','_mp_near_exp','_mp_prop_kinds','mp_prop_kinds','_mp_prop_party','mp_prop_put','mp_prop_set','mp_prop_del','mp_unit_colors',
             'mp_boot','mp_car_log','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_gone','mp_cars_list',

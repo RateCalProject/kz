@@ -1463,7 +1463,8 @@ function humps(ords, adj) {
   for (const r of R) { const P = [r.x - r.c * r.hl, r.y - r.s * r.hl, r.x + r.c * r.hl, r.y + r.s * r.hl]; OBS.add(P, 2, r.hw, 'st' + r.t.id); }
   // 線路のファイルの しらべ：道の id → [レールの上の高さ（いちばん高い）, 交わる点…]
   const want = new Map();
-  if (GR) for (const g of GR) if (g.k === 'sta') { let w = want.get(g.road); if (!w) want.set(g.road, w = { h: -Infinity, pts: [] }); w.h = Math.max(w.h, g.h); w.pts.push([g.x, g.y]); }
+  if (GR) for (const g of GR) if (g.k === 'sta' || g.k === 'ovp') { let w = want.get(g.road);   // ovp（t66）：斜め・都心の大きな道・線路と重なる道も 跨線橋に
+     if (!w) want.set(g.road, w = { h: -Infinity, pts: [] }); w.h = Math.max(w.h, g.h); w.pts.push([g.x, g.y]); }
   if (!R.length && !want.size) return;
   const deg = nid => nid == null ? 0 : (adj.get(nid) || []).length;
   for (const s of ords) {
