@@ -83,23 +83,24 @@ function at(C, s, o) {
   const N = C.nrm; o.nx = N[2 * i] + (N[2 * j] - N[2 * i]) * f; o.ny = N[2 * i + 1] + (N[2 * j + 1] - N[2 * i + 1]) * f;
   o.s = s; return o;
 }
-const codeS = (sg, s) => sg.pf && sg.L && sg.st ? (sg.st[Math.min(sg.st.length - 1, Math.max(0, Math.round(s)))] || 'G') : 'G';
-// こまかい点 k のレールの上の高さ（マス）：地面の線は 地形の面＋1m（縦断があれば その高さより下にしない）・高架・橋・トンネルは 縦断の高さ
+const codeS = (sg, s) => sg.pf && sg.L && sg.st ? (sg.st[Math.min(sg.st.length - 1, Math.max(0, Math.round(s)))] || 'G') : X.vpc ? X.vpc(sg, s) : 'G';   // 縦断のない線は 仮の縦断の つくり（t67）
+// こまかい点 k のレールの上の高さ（マス）：縦断（仮の縦断も）の高さ。縦断のない線（仮の縦断も ないとき）は 地形の面＋1m
 const TP = {};
 function rtK(C, k) {
   if (C.gen !== GEN) { C.rt.fill(NaN); C.wf.fill(0); C.gen = GEN; }
   const v = C.rt[k]; if (v === v) return v;
   const s = C.ds[k]; at(C, s, TP);
   const g = X.m3Surf(TP.x, TP.y), sg = C.sg; let r = g;
-  if (sg.pf && sg.L) { const z = X.pfZ(sg.pf, s) * U * VEX, c = codeS(sg, s); r = c === 'V' || c === 'B' || c === 'T' || c === 'C' || g - z > 3 * U * VEX ? z : Math.max(z, g); }   // C：切り通し（DB の更新111）・深いところ（道の下で けずらない地面）も 縦断の高さ
-  else if (X.vpz) { const z = X.vpz(sg, s); if (z != null) r = z * U * VEX; }   // 縦断のない線：仮の縦断（なめらか・川は 岸の高さの橋。t67）
+  const vz = sg.pf && sg.L ? null : X.vpz ? X.vpz(sg, s) : null;   // 縦断のない線：仮の縦断（t67）
+  if (sg.pf && sg.L || vz != null) r = (vz != null ? vz : X.pfZ(sg.pf, s)) * U * VEX;   // 縦断の高さ（地面の線も：上の地形は 3D で けずる。地形に あわせて 上げると 波うつ。t67）
   return (C.rt[k] = r + LIFT);
 }
 // s のところの高さを、つくり c として（トンネルの入口：外がわの高さ）
 function rtAt(C, s, c) {
   at(C, s, TP); const g = X.m3Surf(TP.x, TP.y), sg = C.sg;
-  if (!(sg.pf && sg.L)) { const z = X.vpz ? X.vpz(sg, s) : null; return (z != null ? z * U * VEX : g) + LIFT; }
-  const z = X.pfZ(sg.pf, s) * U * VEX; return (c === 'V' || c === 'B' || c === 'C' ? z : Math.max(z, g)) + LIFT;
+  const vz = sg.pf && sg.L ? null : X.vpz ? X.vpz(sg, s) : null;
+  if (!(sg.pf && sg.L) && vz == null) return g + LIFT;
+  return (vz != null ? vz : X.pfZ(sg.pf, s)) * U * VEX + LIFT;
 }
 function dloc(C, s) {
   const d = C.ds; let lo = 0, hi = d.length - 1;
@@ -715,7 +716,7 @@ function build(cx) {
   for (const C of rails) {
     for (const e of C.sta) { const L = e.t._L, cuts = [-L.Lh, L.Lh]; for (const q of L.sids.concat(L.mo || [])) if (q.R) for (const f of [0, 0.25, 0.5, 0.75, 1]) cuts.push(-(L.Lh + q.R * f), L.Lh + q.R * f); for (const r of (L.cn || [])) cuts.push(r[0], r[1]); for (const dm of cuts) { const s = e.sRef + e.dir * dm * U; if (s > 0 && s < C.len) C.cuts.push(s); } }
     for (const r of C.xr) for (const s of [r.s0, r.s1]) if (s > 0 && s < C.len) C.cuts.push(s);
-    const st = C.sg.pf && C.sg.L && C.sg.st ? C.sg.st : ''; for (let k = 0; k + 1 < st.length; k++) if (st[k] !== st[k + 1] && k + 0.5 < C.len) C.cuts.push(k + 0.5);
+    const st = C.sg.pf && C.sg.L && C.sg.st ? C.sg.st : X.vpst ? X.vpst(C.sg) : ''; for (let k = 0; k + 1 < st.length; k++) if (st[k] !== st[k + 1] && k + 0.5 < C.len) C.cuts.push(k + 0.5);
     C.cuts.sort((a, b) => a - b);
     const P = C.P, x0 = v.x0 - pad, x1 = v.x1 + pad, y0 = v.y0 - pad, y1 = v.y1 + pad; let a = -1;
     for (let i = 0; i < C.np; i++) {
