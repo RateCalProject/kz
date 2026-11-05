@@ -1293,7 +1293,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=9bd766cb","zh-TW":"zh-TW.js?v=0319c348","zh-CN":"zh-CN.js?v=ec4dfe64","ko":"ko.js?v=f0be8dd7","ko-Hani":"ko-Hani.js?v=7e00e759"};
+  window.AX_LANGS = {"en":"en.js?v=217664ab","zh-TW":"zh-TW.js?v=2820bfee","zh-CN":"zh-CN.js?v=c222ee28","ko":"ko.js?v=e2e1e359","ko-Hani":"ko-Hani.js?v=df6e0839"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -5190,7 +5190,7 @@ function stCmpDraw() {
    役所 → ヘルプ（t62）：遊び方・やり方（help/help.json。README からつくる）。さがせる（題・中身・ことば。ひらがな・カタカナ・全角半角は同じに）
    役所 → 意見箱（t62）：運営への問い合わせ（support_open）に「【意見箱】」の件名で送る
    ================================================================= */
-const HELP_V = 'aa89180e';
+const HELP_V = 'd8bd9eb3';
 const HP = { d: null, cat: 'start', q: '' };
 const hpNorm = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
 async function helpLoad() {
@@ -5920,7 +5920,7 @@ let coT = null, jbT = null;
 const MAPV = '156';
 const STAGE = 'Pre';   // 正式公開の前（Pre）。名前のよこと、バージョンの表記に出す。正式公開のときは '' にする
 document.querySelectorAll('.kz-stage').forEach(e => { e.textContent = STAGE; e.hidden = !STAGE; });
-const DBV = 101;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）
+const DBV = 102;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）
 { const e = document.getElementById('verLogin'); if (e) e.textContent = 'v' + MAPV + (STAGE ? ' ' + STAGE : ''); }   // バージョン表記（ログインの画面）
 // バージョン表記（設定 → プロフィール）：画面の版・サーバーに入っている DB の更新の番号。管理者には、サーバーの更新がまだのとき知らせる
 async function verShow() {
@@ -7465,9 +7465,14 @@ async function dmListLoad() {
     : '<p class="muted small" style="margin:0">まだやりとりはありません。「新しく送る」か、フレンドの「メッセージ」から始められます。</p>';
   $$('#dmList [data-dmu]').forEach(el => el.onclick = () => dmOpen(el.dataset.dmu));
 }
+// 問い合わせの種類（DB の更新102）：q ふつう・bug エラー（不具合）の報告・sec セキュリティの報告。サーバーが まだなら えらべない
+const SP = { kinds: false, bounty: null };
+const SP_KIND = { bug: 'エラーの報告', sec: 'セキュリティの報告' };
+const spTags = t => (t.kind && SP_KIND[t.kind] ? `<span class="tag">${SP_KIND[t.kind]}</span>` : '') + (t.reward ? `<span class="tag good">報告のお礼 ${fmt(t.reward)} X</span>` : '');
 async function spListLoad() {
   let d; try { d = await call('support_list'); } catch (e) { return toast(e.message); }
-  const row = (t, staff) => `<div class="co-row" data-spt="${t.id}"><span class="nm"><b>${esc(t.subject)}${t.unread ? '<span class="dm-n">!</span>' : ''}${ideaPrio(t)}</b>
+  SP.kinds = !!d.kinds; SP.bounty = d.bounty || null;
+  const row = (t, staff) => `<div class="co-row" data-spt="${t.id}"><span class="nm"><b>${esc(t.subject)}${t.unread ? '<span class="dm-n">!</span>' : ''}${ideaPrio(t)}${spTags(t)}</b>
       <small>${staff ? `${nameB(t.user.nickname, t.user.badge)}（ID ${t.user.uid}）・` : ''}${esc(t.last || '')}</small>
       <small>${t.status === 'open' ? '受付中' : '解決済み'}・${t.at} ${t.time}・${t.n}通</small></span><span style="color:var(--muted);font-size:20px">›</span></div>`;
   $('#spList').innerHTML = d.threads.length ? d.threads.map(t => row(t, false)).join('') : '<p class="muted small" style="margin:0">まだ問い合わせはありません</p>';
@@ -7530,14 +7535,28 @@ function dmShow(t, draft) {
     n => { if (n.friend !== t.friend) return dmShow(n, tx ? tx.value : ''); t = n; box.innerHTML = msgs(n); box.lastElementChild && box.lastElementChild.scrollIntoView({ block: 'nearest' }); });
 }
 $('#spNew').onclick = () => {
+  // 種類（DB の更新102）：ふつう・エラー（不具合）の報告・セキュリティの報告。エラー・セキュリティの大事な報告には、運営からお礼
+  const B = SP.bounty, kinds = SP.kinds;
+  let kind = 'q';
   const m = mgSheet(`<div class="row"><b style="font-size:19px" class="grow">運営に問い合わせる</b><button class="btn s" data-x>とじる</button></div>
+    ${kinds ? `<div class="sp-kind" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${[['q', 'ふつうの問い合わせ'], ['bug', 'エラー（不具合）の報告'], ['sec', 'セキュリティの報告']]
+      .map(([k, l]) => `<button class="btn s ${k === 'q' ? 'main' : ''}" data-spk="${k}">${l}</button>`).join('')}</div>` : ''}
     <input class="inp" id="spSub" maxlength="40" placeholder="件名（例：送金ができない）" style="margin-top:8px">
     <textarea class="inp" id="spBody" rows="6" maxlength="2000" placeholder="こまっていること・くわしい内容（いつ・どの画面で・なにが起きたか）"></textarea>
+    <p class="small hidden" id="spSecNote" style="margin:0 0 6px;color:var(--bad,#c0392b)">くわしい手順は、ほかの人に話したり書きこんだりしないでください（運営だけが見ます）</p>
     <button class="btn main wide" id="spGo">送る</button>
-    <p class="muted small" style="margin:8px 0 0">あなたと管理者だけが見られます。返事が来ると通知が届きます。受付中の問い合わせは3件まで・新しいものは1日5件までです。</p>`);
+    <p class="muted small" style="margin:8px 0 0">あなたと管理者だけが見られます。返事が来ると通知が届きます。受付中の問い合わせは3件まで・新しいものは1日5件までです。</p>
+    ${kinds && B ? `<p class="small" style="margin:6px 0 0"><span aria-hidden="true">🎁 </span><span>エラー・セキュリティの報告で、運営が重要・貴重と判断したものには、お礼を贈ります（エラー ${fmt(B.min)}〜${fmt(B.bug)} X・セキュリティ ${fmt(B.min)}〜${fmt(B.sec)} X。税金はかかりません）</span></p>` : ''}`);
+  m.querySelectorAll('[data-spk]').forEach(b => b.onclick = () => {
+    kind = b.dataset.spk;
+    m.querySelectorAll('[data-spk]').forEach(x => x.classList.toggle('main', x === b));
+    m.querySelector('#spSecNote').classList.toggle('hidden', kind !== 'sec');
+  });
   m.querySelector('#spGo').onclick = async ev => {
     ev.target.disabled = true;
-    try { const t = await call('support_open', { p_subject: m.querySelector('#spSub').value, p_body: m.querySelector('#spBody').value }); toast('問い合わせを送りました'); spShow(t); }
+    const a = { p_subject: m.querySelector('#spSub').value, p_body: m.querySelector('#spBody').value };
+    if (kinds) a.p_kind = kind;
+    try { const t = await call('support_open', a); toast(kind === 'q' ? '問い合わせを送りました' : '報告を送りました'); spShow(t); }
     catch (e) { toast(e.message); ev.target.disabled = false; }
   };
 };
@@ -7555,8 +7574,14 @@ function spShow(t, draft) {
       ${staff && t.prio != null && t.prio_who ? `<small class="muted">${t.prio_by === 'sub' ? '副官' : '管理者'}の ${esc(t.prio_who)} がつけました</small>` : ''}</div>` : '';
   const m = mgSheet(`<div class="row"><b style="font-size:18px;word-break:break-word" class="grow">${esc(t.subject)}</b><button class="btn s" data-x>とじる</button></div>
     <p class="small muted" style="margin:4px 0">${staff ? `${nameB(t.user.nickname, t.user.badge)}（ID ${t.user.uid}）からの${idea ? '意見' : '問い合わせ'}` : sub ? '意見箱の意見（送った人は管理者だけが見られます）' : idea ? '意見箱に送った意見' : '運営への問い合わせ'}
-      <span class="tag ${t.status === 'open' ? 'good' : ''}">${t.status === 'open' ? '受付中' : '解決済み'}</span>${ideaPrio(t)}</p>
+      <span class="tag ${t.status === 'open' ? 'good' : ''}">${t.status === 'open' ? '受付中' : '解決済み'}</span>${ideaPrio(t)}${t.kind && SP_KIND[t.kind] ? `<span class="tag">${SP_KIND[t.kind]}</span>` : ''}</p>
     ${prioBox}
+    ${t.reward ? `<p class="small" style="margin:4px 0"><span aria-hidden="true">🎁 </span><b>報告のお礼：${fmt(t.reward)} X（${esc(t.reward_at || '')}）</b></p>` : ''}
+    ${staff && t.can_reward && t.bounty ? `<details class="sp-rw" style="margin:6px 0"><summary class="small"><b>報告のお礼を贈る</b></summary>
+      <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:6px">${['bug', 'sec'].map(k => `<button class="btn s ${(t.kind === 'sec' ? 'sec' : 'bug') === k ? 'main' : ''}" data-rwk="${k}">${SP_KIND[k]}</button>`).join('')}</div>
+      <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:6px" id="spRwPre"></div>
+      <div class="row" style="gap:6px;margin-top:6px;align-items:center"><input class="inp" id="spRwAmt" type="number" inputmode="numeric" step="1000" style="flex:1;margin:0"><span>X</span><button class="btn main s" id="spRwGo">贈る</button></div>
+      <p class="muted small" style="margin:4px 0 0" id="spRwHint"></p></details>` : ''}
     <div class="dk-msgs">${msgs(t)}</div>
     ${sub ? '<p class="muted small" style="margin:6px 0 0">副管理者は読むだけです（返事と解決済みは管理者がします）。</p>' : t.can_send ? `<textarea class="inp" id="spMsg" rows="3" maxlength="2000" placeholder="${staff ? '運営として返事を書く' : 'つづきを書く'}"></textarea>
       <div class="row"><button class="btn main" id="spSend">送る</button><button class="btn s" id="spClose" style="margin-left:auto">解決済みにする</button></div>
@@ -7576,6 +7601,29 @@ function spShow(t, draft) {
     if (!confirm('この問い合わせを「解決済み」にしますか？（そのあとは読むだけになります）')) return;
     try { spShow(await call('support_close', { p_id: t.id })); toast('解決済みにしました'); } catch (e) { toast(e.message); }
   };
+  // 報告のお礼（管理者。DB の更新102）：種類（エラー・セキュリティ）で はんいがちがう。国庫から・1件に1回・税金なし
+  const rw = m.querySelector('.sp-rw');
+  if (rw) {
+    const B = t.bounty; let rk = t.kind === 'sec' ? 'sec' : 'bug';
+    const amt = rw.querySelector('#spRwAmt'), pre = rw.querySelector('#spRwPre'), hint = rw.querySelector('#spRwHint');
+    const draw = () => {
+      const mx = B[rk];
+      pre.innerHTML = [4000, 10000, 40000, 160000, 640000, 2560000].filter(v => v >= B.min && v <= mx).map(v => `<button class="btn s" data-rwv="${v}">${fmt(v)}</button>`).join('');
+      pre.querySelectorAll('[data-rwv]').forEach(b => b.onclick = () => { amt.value = b.dataset.rwv; });
+      amt.min = B.min; amt.max = mx; amt.placeholder = `${fmt(B.min)}〜${fmt(mx)}`;
+      hint.textContent = `${fmt(B.min)}〜${fmt(mx)} X（国庫から・税金なし・1件に1回）`;
+    };
+    rw.querySelectorAll('[data-rwk]').forEach(b => b.onclick = () => { rk = b.dataset.rwk; rw.querySelectorAll('[data-rwk]').forEach(x => x.classList.toggle('main', x === b)); draw(); });
+    draw();
+    rw.querySelector('#spRwGo').onclick = async ev => {
+      const v = Math.round(Number(amt.value));
+      if (!(v >= B.min && v <= B[rk])) return toast(`お礼は ${fmt(B.min)} X から ${fmt(B[rk])} X までです`);
+      if (!confirm(`${t.user.nickname} さんに、${SP_KIND[rk]}へのお礼として ${fmt(v)} X を贈りますか？（国庫から。取り消せません）`)) return;
+      ev.target.disabled = true;
+      try { spShow(await call('support_reward', { p_id: t.id, p_kind: rk, p_amt: v }), tx ? tx.value : ''); toast(`${fmt(v)} X のお礼を贈りました`); }
+      catch (e) { toast(e.message); ev.target.disabled = false; }
+    };
+  }
   m.querySelectorAll('[data-ipv]').forEach(b => b.onclick = async () => {
     const v = b.dataset.ipv === '' ? null : Number(b.dataset.ipv);
     if (v === t.prio) return;
@@ -7585,8 +7633,8 @@ function spShow(t, draft) {
       toast(v == null ? '優先度をなしにしました' : v === 0 ? '却下にしました' : `優先度を ${v} にしました`);
     } catch (e) { toast(e.message); b.disabled = false; }
   });
-  mgPoll(m, 'sp:' + t.id, () => call('support_thread', { p_id: t.id }), n => n.msgs.length === t.msgs.length && n.status === t.status,
-    n => { if (n.status !== t.status) return spShow(n, tx ? tx.value : ''); t = n; box.innerHTML = msgs(n); box.lastElementChild && box.lastElementChild.scrollIntoView({ block: 'nearest' }); });
+  mgPoll(m, 'sp:' + t.id, () => call('support_thread', { p_id: t.id }), n => n.msgs.length === t.msgs.length && n.status === t.status && n.reward === t.reward,
+    n => { if (n.status !== t.status || n.reward !== t.reward) return spShow(n, tx ? tx.value : ''); t = n; box.innerHTML = msgs(n); box.lastElementChild && box.lastElementChild.scrollIntoView({ block: 'nearest' }); });
 }
 
 /* =================================================================
@@ -9373,7 +9421,7 @@ $('#rvSend').onclick = async () => {
 };
 
 /* ---------------- その他 ---------------- */
-const GAME = { start: 'はじめての配布', gift: 'お祝いの配布', gacha: 'ガチャ', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上（消費税をのぞく）', ctax: '消費税（請求の支払い）', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て', guest_rest: 'ゲストの残り（上限をこえた分・消えたゲスト）', lottery: '風の芽ジャンボ', auction: '競り市', boat: '競艇', keirin: '競輪', fishing: '釣り', review: '評価のお礼', gov_share: '国から株', owner: '馬主', owner_hold: 'せり（あずかり）', owner_back: 'せり（あずかりを返した）', task: 'タスクのごほうび', map: '国土（工事・土地・車両）', map_in: '国土（運賃・家賃・維持費・使用料）' };
+const GAME = { start: 'はじめての配布', gift: 'お祝いの配布', gacha: 'ガチャ', slot: 'スロット', roulette: 'ルーレット', hilo: 'ハイ＆ロー', blackjack: 'ブラックジャック', race: '競馬', tax: '納税', garnish: '差し押さえ（税）', benefit: '給付金', refund: '還付金', confiscate: '没収', send: '送金', receive: '受け取り', work: '仕事', buy: '買い物', deposit: '銀行に預けた', withdraw: '銀行から引き出し', interest: '利息', salary: '給料（会社）', fund: '会社に入れた', corp_fee: '企業の申請料', corp_refund: '申請料の返金', grant: '国庫から支給', dividend: '配当', game_bet: '観戦の賭け', game_stake: '対戦の賭け金', pub_buy: '新聞・本を買った', pub_sale: '本の売上（消費税をのぞく）', ctax: '消費税（請求の支払い）', loan: '借入', loan_repay: '借入の返済', loan_collect: '借入の取り立て', liquidation: '会社の残ったお金（分配）', order_refund: '返金（廃業・倒産）', share_buy: '株を買った', share_sell: '株を売った', court_comp: '賠償金（受け取り）', court_pay: '賠償金（支払い）', court_fine: '罰金', court_garnish: '賠償金の取り立て', guest_rest: 'ゲストの残り（上限をこえた分・消えたゲスト）', lottery: '風の芽ジャンボ', auction: '競り市', boat: '競艇', keirin: '競輪', fishing: '釣り', review: '評価のお礼', bounty: '報告のお礼', gov_share: '国から株', owner: '馬主', owner_hold: 'せり（あずかり）', owner_back: 'せり（あずかりを返した）', task: 'タスクのごほうび', map: '国土（工事・土地・車両）', map_in: '国土（運賃・家賃・維持費・使用料）' };
 // 記録のない所持金の動き（あずかり・返金など）は、呼ばれた操作から
 const MH_SRC = { room_move: '競り市・対戦（あずかり・返金）', room_state: '競り市・対戦（返金など）', room_list: '競り市・対戦（返金など）', room_join: '対戦の賭け金',
   room_start: '対戦の賭け金', room_leave: '対戦の賭け金（返金）', room_quit: '対戦の賭け金', stock_order: '株の注文（代金をあずかる）', stock_cancel: '株の注文の取り消し（返金）',
