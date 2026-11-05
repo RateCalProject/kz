@@ -2,7 +2,9 @@
    戸建て・和風の家・洋館・邸宅・アパート・マンション・タワーマンション・団地・長屋・別荘 など
    ・壁の材料（サイディング・タイル・塗り壁…）は うすい色で描いて、頂点の色で そめる（見た目ごとに 質感を ふやさない）
    ・家の窓・ドアは アトラス（h:win）の ますを 壁の前に はる（lod 1・2）。lod 0 と 遠く（far）は 窓を描いた 質感（h:far…）
-   ・lod 2 近く：塀・車・自転車・洗たく物・室外機・木 など / 1 中：窓・ベランダ・屋根 / 0 遠く：箱と屋根だけ */
+   ・lod 2 近く：塀・車・自転車・洗たく物・室外機・木 など / 1 中：窓・ベランダ・屋根 / 0 遠く：箱と屋根だけ
+   ・1階のお店の 看板の帯・日よけ・のれんは 頂点の色の 形（A.shopBand）。持ち主・入っている会社が 部屋ごとに 色を えらべる（P.sc）
+   ・速さ：配置は 1回・頂点は じかに書く（wq・wall2。読みこみの ときに core と くらべる）・家の 組み立ては 段ごとの 関数（JIT が はやく 最適化できるように） */
 (function () {
 'use strict';
 const A = window.M3A, PT = A.paint;
@@ -21,8 +23,8 @@ const redges = r => [
 // 長方形のあつまり（重なってよい）→ F（A.foot と同じつくり：loops・edges・rects・maxr・bb・w・d・area。座標は そのまま）
 // 速さのため core の A.foot・A.inset は 使わず、ここで 目（xs × zs）から 直接 つくる
 function rectF(r) {   // 長方形 1つ
-  const [x0, z0, x1, z1] = r, w = x1 - x0, d = z1 - z0, es = redges(r); let u = 0;
-  for (const e of es) { e.u0 = u; u += e.L; e.li = 0; e.out = true; }
+  const x0 = r[0], z0 = r[1], x1 = r[2], z1 = r[3], w = x1 - x0, d = z1 - z0, es = redges(r); let u = 0;
+  for (let i = 0; i < 4; i++) { const e = es[i]; e.u0 = u; u += e.L; e.li = 0; e.out = true; }
   return { loops: [[[x0, z0], [x1, z0], [x1, z1], [x0, z1]]], edges: es, rects: [r], maxr: [r], bb: r, w, d, area: w * d, n: 1, X0: 0, Y0: 0, cs: 10 };
 }
 function footR(rs) {
@@ -65,11 +67,11 @@ const ept = (e, s, off = 0) => [e.ax + (e.bx - e.ax) * s / e.L + e.nx * off, e.a
 const inR = (r, x, z, m = 0) => x > r[0] - m && x < r[2] + m && z > r[1] - m && z < r[3] + m;
 const hitR = (a, b, m = 0) => a[0] < b[2] + m && a[2] > b[0] - m && a[1] < b[3] + m && a[3] > b[1] - m;
 // 区間 segs から [s0, s1] をのぞく
-const cutS = (segs, s0, s1) => { const o = []; for (const g of segs) { const p = g[0], q = g[1]; if (s1 <= p || s0 >= q) o.push(g); else { if (s0 - p > 0.05) o.push([p, s0]); if (q - s1 > 0.05) o.push([s1, q]); } } return o; };
+const cutS = (segs, s0, s1) => { const o = []; for (let i = 0; i < segs.length; i++) { const g = segs[i], p = g[0], q = g[1]; if (s1 <= p || s0 >= q) o.push(g); else { if (s0 - p > 0.05) o.push([p, s0]); if (q - s1 > 0.05) o.push([s1, q]); } } return o; };
 // 辺 e のうち、外がわを ほかの長方形 rs が ふさいでいない ところ
 function freeOn(e, rs, ex) {
   let segs = [[0, e.L]];
-  for (const q of rs) { if (q === ex) continue;
+  for (let i = 0; i < rs.length; i++) { const q = rs[i]; if (q === ex) continue;
     let a, b;
     if (e.nz !== 0) { const zo = e.az + e.nz * 0.05; if (!(q[1] < zo && zo < q[3])) continue; const x0 = Math.max(Math.min(e.ax, e.bx), q[0]), x1 = Math.min(Math.max(e.ax, e.bx), q[2]); if (x1 <= x0) continue; a = proj(e, x0, e.az); b = proj(e, x1, e.az); }
     else { const xo = e.ax + e.nx * 0.05; if (!(q[0] < xo && xo < q[2])) continue; const z0 = Math.max(Math.min(e.az, e.bz), q[1]), z1 = Math.min(Math.max(e.az, e.bz), q[3]); if (z1 <= z0) continue; a = proj(e, e.ax, z0); b = proj(e, e.ax, z1); }
@@ -80,7 +82,7 @@ function freeOn(e, rs, ex) {
 // 道に面した辺をふくむ いちばん大きい長方形（区画が L 字などのとき 家を建てるところ）
 function mainRect(F, fe) {
   const mx = (fe.ax + fe.bx) / 2, mz = (fe.az + fe.bz) / 2; let best = null, ba = -1;
-  for (const r of F.maxr) {
+  for (let i = 0; i < F.maxr.length; i++) { const r = F.maxr[i];
     const on = Math.abs(fe.nz) > 0.5 ? Math.abs(mz - (fe.nz > 0 ? r[3] : r[1])) < 0.01 && mx > r[0] && mx < r[2] : Math.abs(mx - (fe.nx > 0 ? r[2] : r[0])) < 0.01 && mz > r[1] && mz < r[3];
     const a = (r[2] - r[0]) * (r[3] - r[1]);
     if (on && a > ba) { ba = a; best = r; }
@@ -89,7 +91,7 @@ function mainRect(F, fe) {
 }
 // 区画の局所の座標：u は道にそって（道から見て右へ）・v は道から奥へ
 function frame(R, n) {
-  const [x0, z0, x1, z1] = R; let W, D, P;
+  const x0 = R[0], z0 = R[1], x1 = R[2], z1 = R[3]; let W, D, P;
   if (n[1] > 0.5) { W = x1 - x0; D = z1 - z0; P = (u, v) => [x0 + u, z1 - v]; }
   else if (n[1] < -0.5) { W = x1 - x0; D = z1 - z0; P = (u, v) => [x1 - u, z0 + v]; }
   else if (n[0] > 0.5) { W = z1 - z0; D = x1 - x0; P = (u, v) => [x1 - v, z1 - u]; }
@@ -646,11 +648,11 @@ function winList(role, k, R, bal) {
 }
 // 家の窓：区間に ならべて、窓の表（WIN_E・WIN_T・WIN_F）に 入れ、その番号を かご wb に（大きい窓・道と南 から）
 const SGA = new Float64Array(32), SGB = new Float64Array(32), SGU = new Float64Array(32), SGN = new Int32Array(32), ASG = new Int32Array(16);
-const WIN_E = [], WIN_T = [], WIN_F = new Float64Array(4 * 1024), WBK = [[], [], [], [], [], []];
+const WIN_E = [], WIN_T = [], WIN_F = new Float64Array(4 * 1024), WBI = new Int32Array(6 * 512), WBC = new Int32Array(6);
 let WIN_N = 0;
-function fitWinsH(segs, list, gap, R, WT, e, yF, yTop, rp, wb) {
+function fitWinsH(segs, list, gap, R, WT, e, yF, yTop, rp) {
   let ns = 0; const nl = Math.min(list.length, 16);
-  for (const g of segs) if (g[1] - g[0] > 1.2 && ns < 32) { SGA[ns] = g[0] + 0.4; SGB[ns] = g[1] - 0.4; SGU[ns] = 0; SGN[ns] = 0; ns++; }
+  for (let i = 0; i < segs.length; i++) { const g = segs[i]; if (g[1] - g[0] > 1.2 && ns < 32) { SGA[ns] = g[0] + 0.4; SGB[ns] = g[1] - 0.4; SGU[ns] = 0; SGN[ns] = 0; ns++; } }
   for (let i = 0; i < nl; i++) { const w = WT[list[i]][0]; let best = -1, bf = -1;
     for (let g = 0; g < ns; g++) { const fr = SGB[g] - SGA[g] - SGU[g] - SGN[g] * gap; if (fr >= w && fr > bf) { bf = fr; best = g; } }
     ASG[i] = best; if (best >= 0) { SGN[best]++; SGU[best] += w; } }
@@ -658,7 +660,7 @@ function fitWinsH(segs, list, gap, R, WT, e, yF, yTop, rp, wb) {
     for (let i = 0; i < nl; i++) { if (ASG[i] !== g) continue; const t = list[i], wt = WT[t], w = wt[0], sc = x + w / 2 + (R() - 0.5) * sp * 0.5; x += w + sp;
       const y0 = yF + wt[2], y1 = Math.min(y0 + wt[1], yTop); if (y1 - y0 < 0.3 || WIN_N >= 1024) continue;
       const id = WIN_N++; WIN_E[id] = e; WIN_T[id] = t; WIN_F[id * 4] = sc; WIN_F[id * 4 + 1] = wt[0]; WIN_F[id * 4 + 2] = y0; WIN_F[id * 4 + 3] = y1;
-      wb[(t === 'K' || t === 'H' ? 0 : t === 'H2' ? 2 : 4) + rp].push(id); } }
+      const bk = (t === 'K' || t === 'H' ? 0 : t === 'H2' ? 2 : 4) + rp; if (WBC[bk] < 512) WBI[bk * 512 + WBC[bk]++] = id; } }
 }
 // 区間に 窓を ならべる → [{ t, s（まん中）}]
 function fitWins(segs, list, gap, R, WT, cb) {
@@ -831,7 +833,7 @@ function houseShell(C) {
     if (L.solar) for (const r of FM.rects) { const w = r[2] - r[0], d = r[3] - r[1]; if (w < 3 || d < 3) continue; const nr = Math.max(1, Math.floor((d - 1) / 1.9));
       for (let i = 0; i < nr; i++) { const z0 = r[1] + 0.6 + i * 1.9, x0 = r[0] + 0.5, x1 = r[2] - 0.5; B.quad(SOLAR, [x0, H + 0.25, z0 + 1.3], [x1, H + 0.25, z0 + 1.3], [x1, H + 0.75, z0], [x0, H + 0.75, z0], null, WH, [0, 0, (x1 - x0) / 4, 0.4]); } } } }
   else if (FM) {
-    ro = Object.assign({}, RO, { y: H, th: lod >= 2 ? 0.16 : 0, m: rm.k, c: rc, su: rm.su, sv: rm.sv, mg: wm2.k, cg: wc2, gsu: wm2.su, gsv: wm2.sv, cf, cr: mul(roofAvg(L.rm, rc), 0.88) });
+    ro = { t: RO.t, p: RO.p, oh: RO.oh, ax: RO.ax, hi: RO.hi, y: H, th: lod >= 2 ? 0.16 : 0, m: rm.k, c: rc, su: rm.su, sv: rm.sv, mg: wm2.k, cg: wc2, gsu: wm2.su, gsv: wm2.sv, cf, cr: mul(roofAvg(L.rm, rc), 0.88) };
     if (ro.t === 'shed' && FM.maxr.length > 1) ro.t = 'gable';
     roofs(B, FM, ro);
     if (L.solar) for (const r of FM.maxr) solarOn(B, r, ro);
@@ -909,13 +911,13 @@ function houseOpen(C) {
 function houseWins(C) {
   const { B, L, R, lod, n, parts, fh, wst, WTX, frI, deckW, door, bal } = C, yOf = k => HB + k * fh;
   // --- 窓
-  const shP = L.sh || 0, wrs = [], wb = WBK, gap = wst === 'yo' ? 0.8 : 0.55;
-  for (const bk of wb) bk.length = 0; WIN_N = 0;
-  for (const p of parts) {
+  const shP = L.sh || 0, wrs = [], gap = wst === 'yo' ? 0.8 : 0.55;
+  WBC.fill(0); WIN_N = 0;
+  for (let pi = 0; pi < parts.length; pi++) { const p = parts[pi];
     for (let k = p.f0; k < (p.wing ? 1 : p.f1); k++) {
       const others = [], below = [];
-      for (const q of parts) { if (q === p) continue; if (q.f0 <= k && q.f1 > k) others.push(q.r); if (k > 0 && q.f1 === k && !q.deck) below.push(q.r); }
-      for (const e of p.es) {
+      for (let qi = 0; qi < parts.length; qi++) { const q = parts[qi]; if (q === p) continue; if (q.f0 <= k && q.f1 > k) others.push(q.r); if (k > 0 && q.f1 === k && !q.deck) below.push(q.r); }
+      for (let ei = 0; ei < 4; ei++) { const e = p.es[ei];
         let segs = freeOn(e, others); if (!segs.length) continue;
         if (k === 0 && door && sameE(door.e, e)) { segs = cutS(segs, door.s - door.w / 2 - 0.35, door.s + door.w / 2 + 0.35); if (door.s2 != null) segs = cutS(segs, door.s2 - door.w / 2 - 0.35, door.s2 + door.w / 2 + 0.35); }
         if (k === 1 && bal && sameE(bal.e, e)) segs = cutS(segs, bal.ws - bal.ww / 2 - 0.4, bal.ws + bal.ww / 2 + 0.4);
@@ -924,12 +926,12 @@ function houseWins(C) {
         if (below.some(q => hitR(q, strip(e, 0.3), 0))) list = list.map(t => t === 'K' || t === 'K2' ? 'H' : t);
         const yF = yOf(k), yTop = p.wing ? (deckW ? yOf(1) - 0.2 : yOf(1) - 0.55) : yOf(k + 1) - 0.25;
         const rp = role === 'S' || role === 'F' ? 0 : 1;
-        fitWinsH(segs, list, gap, R, WTX, e, yF, yTop, rp, wb);
+        fitWinsH(segs, list, gap, R, WTX, e, yF, yTop, rp);
         if (k === 0) wrs.push({ e, p, role });
       }
     }
   }
-  for (let bi = 0; bi < (lod >= 2 ? 6 : 4); bi++) for (const id of wb[bi]) {
+  for (let bi = 0; bi < (lod >= 2 ? 6 : 4); bi++) for (let j = 0, nb = WBC[bi]; j < nb; j++) { const id = WBI[bi * 512 + j];
     if (hroom(C) < 18) break;
     const e = WIN_E[id], wt = WIN_T[id], ws = WIN_F[id * 4], ww = WIN_F[id * 4 + 1], y0 = WIN_F[id * 4 + 2], y1 = WIN_F[id * 4 + 3];
     const closed = (wt === 'K' || wt === 'H') && shP && R() < shP * 0.22;
@@ -1037,7 +1039,7 @@ function houseBuild(B, L, P) {
   const lay = houseLayout(fr.W, fr.D, fl, O, L, R, tilt);
   const fh = O.fh || L.fh || FH, H = HB + fl * fh, flat = L.rf === 'flat', rm = RMAT[L.rm] || RMAT.slate, rc = L.rc || '#55585e';
   if (lod <= 0) { houseLod0(B, L, P, lay, fr, fl, H, fh, flat, rm, rc, n); return; }
-  const parts = lay.parts.map(p => { const q = Object.assign({}, p); q.r = fr.rect(p.r[0], p.r[1], p.r[2], p.r[3]); return q; });
+  const parts = lay.parts.map(p => ({ r: fr.rect(p.r[0], p.r[1], p.r[2], p.r[3]), f0: p.f0, f1: p.f1, acc: !!p.acc, wing: !!p.wing, soffit: !!p.soffit, es: null, deck: false }));
   const wm = MAT[L.w] || MAT.siding, wc = L.wc || '#f0eee8';
   const C = { B, L, P, O, R, lod, nv0: B.nv, cap: vb[clamp(lod, 0, 2)], fl, tilt, F0, fe, n, fr, lay, parts, fh, H, flat, rm, rc, mainP: parts.filter(p => p.f1 === fl),
     wm, wc, wm2: L.w2 ? MAT[L.w2] : wm, wc2: L.wc2 || wc, am: L.ac ? MAT[L.ac] : wm, ac: L.acc || wc, wst: L.wst, WTX: WTS[L.wst] || WT, frI: L.fr || 0, deckW: flat || L.bal === 'roof',
@@ -1177,13 +1179,45 @@ const MSHOP = TX('mshop', 256, 128, (g, w, h, R) => {
   PT.fill(g, 0, 0, w, h, '#d7d3cb');
   const sg = ['#5d6b78', '#7a5f4a', '#3f5a4e', '#8a8478', '#5a4f63', '#9a7f5c', '#46525e'];
   for (let i = 0; i < 2; i++) { const x = i * w / 2, bw = w / 2;
-    PT.fill(g, x + bw * 0.02, h * 0.06, bw * 0.96, h * 0.2, pick(R, sg)); g.fillStyle = 'rgba(255,255,255,.12)'; g.fillRect(x + bw * 0.02, h * 0.06, bw * 0.96, h * 0.05);
+    pick(R, sg); PT.fill(g, x + bw * 0.02, h * 0.06, bw * 0.96, h * 0.2, '#c9c5bd'); g.fillStyle = 'rgba(0,0,0,.08)'; g.fillRect(x + bw * 0.02, h * 0.24, bw * 0.96, h * 0.02);   // 看板の帯の 地（色の帯は A.shopBand の 形）
     if (i === 1 && R() < 0.5) PT.shutter(g, x + bw * 0.05, h * 0.34, bw * 0.9, h * 0.66, '#b4b7b9');
     else { PT.fill(g, x + bw * 0.04, h * 0.32, bw * 0.92, h * 0.68, '#3b3e41'); const gr = g.createLinearGradient(0, h * 0.34, 0, h); gr.addColorStop(0, '#c9d2d8'); gr.addColorStop(0.35, '#efe2c8'); gr.addColorStop(1, '#bba27f'); g.fillStyle = gr; g.fillRect(x + bw * 0.06, h * 0.34, bw * 0.88, h * 0.64);
       for (let q = 0; q < 6; q++) PT.fill(g, x + bw * (0.1 + q * 0.14), h * (0.55 + 0.1 * (q % 2)), bw * 0.08, h * 0.3, pick(R, ['#a88f6f', '#8ea2ae', '#c3b293', '#9aa786', '#c79582']));
       PT.fill(g, x + bw * 0.49, h * 0.34, bw * 0.02, h * 0.66, '#3b3e41'); pRefl(g, x + bw * 0.06, h * 0.34, bw * 0.88, h * 0.64); }
     PT.fill(g, x, 0, bw * 0.02, h, '#c4bfb5'); }
 });
+/* ---------- 1階のお店の 看板の帯（A.shopBand。持ち主・入っている会社が 部屋ごとに 色を えらべる：P.sc） ----------
+   帯は 頂点の色の 形（質感の MSHOP の 帯の ところは 地の色）。P.sc が なければ 見た目の色（間口ごとに すこし ちがう 落ちついた色）
+   SBV0・SBV1：MSHOP の 帯の 高さ（質感の v）。帯の 形は この 高さに */
+const SGC = ['#5d6b78', '#7a5f4a', '#3f5a4e', '#8a8478', '#5a4f63', '#9a7f5c', '#46525e'].map(c => { const v = col(c); return [v, mul(v, 0.72), mix(v, WH, 0.35)]; });
+const SBV0 = 0.74, SBV1 = 0.94, NOREN = [[0.17, 0.23, 0.34], [0.15, 0.2, 0.3], [0.9, 0.9, 0.88]];
+const sgDef = (P, i) => SGC[Math.floor(A.hash(P.id | 0, 31 + i) * SGC.length) % SGC.length];
+// 1階に お店が あるか（kind の shop・プリセットの g1・持ち主の えらんだ 1階の店：shop1 か 部屋の色 P.sc）
+const hasShop1 = P => !!(P.shop1 || (P.sc && P.sc.length) || (P.opt && String(P.opt).indexOf('shop1') >= 0));
+// nu 部屋のうち i 番めの 部屋の 色の組（P.sc の 数と ちがうときは 割りあて）。なければ null
+const unitSc = (P, i, nu) => { const sc = P.sc; if (!sc || !sc.length) return null; return cleanU(sc[Math.min(sc.length - 1, Math.floor(i * sc.length / Math.max(1, nu)))]); };
+// 辺 e の f0〜f1 の 帯のうち、s m の ところの 部屋の色（A.shopBand と 同じ わけかた）
+const unitAt = (P, s, f0, f1) => { const sc = P.sc; if (!sc || !sc.length || f1 <= f0) return null; return cleanU(sc[clamp(Math.floor((s - f0) / (f1 - f0) * sc.length), 0, sc.length - 1)]); };
+// 部屋の色の 組を たしかめる（'#rgb'・'#rrggbb'・'rgb(a)(…)'・[r, g, b] だけ。ほかは null → 見た目の色）
+const okCol = c => typeof c === 'string' ? /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(c) || /^rgba?\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+/i.test(c) : Array.isArray(c) && c.length >= 3 && isFinite(c[0]) && isFinite(c[1]) && isFinite(c[2]);
+const cleanU = u => { if (!Array.isArray(u)) return null; const a = okCol(u[0]) ? u[0] : null, b = okCol(u[1]) ? u[1] : null, c = okCol(u[2]) ? u[2] : null; return a || b || c ? [a, b, c] : null; };
+// 看板の帯：lod 0 は 部屋ごとに 1色の 板（軽く）、lod 1・2 は A.shopBand。Q：部屋の色を もつもの（P か { sc }）か null
+function sband(B, lod, Q, e, f0, f1, y0, y1, def, pat, off) {
+  if (f1 - f0 < 0.3) return;
+  Q = Q && Q.sc && Q.sc.length ? { sc: Q.sc.map(cleanU) } : null;
+  if (lod <= 0) { const sc = Q ? Q.sc : null, k = sc ? sc.length : 1;
+    for (let i = 0; i < k; i++) { const u = sc && sc[i] && sc[i].length ? sc[i] : null, a = f0 + (f1 - f0) * i / k, b = f0 + (f1 - f0) * (i + 1) / k, g = k > 1 ? 0.15 : 0;
+      B.wallE('cp', e, y0, y1, pat === 'stripes' ? '#f4f4f2' : pat === 'awning' ? (u && u[1]) || def[1] : (u && u[0]) || def[0], { from: a + g, to: b - g, off }); }
+    return; }
+  A.shopBand(B, Q, e, y0, y1, { from: f0, to: f1, def, pat, off });
+}
+// 間口ごとの 帯（P.sc が あれば 辺 ぜんたいを 部屋の数で わける。なければ 間口 nb 個 ごとに 見た目の色。lod 0 は 1枚）。i0：間口の 通し番号の はじめ
+function sbandBays(B, P, lod, e, f0, f1, y0, y1, nb, i0, off) {
+  if (P.sc && P.sc.length || lod <= 0 || nb <= 1) { sband(B, lod, P.sc && P.sc.length ? P : null, e, f0, f1, y0, y1, sgDef(P, i0), 'solid', off); return 1; }
+  const bw = (f1 - f0) / nb;
+  for (let i = 0; i < nb; i++) sband(B, lod, null, e, f0 + i * bw + 0.08, f0 + (i + 1) * bw - 0.08, y0, y1, sgDef(P, i0 + i), 'solid', off);
+  return nb;
+}
 // 箱の帯（ひさし・廊下・ベランダの床）：辺 e の外 0〜dep・s0〜s1・y0〜y1。前は 材料の質感（m・su・sv）、ほかは 色 c
 function slab(B, e, s0, s1, dep, y0, y1, m, c, su, sv, lite) {
   const tx = (e.bx - e.ax) / e.L, tz = (e.bz - e.az) / e.L, ax = e.ax + tx * s0, az = e.az + tz * s0, bx = e.ax + tx * s1, bz = e.az + tz * s1, px = e.nx * dep, pz = e.nz * dep, cc = col(c);
@@ -1201,7 +1235,7 @@ function yard(B, P, F, lot, n, R, room, o = {}) {
   if (P.lod < 2) return;
   const fe = A.frontEdge(lot, P.front);
   // 植えこみ（道がわ以外の ふち）と 木
-  for (const e of lot.edges) { if (room() < 60) break; const front = e.nx * n[0] + e.nz * n[1] > 0.5; if (front && !o.frontHedge) continue; if (e.L < 3) continue; hedge(B, e, 0.3, e.L - 0.3, front ? 0.7 : 1.1, 0.6); }
+  if (!P.tilt) for (const e of lot.edges) { if (room() < 60) break; const front = e.nx * n[0] + e.nz * n[1] > 0.5; if (front && !o.frontHedge) continue; if (e.L < 3) continue; hedge(B, e, 0.3, e.L - 0.3, front ? 0.7 : 1.1, 0.6); }   // ななめの ときは なし
   const nT = clamp(Math.round(Math.sqrt(lot.area) / 8), 1, 8);
   for (let i = 0, t = 0; i < nT && t < 20 && room() > 80; t++) { const e = pick(R, lot.edges), s = rnd(R, 1.5, e.L - 1.5), c = ept(e, s, -1.0); if (F.rects.some(r => inR(r, c[0], c[1], 0.6))) continue; tree(B, c[0], c[1], 0.03, rnd(R, 3.5, 6), rnd(R, 1.0, 1.7), pick(R, ['#4f7340', '#5f8448', '#3f6036', '#567a3e']), R); i++; }
   // 自転車置き場（屋根つき）
@@ -1215,23 +1249,25 @@ function yard(B, P, F, lot, n, R, room, o = {}) {
       for (let q = s0 + 0.4; q < s1 - 0.3; q += 0.65) { const c = ept(e, q, -0.2 - d * 0.5), k2 = R() < 0.5 ? 0 : 0.5; B.quad(RAIL, [c[0] - e.nx * 0.9, 0.04, c[1] - e.nz * 0.9], [c[0] + e.nx * 0.9, 0.04, c[1] + e.nz * 0.9], [c[0] + e.nx * 0.9, 1.08, c[1] + e.nz * 0.9], [c[0] - e.nx * 0.9, 1.08, c[1] - e.nz * 0.9], [ex, 0, ez], WH, [k2, vb[0], k2 + 0.5, vb[1]]); } } }
 }
 function mansionBuild(B, L, P) {
-  const O = P.ko || {}, R = P.rng, lod = P.lod, nv0 = B.nv, fl = Math.max(1, P.f || 4), shop = !!(O.shop || (P.pr && P.pr.g1)), g1h = shop ? 4.2 : MF;
+  const O = P.ko || {}, R = P.rng, lod = P.lod, nv0 = B.nv, fl = Math.max(1, P.f || 4), shop = !!(O.shop || (P.pr && P.pr.g1) || hasShop1(P)), g1h = shop ? 4.2 : MF;
   const F0 = P.F, bigB = F0.area * fl > 8000 || fl >= 10, cap = lod >= 2 ? (bigB ? 3400 : 2100) : lod === 1 ? (bigB ? 1000 : 520) : (bigB ? 290 : 145), room = () => cap - (B.nv - nv0);
-  const yOf = k => k <= 0 ? MB : MB + g1h + (k - 1) * MF, H = yOf(fl), uw = O.uw || MW;
+  const yOf = k => k <= 0 ? MB : MB + g1h + (k - 1) * MF, H = yOf(fl), uw = O.uw || MW, yS0 = MB + g1h * SBV0 / 0.97, yS1 = MB + g1h * SBV1 / 0.97;   // yS：看板の帯
   const fam = FAMS[L.wf] || FAMS.tile, tint = col(L.wc || '#e8e2d6'), wmat = L.em ? MAT[L.em] : fam.m, ec = col(L.ec || L.wc || '#e8e2d6'), ftint = L.wf === 'conc' ? wallAvg('conc', L.wc) : tint;
-  const ins = O.ins != null ? O.ins : F0.area >= 600 ? 2.2 : 1.6, F = A.inset(F0, ins), lot = A.inset(F0, 0.05);
-  const fe = A.frontEdge(F0, P.front), n = [Math.round(fe.nx), Math.round(fe.nz)];
+  const ins = O.ins != null ? O.ins : F0.area >= 600 ? 2.2 : 1.6, F = A.inset(F0, ins);
   const hip = L.rf === 'hip' && F.maxr.length <= 6 && fl <= 6;
   const shopF = shop ? A.inset(F0, 0.6) : null;
   // --- 遠く（lod 0）：箱と 屋根
   if (lod <= 0) {
     const yb = P.yb < -0.5 ? P.yb : 0;
-    if (shopF) { for (const e of shopF.edges) B.wallE(MSHOP, e, yb, yOf(1), WH, { uv: [0, Math.max(1, Math.round(e.L / uw)) / 2, -0.06, 1] }); B.cap('c', shopF, yOf(1), [0.7, 0.7, 0.68]); }
+    if (shopF) { for (const e of shopF.edges) B.wallE(MSHOP, e, yb, yOf(1), WH, { uv: [0, Math.max(1, Math.round(e.L / uw)) / 2, -0.06, 1] }); B.cap('c', shopF, yOf(1), [0.7, 0.7, 0.68]);
+      const f0 = A.frontEdge(F0, P.front), nx0 = Math.round(f0.nx), nz0 = Math.round(f0.nz);
+      for (const e of shopF.edges) if (e.nx * nx0 + e.nz * nz0 > -0.5) sbandBays(B, P, 0, e, 0.1, e.L - 0.1, yS0, yS1, 1, 0, 0.08); }
     for (const e of F.edges) B.wallE(FARM, e, shopF ? yOf(1) : yb, H + (hip ? 0 : 0.9), ftint, { uv: [0, Math.max(1, Math.round(e.L / uw)) / 2, ((shopF ? yOf(1) : yb) - yOf(shop ? 1 : 0)) / MF / 2, (H - yOf(shop ? 1 : 0)) / MF / 2], ao: 0.85 });
     if (hip) roofs(B, F, { t: 'hip', y: H, p: 0.38, oh: 0.6, th: 0, m: RMAT[L.rm || 'slate'].k, c: L.rcol || '#ffffff', su: 3, sv: 3 });
     else B.cap('c', F, H + 0.9, [0.72, 0.72, 0.7]);
     return;
   }
+  const lot = A.inset(F0, 0.05), fe = A.frontEdge(F0, P.front), n = [Math.round(fe.nx), Math.round(fe.nz)];
   // --- 辺の役
   const elEW = F.w >= F.d * 1.3, elNS = F.d >= F.w * 1.3, hasS = F.edges.some(e => e.out && e.nz > 0.5 && e.L >= 6.5), ewB = (O.ew || (R() < 0.5 ? 1 : -1));
   const role = new Map();
@@ -1247,12 +1283,13 @@ function mansionBuild(B, L, P) {
   if (lod >= 2 || P.yb < -0.5) B.plinth(shopF || F, P.yb, MB + 0.01, [0.66, 0.65, 0.62]);
   // --- 1階のお店（下駄ばき）
   const y1 = yOf(1);
-  if (shopF) { for (const e of shopF.edges) { const fr2 = e.nx * n[0] + e.nz * n[1] > -0.5; if (fr2) B.wallE(MSHOP, e, MB, y1, WH, { uv: [0, Math.max(1, Math.round(e.L / uw)) / 2, 0, 0.97] }); else B.wallE(wmat.k, e, MB, y1, ec, { uv: [0, e.L / wmat.su, MB / wmat.sv, y1 / wmat.sv] }); }
+  if (shopF) { let bi = 0; for (const e of shopF.edges) { const fr2 = e.nx * n[0] + e.nz * n[1] > -0.5; if (fr2) { const nb = Math.max(1, Math.round(e.L / uw)); B.wallE(MSHOP, e, MB, y1, WH, { uv: [0, nb / 2, 0, 0.97] }); bi += sbandBays(B, P, lod, e, P.sc && P.sc.length ? 0.1 : 0, P.sc && P.sc.length ? e.L - 0.1 : e.L, yS0, yS1, nb, bi, 0.08); } else B.wallE(wmat.k, e, MB, y1, ec, { uv: [0, e.L / wmat.su, MB / wmat.sv, y1 / wmat.sv] }); }
     B.cap(RMAT.flat.k, shopF, y1 + 0.02, WH, { su: 6 });
     for (const e of shopF.edges) B.wallE(wmat.k, e, y1, y1 + 0.6, ec, { uv: [0, e.L / wmat.su, y1 / wmat.sv, (y1 + 0.6) / wmat.sv] });
     if (lod >= 2) for (const e of shopF.edges) { if (!(e.nx * n[0] + e.nz * n[1] > -0.5) || room() < 200) continue; const nb = Math.max(1, Math.round(e.L / uw)), bw2 = e.L / nb;
       for (let i = 0; i < nb; i++) if (R() < 0.6) { const s0 = i * bw2 + bw2 * 0.06, s1 = (i + 1) * bw2 - bw2 * 0.06, a = ept(e, s0), b = ept(e, s1), a2 = ept(e, s0, 1.1), b2 = ept(e, s1, 1.1), ac = pick(R, [[0.55, 0.32, 0.25], [0.32, 0.4, 0.33], [0.62, 0.58, 0.5], [0.3, 0.36, 0.45], [0.5, 0.45, 0.38]]);
-        B.quad('c', [a2[0], y1 - 1.55, a2[1]], [b2[0], y1 - 1.55, b2[1]], [b[0], y1 - 1.05, b[1]], [a[0], y1 - 1.05, a[1]], null, ac); } } }
+        const uc = unitAt(P, (s0 + s1) / 2, 0.1, e.L - 0.1);   // 日よけも 部屋の色（えらんであれば）
+        B.quad('c', [a2[0], y1 - 1.55, a2[1]], [b2[0], y1 - 1.55, b2[1]], [b[0], y1 - 1.05, b[1]], [a[0], y1 - 1.05, a[1]], null, uc && uc[0] ? mul(uc[0], 0.9) : ac); } } }
   // --- 壁（役ごとの 外壁の面）
   const yF0 = shopF ? y1 : MB, vy = shopF ? y1 : MB;
   B.facade(fam.b, F, yF0, H, { bw: uw, fh: MF, tb: 1, tf: 2, vy, only: e => role.get(e) === 'B', c: tint, ao: shopF ? 1 : 0.85 });
@@ -1335,7 +1372,7 @@ const MLOOK = [
   { n: '赤茶のタイル・古め', wf: 'tile', wc: '#93604c', rl: 'solid', rlc: '#93604c', sc: '#d2cbc0', tank: true },
   { n: '木と白・テラス', wf: 'paint', wc: '#f3f2ee', em: 'stucco', rl: 'glass', sc: '#e8e6e1', acc: '#b38b62' },
 ];
-const mansFar = (L, P) => { const shop = !!((P.ko && P.ko.shop) || (P.pr && P.pr.g1)), fl = Math.max(1, P.f || 4), H = MB + (shop ? 4.2 : MF) + (fl - 1) * MF, hip = L.rf === 'hip' && fl <= 6;
+const mansFar = (L, P) => { const shop = !!((P.ko && P.ko.shop) || (P.pr && P.pr.g1) || hasShop1(P)), fl = Math.max(1, P.f || 4), H = MB + (shop ? 4.2 : MF) + (fl - 1) * MF, hip = L.rf === 'hip' && fl <= 6;
   return { H: H + (hip ? 0 : 0.9), base: 0, wall: FARM, bw: MW, fh: MF, tb: 2, tf: 2, roof: null, rc: hip ? roofAvg(L.rm || 'slate', L.rcol) : [0.66, 0.66, 0.64], rt: hip ? 'hip' : 'flat', p: 0.38, ins: 1.8, wc: L.wf === 'conc' ? wallAvg('conc', L.wc) : col(L.wc || '#e8e2d6') }; };
 A.arch('h_mansion', { looks: MLOOK, build: mansionBuild, far: mansFar });
 const ML = idx => idx.map(i => MLOOK[i]);
@@ -1356,7 +1393,7 @@ function rowBuild(B, L, P) {
   const O = P.ko || {}, R = P.rng, lod = P.lod, nv0 = B.nv, st = O.st || 'terrace';
   let cap = 0; const room = () => cap - (B.nv - nv0);
   const fl = clamp(P.f || 2, 1, 3), F0 = P.F, fe = A.frontEdge(F0, P.front), n = [Math.round(fe.nx), Math.round(fe.nz)];
-  const LR = A.rin(mainRect(F0, fe), 0.05), fr = frame(LR, n), lot = A.inset(F0, 0.05), W = fr.W, D = fr.D;
+  const LR = A.rin(mainRect(F0, fe), 0.05), fr = frame(LR, n), W = fr.W, D = fr.D;
   const shopG = st === 'shoten' || st === 'machiya' || st === 'kanban' || st === 'shop', mach = st === 'machiya', kan = st === 'kanban';
   const fs = O.fs != null ? O.fs : st === 'terrace' ? clamp(D - 9.8, 1.2, 5.6) : st === 'nagaya' ? 0.9 : 0.2;
   const md = Math.max(4, Math.min(D - fs - 0.6, O.md || (st === 'terrace' ? 9.1 : 8.6))), u0 = st === 'terrace' || st === 'nagaya' ? 0.45 : 0.12, u1 = W - u0;
@@ -1369,13 +1406,17 @@ function rowBuild(B, L, P) {
   // 戸ごとの 区間（道がわの辺の s）：fe0 の s は u の向きか 逆か
   const sOf = u => proj(fe0, ...fr.P(u, fs)), su0 = sOf(u0), sgn = sOf(u0 + 1) > su0 ? 1 : -1, unitS = i => { const a = sOf(u0 + i * uw2), b = sOf(u0 + (i + 1) * uw2); return [Math.min(a, b), Math.max(a, b)]; };
   const ucol = i => L.alt ? col(L.alt[i % L.alt.length]) : null;
+  const shopB = shopG && !mach, pa = base + 0.02, pb = yOf(1) - 0.35, yS0 = pa + (pb - pa) * (SBV0 - 0.03) / 0.94, yS1 = pa + (pb - pa) * (SBV1 - 0.03) / 0.94;   // 看板の帯（お店の 板の 上の ところ）
+  const uQ = i => { const u = unitSc(P, i, nu); return u ? { sc: [u] } : null; };
   if (lod <= 0) {   // 遠く：箱と屋根
     const yb = P.yb < -0.5 ? P.yb : 0;
     const fwc = kan ? col(L.wc2 || L.wc) : wallAvg(L.w2 || L.w, L.wc2 || L.wc); for (const e of es) B.wall(FAR1, e.ax, e.az, e.bx, e.bz, yb, kanT + ph, fwc, [0, Math.max(1, Math.round(e.L / 4.2)) / 2, (yb - base) / fh / 2, (H - base) / fh / 2], 0.85);
     if (flat || kan) B.flat('c', M, kanT + ph - 0.1, [0.7, 0.7, 0.68]);
+    if (shopB) for (let i = 0; i < nu; i++) { const us = unitS(i); sband(B, 0, uQ(i), fe0, us[0] + 0.15, us[1] - 0.15, yS0, yS1, sgDef(P, i), 'solid', 0.1); }
     if (!flat) roof1(B, { t: rt === 'gables' ? 'gable' : rt === 'shed' ? 'gable' : 'gable', r: M, y: H, p: L.p || 0.45, oh: 0.4, th: 0, ax: alongX ? 'x' : 'z', m: rm.k, c: rc, su: rm.su, sv: rm.sv, mg: 'c', cg: mul(wc2, 0.92) });
     return;
   }
+  const lot = A.inset(F0, 0.05);
   // 地面・基礎
   B.cap(GND[L.gd || (st === 'terrace' ? 'gravel' : 'conc')], lot, 0.03, WH, { su: 3 });
   if (st === 'terrace' && fs >= 4.8) for (let i = 0; i < nu; i++) { const r = fr.rect(u0 + i * uw2 + 0.25, 0.1, u0 + (i + 1) * uw2 - 0.25, fs - 0.2); B.flat(GND.conc, r, 0.07, WH, { su: 4 }); }
@@ -1402,9 +1443,10 @@ function rowBuild(B, L, P) {
   const winsF = [];
   for (let i = 0; i < nu; i++) { const [s0, s1] = unitS(i), mir = (i % 2 === 1) !== (sgn < 0), w = s1 - s0, dS = mir ? s1 - 0.75 : s0 + 0.75;
     if (shopG) { const sh = mach ? null : MSHOP;
-      if (mach) { panel(B, WIN, fe0, dS, 1.4, base + 0.02, base + 2.2, wuv(4, 5), 0.06); const gs0 = mir ? s0 + 0.2 : s0 + 1.6, gs1 = mir ? s1 - 1.6 : s1 - 0.2; if (gs1 - gs0 > 0.6) panel(B, WIN, fe0, (gs0 + gs1) / 2, gs1 - gs0, base + 0.35, base + 2.4, wuv(1, 7), 0.06, L.lat ? col(L.lat) : WH); }
-      else panel(B, sh, fe0, (s0 + s1) / 2, w - 0.3, base + 0.02, ym - 0.35, [0, 0.03, 0.5, 0.97], 0.06);
-      if (!mach && lod >= 2 && room() > 200 && R() < 0.7) { const a = ept(fe0, s0 + 0.2), b = ept(fe0, s1 - 0.2), a2 = ept(fe0, s0 + 0.2, 1.1), b2 = ept(fe0, s1 - 0.2, 1.1), ac = pick(R, [[0.55, 0.32, 0.25], [0.32, 0.4, 0.33], [0.62, 0.58, 0.5], [0.3, 0.36, 0.45], [0.5, 0.45, 0.38]]); B.quad('c', [a2[0], ym - 1.0, a2[1]], [b2[0], ym - 1.0, b2[1]], [b[0], ym - 0.45, b[1]], [a[0], ym - 0.45, a[1]], null, ac); } }
+      if (mach) { panel(B, WIN, fe0, dS, 1.4, base + 0.02, base + 2.2, wuv(4, 5), 0.06); sband(B, lod, uQ(i), fe0, dS - 0.62, dS + 0.62, base + 1.5, base + 2.15, NOREN, 'awning', 0.1);   // のれん（部屋の色）
+        const gs0 = mir ? s0 + 0.2 : s0 + 1.6, gs1 = mir ? s1 - 1.6 : s1 - 0.2; if (gs1 - gs0 > 0.6) panel(B, WIN, fe0, (gs0 + gs1) / 2, gs1 - gs0, base + 0.35, base + 2.4, wuv(1, 7), 0.06, L.lat ? col(L.lat) : WH); }
+      else { panel(B, sh, fe0, (s0 + s1) / 2, w - 0.3, base + 0.02, ym - 0.35, [0, 0.03, 0.5, 0.97], 0.06); sband(B, lod, uQ(i), fe0, s0 + 0.15, s1 - 0.15, yS0, yS1, sgDef(P, i), 'solid', 0.08); }
+      if (!mach && lod >= 2 && room() > 200 && R() < 0.7) { const a = ept(fe0, s0 + 0.2), b = ept(fe0, s1 - 0.2), a2 = ept(fe0, s0 + 0.2, 1.1), b2 = ept(fe0, s1 - 0.2, 1.1), ac = pick(R, [[0.55, 0.32, 0.25], [0.32, 0.4, 0.33], [0.62, 0.58, 0.5], [0.3, 0.36, 0.45], [0.5, 0.45, 0.38]]), uc = unitSc(P, i, nu); B.quad('c', [a2[0], ym - 1.0, a2[1]], [b2[0], ym - 1.0, b2[1]], [b[0], ym - 0.45, b[1]], [a[0], ym - 0.45, a[1]], null, uc && uc[0] ? mul(uc[0], 0.9) : ac); } }
     else { panel(B, WIN, fe0, dS, 1.0, base + 0.02, base + 2.2, (L.dr || 0) < 8 ? wuv(L.dr || 0, 5) : wuv((L.dr || 0) - 4, 6), 0.08); const ws = mir ? s0 + (w - 1.5) / 2 : s1 - (w - 1.5) / 2; if (w > 3.4) winsF.push([fe0, ws, 'H2', 0]);
       const cc = L.fc ? col(L.fc) : [0.36, 0.36, 0.37], a = ept(fe0, dS - 0.7), b = ept(fe0, dS + 0.7); B.quad('c', [a[0] + fe0.nx * 0.8, base + 2.45, a[1] + fe0.nz * 0.8], [b[0] + fe0.nx * 0.8, base + 2.45, b[1] + fe0.nz * 0.8], [b[0], base + 2.55, b[1]], [a[0], base + 2.55, a[1]], null, cc); }
     for (let k = 1; k < fl; k++) { const y = yOf(k);
@@ -1429,7 +1471,7 @@ function rowBuild(B, L, P) {
     if (be && R() < 0.6) { const c = ept(be, be.L - (s0 + s1) / 2, 0.3); acU(B, c[0], c[1], 0.05, angOf([be.bx - be.ax, be.bz - be.az]) + Math.PI); }
   }
   // 区画の ふち（テラスハウスは 低い塀）
-  if (st === 'terrace' && room() > 60) for (const e of lot.edges) { if (e.nx * n[0] + e.nz * n[1] > 0.5) continue; if (room() < 20) break; fence(B, e, 0.05, e.L - 0.05, L.fen || 'blockf', false, L, R); }
+  if (st === 'terrace' && !P.tilt && room() > 60) for (const e of lot.edges) { if (e.nx * n[0] + e.nz * n[1] > 0.5) continue; if (room() < 20) break; fence(B, e, 0.05, e.L - 0.05, L.fen || 'blockf', false, L, R); }
   if (st === 'terrace' && fs >= 4.8 && room() > 40) for (let i = 1; i < nu; i++) { const [s0] = unitS(i), a = ept(fe0, s0, 0.3), b = ept(fe0, s0, fs - 0.3); bandP(B, EXT, a, b, 0, 0.6, EB(0), 1.6); }
 }
 const LOOK_TERR = [
@@ -1477,7 +1519,7 @@ A.arch('h_row', { looks: LOOK_TERR, build: rowBuild, far: rowFar });
 function apartBuild(B, L, P) {
   const O = P.ko || {}, R = P.rng, lod = P.lod, nv0 = B.nv, vb = O.vb || [90, 480, 1700], cap = vb[clamp(lod, 0, 2)], room = () => cap - (B.nv - nv0);
   const fl = clamp(P.f || 2, 1, 4), F0 = P.F, fe = A.frontEdge(F0, P.front), n = [Math.round(fe.nx), Math.round(fe.nz)];
-  const LR = A.rin(mainRect(F0, fe), 0.05), fr = frame(LR, n), lot = A.inset(F0, 0.05), W = fr.W, D = fr.D;
+  const LR = A.rin(mainRect(F0, fe), 0.05), fr = frame(LR, n), W = fr.W, D = fr.D;
   const md = Math.min(O.md || 8.2, D - 2.2), sw = 2.2, uw = O.uw || L.uw || 5.0;
   const parkF = D - md - 1.2 >= 5.6, fs = parkF ? D - md - 1.0 : Math.max(1.0, (D - md) / 2), corrF = n[1] < 0.5 || R() < 0.3;   // 南の道なら ベランダが道がわ
   const u0 = 0.9 + (R() < 0.5 ? sw : 0), u1 = Math.min(W - 0.9, u0 + Math.max(uw, W - 1.8 - sw)), stairL = u0 > 1.5;
@@ -1490,6 +1532,7 @@ function apartBuild(B, L, P) {
     const fwc = wallAvg(L.w2 || L.w, L.wc2 || L.wc); for (const e of es) B.wall(FAR1, e.ax, e.az, e.bx, e.bz, yb, H + (flat ? 0.6 : 0), fwc, [0, Math.max(1, Math.round(e.L / 4.2)) / 2, (yb - base) / fh / 2, (H - base) / fh / 2], 0.85);
     if (flat) B.flat('c', M, H + 0.5, [0.7, 0.7, 0.68]); else roof1(B, { t: rt, r: M, y: H, p: L.p || 0.42, oh: 0.4, th: 0, ax: alongX ? 'x' : 'z', m: rm.k, c: rc, su: rm.su, sv: rm.sv, mg: 'c', cg: mul(wc2, 0.92) });
     return; }
+  const lot = A.inset(F0, 0.05);
   // 地面（駐車場は アスファルト色の 土間）
   B.cap(GND.gravel, lot, 0.03, WH, { su: 3 });
   const pk = parkF ? fr.rect(0.4, 0.1, W - 0.4, fs - 0.5) : null;
@@ -1535,7 +1578,7 @@ function apartBuild(B, L, P) {
   if (pk && room() > 200) { const nC = Math.floor((W - 1) / 2.6); for (let i = 0; i < nC && room() > 120; i++) { if (R() < 0.35) continue; const c = fr.P(0.9 + (i + 0.5) * ((W - 1.8) / nC), (fs - 0.4) / 2); car(B, c[0], c[1], angOf(fr.dv) + (R() < 0.5 ? 0 : Math.PI), R); } }
   if (room() > 60) { const c = fr.P(stairL ? u1 + 0.8 : u0 - 0.8, fs + md * 0.8), ex = fr.du; for (let j = 0; j < 4; j++) { const q = [c[0] + fr.dv[0] * (j * 0.6 - 0.9), c[1] + fr.dv[1] * (j * 0.6 - 0.9)], vb2 = RB(7), k2 = R() < 0.5 ? 0 : 0.5; B.quad(RAIL, [q[0] - ex[0] * 0.85, 0.04, q[1] - ex[1] * 0.85], [q[0] + ex[0] * 0.85, 0.04, q[1] + ex[1] * 0.85], [q[0] + ex[0] * 0.85, 1.07, q[1] + ex[1] * 0.85], [q[0] - ex[0] * 0.85, 1.07, q[1] - ex[1] * 0.85], null, WH, [k2, vb2[0], k2 + 0.5, vb2[1]]); } }
   if (room() > 60) { const g = fr.P(stairL ? W - 1.2 : 1.2, 1.0); B.box('c', g[0] - 0.9, g[1] - 0.5, g[0] + 0.9, g[1] + 0.5, 0.04, 1.2, [0.6, 0.66, 0.6]); }
-  for (const e of lot.edges) { if (room() < 30) break; if (e.nx * n[0] + e.nz * n[1] > 0.5) continue; fence(B, e, 0.05, e.L - 0.05, L.fen || 'blockf', false, L, R); }
+  if (!P.tilt) for (const e of lot.edges) { if (room() < 30) break; if (e.nx * n[0] + e.nz * n[1] > 0.5) continue; fence(B, e, 0.05, e.L - 0.05, L.fen || 'blockf', false, L, R); }   // ななめの ときは 区画の 塀なし
 }
 const APLOOK = [
   { n: 'ベージュのサイディング', w: 'siding', wc: '#e5dac5', rf: 'gable', rm: 'slate', rc: '#5e4a3c', fc: '#efe9df', fr: 1, stc: '#c8bfae', dt: 2, brc: '#c8bfae' },
@@ -1562,7 +1605,7 @@ const DNORTH = TX('dn', 256, 256, (g, w, h, R) => {   // 団地の 北がわ（1
 function danchiBuild(B, L, P) {
   const O = P.ko || {}, R = P.rng, lod = P.lod, nv0 = B.nv, fl = Math.max(1, P.f || 5), F0 = P.F, fe = A.frontEdge(F0, P.front), n = [Math.round(fe.nx), Math.round(fe.nz)];
   const big = F0.area * fl > 4500 || fl >= 10, cap = (lod >= 2 ? [2100, 3400] : lod === 1 ? [520, 1000] : [145, 290])[big ? 1 : 0], room = () => cap - (B.nv - nv0);
-  const fh = 2.75, base = 0.35, yOf = k => base + k * fh, H = yOf(fl), sd = O.sd || 9.6, bd = 1.3, gap = Math.max(12, H * 1.2), lot = A.inset(F0, 0.05);
+  const fh = 2.75, base = 0.35, yOf = k => base + k * fh, H = yOf(fl), sd = O.sd || 9.6, bd = 1.3, gap = Math.max(12, H * 1.2);
   const fam = FAMS[L.wf] || FAMS.paint, tint = col(L.wc || '#ebe7dd'), wmat = fam.m, rlc = col(L.rlc || '#d9d9d4'), corr = !!L.corr;
   // 棟の配置（東西に長い 棟を 南北に ならべる）
   const slabs = [];
@@ -1575,6 +1618,7 @@ function danchiBuild(B, L, P) {
   let dq = lod >= 2 ? 0 : 1; while (dq < 3 && per(dq) > cap * 0.82) dq++;
   const lite = dq >= 1, noBal = dq >= 3;
   if (lod <= 0) { const ft = L.wf === 'conc' ? wallAvg('conc', L.wc) : tint; for (const r of slabs.slice(0, big ? 9 : 4)) { const yb = P.yb < -0.5 ? P.yb : 0; for (const e of redges(r)) B.wall(FARM, e.ax, e.az, e.bx, e.bz, yb, H + 0.7, ft, [0, Math.max(1, Math.round(e.L / MW)) / 2, (yb - base) / MF / 2, (H - base) / MF / 2], 0.85); B.flat('c', r, H + 0.7, [0.66, 0.66, 0.64]); } return; }
+  const lot = A.inset(F0, 0.05);
   B.cap(GND.lawn, lot, 0.03, WH, { su: 4 });
   for (let si = 0; si < ns; si++) { const r = slabs[si], es = redges(r), sE = es[2], nE = es[0];
     if (lod >= 2 || P.yb < -0.5) B.plinth(rectF(r), P.yb, base + 0.01, [0.66, 0.65, 0.62]);
@@ -1636,18 +1680,21 @@ const TWS = TX('tws', 128, 128, (g, w, h) => {   // 手すりの幕（4階分）
 }, { tr: true, op: 1 });
 function towerBuild(B, L, P) {
   const O = P.ko || {}, R = P.rng, lod = P.lod, nv0 = B.nv, fl = Math.max(5, P.f || 30), F0 = P.F, fe = A.frontEdge(F0, P.front), n = [Math.round(fe.nx), Math.round(fe.nz)];
-  const cap = [300, 1000, 3400][clamp(lod, 0, 2)], room = () => cap - (B.nv - nv0), lot = A.inset(F0, 0.05);
+  const cap = [300, 1000, 3400][clamp(lod, 0, 2)], room = () => cap - (B.nv - nv0);
   const LR = F0.maxr.reduce((a, r) => (r[2] - r[0]) * (r[3] - r[1]) > (a[2] - a[0]) * (a[3] - a[1]) ? r : a), w = LR[2] - LR[0], d = LR[3] - LR[1];
   const side = clamp(Math.min(w, d) - (Math.min(w, d) > 30 ? 10 : 3), 14, 44), tw = Math.min(w - 3, side * (w > d * 1.3 ? 1.25 : 1)), td = Math.min(d - 3, side * (d > w * 1.3 ? 1.25 : 1));
   const cx = (LR[0] + LR[2]) / 2, cz = (LR[1] + LR[3]) / 2, T = [cx - tw / 2, cz - td / 2, cx + tw / 2, cz + td / 2];
   const pod = Math.min(w, d) - Math.min(tw, td) > 8, pf = O.shop ? 3 : 2, ph = 4.6, PR = pod ? A.rin(LR, 2.2) : null, y0 = 0.3 + (pod ? pf * ph : ph), fh = 3.15, H = y0 + (fl - (pod ? pf : 1)) * fh;
   const tint = col(L.wc || '#e6eaed'), stint = col(L.sc || '#ffffff'), pm = MAT[L.pm || 'stone'], pc = col(L.pc || '#d9d4ca'), es = redges(T), bd = 1.8;
-  if (lod <= 0) { if (PR) { for (const e of redges(PR)) B.wall(pm.k, e.ax, e.az, e.bx, e.bz, 0, y0, pc, [0, e.L / pm.su, 0, y0 / pm.sv]); B.flat('c', PR, y0, [0.6, 0.62, 0.6]); }
+  const shopT = !!(PR && (O.shop || hasShop1(P))), yS0 = 0.3 + ph * SBV0 / 0.97, yS1 = 0.3 + ph * SBV1 / 0.97;   // 低層棟の お店と 看板の帯
+  if (lod <= 0) { if (PR) { for (const e of redges(PR)) B.wall(pm.k, e.ax, e.az, e.bx, e.bz, 0, y0, pc, [0, e.L / pm.su, 0, y0 / pm.sv]); B.flat('c', PR, y0, [0.6, 0.62, 0.6]);
+      if (shopT) for (const e of redges(PR)) if (e.nx * n[0] + e.nz * n[1] > 0.5) sbandBays(B, P, 0, e, 1, e.L - 1, yS0, yS1, 1, 0, 0.08); }
     for (const e of es) B.wall(FART, e.ax, e.az, e.bx, e.bz, PR ? y0 : 0, H + 2, tint, [0, Math.max(1, Math.round(e.L / 4)) / 4, 0, (H - y0) / fh / 4]); B.flat('c', T, H + 2, [0.6, 0.6, 0.6]); return; }
+  const lot = A.inset(F0, 0.05);
   B.cap(GND.tile, lot, 0.03, WH, { su: 2 });
   // 低層棟（ロビー・お店）
   if (PR) { B.plinth(rectF(PR), P.yb, 0.31, [0.62, 0.62, 0.6]);
-    for (const e of redges(PR)) { const fr2 = e.nx * n[0] + e.nz * n[1] > 0.5; if (O.shop && fr2) B.wall(MSHOP, e.ax, e.az, e.bx, e.bz, 0.3, 0.3 + ph, WH, [0, Math.max(1, Math.round(e.L / MW)) / 2, 0, 0.97]); else B.wall(pm.k, e.ax, e.az, e.bx, e.bz, 0.3, 0.3 + ph, pc, [0, e.L / pm.su, 0.3 / pm.sv, (0.3 + ph) / pm.sv], 0.85);
+    let bi = 0; for (const e of redges(PR)) { const fr2 = e.nx * n[0] + e.nz * n[1] > 0.5, nb = Math.max(1, Math.round(e.L / MW)); if (shopT && fr2) { B.wall(MSHOP, e.ax, e.az, e.bx, e.bz, 0.3, 0.3 + ph, WH, [0, nb / 2, 0, 0.97]); bi += sbandBays(B, P, lod, e, P.sc && P.sc.length ? 1 : 0, P.sc && P.sc.length ? e.L - 1 : e.L, yS0, yS1, nb, bi, 0.08); } else B.wall(pm.k, e.ax, e.az, e.bx, e.bz, 0.3, 0.3 + ph, pc, [0, e.L / pm.su, 0.3 / pm.sv, (0.3 + ph) / pm.sv], 0.85);
       B.wall(TWF, e.ax, e.az, e.bx, e.bz, 0.3 + ph, y0, mul(tint, 0.95), [0, Math.max(1, Math.round(e.L / 4)) / 2, 0, (y0 - 0.3 - ph) / fh / 4]);
       if (fr2 && lod >= 1) for (let q = 4; q < e.L - 3; q += 9) panel(B, WIN, e, q, 3.2, 0.32, 2.8, wuv(4, 10), 0.08); }
     B.flat(GND.lawn, A.rin(PR, 0.4), y0 + 0.05, WH, { su: 4 }); }
@@ -1685,11 +1732,13 @@ A.arch('h_tower', { looks: TLOOK, build: towerBuild, far: (L, P) => ({ H: 0.3 + 
    区画の形にそって 家をまわし、中庭に 木と芝。外は 小窓、中庭がわは 大きな掃き出し窓 */
 function courtBuild(B, L, P) {
   const R = P.rng, lod = P.lod, nv0 = B.nv, cap = [90, 400, 1300][clamp(lod, 0, 2)], room = () => cap - (B.nv - nv0), fl = clamp(P.f || 1, 1, 2), F0 = P.F, n = (() => { const e = A.frontEdge(F0, P.front); return [Math.round(e.nx), Math.round(e.nz)]; })();
-  const lot = A.inset(F0, 0.05), F = (() => { const F1 = A.inset(F0, 1.6); if (F1.loops.length > 1 || F1.rects.length > 1) return F1; const b = F1.bb, w = b[2] - b[0], d = b[3] - b[1], t = clamp(Math.min(w, d) * 0.3, 4.5, 6.5);
+  const F = (() => { const F1 = A.inset(F0, P.tilt ? 0.3 : 1.6);   // ななめの ときは 区画が もう 内がわの 長方形なので 小さく さがる
+    if (F1.loops.length > 1 || F1.rects.length > 1) return F1; const b = F1.bb, w = b[2] - b[0], d = b[3] - b[1], t = clamp(Math.min(w, d) * 0.3, 4.5, 6.5);
     if (w < 2 * t + 3 || d < 2 * t + 3) return F1; const ring = [[b[0], b[1], b[2], b[1] + t], [b[0], b[1], b[0] + t, b[3]], [b[2] - t, b[1], b[2], b[3]]]; if (w >= 2 * t + 6 && d >= 2 * t + 6 && w * d > 500) ring.push([b[0], b[3] - t, b[2], b[3]]);
     return footR(ring) || F1; })(), wm = MAT[L.w] || MAT.stucco, wc = col(L.wc || '#efede8'), rm = RMAT[L.rm] || RMAT.kawara, rc = L.rc || '#8e959e', flat = L.rf === 'flat', H = HB + fl * FH, frI = L.fr || 1;
   const yb = lod >= 2 || P.yb < -0.5 ? HB : 0;
   if (lod <= 0) { const bb = F.bb; for (const e of redges(bb)) B.wall(FAR1, e.ax, e.az, e.bx, e.bz, 0, H, wallAvg(L.w, L.wc), [0, Math.max(1, Math.round(e.L / 4.2)) / 2, -HB / FH / 2, (H - HB) / FH / 2]); if (flat) B.flat('c', bb, H, [0.7, 0.7, 0.68]); else roof1(B, { t: 'hip', r: bb, y: H, p: L.p || 0.42, oh: 0.6, th: 0, m: rm.k, c: rc, su: rm.su, sv: rm.sv }); return; }
+  const lot = A.inset(F0, 0.05);
   B.cap(GND.gravel, lot, 0.03, WH, { su: 3 });
   if (yb > 0) B.plinth(F, P.yb, HB + 0.005, [0.7, 0.69, 0.66]);
   for (const e of F.edges) B.wallE(wm.k, e, yb, H + (flat ? 0.5 : 0), wc, { uv: [0, e.L / wm.su, yb / wm.sv, (H + (flat ? 0.5 : 0)) / wm.sv], ao: 0.85 });
@@ -1710,7 +1759,7 @@ function courtBuild(B, L, P) {
   if (hole) { let x = 0, z = 0; for (const p of hole) { x += p[0]; z += p[1]; } pts.push([x / hole.length, z / hole.length]); }
   else { const bb = F0.bb; for (let t = 0; t < 30 && pts.length < 2; t++) { const x = rnd(R, bb[0] + 2, bb[2] - 2), z = rnd(R, bb[1] + 2, bb[3] - 2); if (!F.rects.some(r => inR(r, x, z, 1.2)) && lot.rects.some(r => inR(r, x, z, -1))) pts.push([x, z]); } }
   for (const [x, z] of pts) { if (room() < 80) break; B.flat(GND.lawn, [x - 3, z - 3, x + 3, z + 3], 0.05, WH, { su: 4 }); tree(B, x, z, 0.05, rnd(R, 3.5, 5), rnd(R, 1.2, 1.8), '#5f8448', R); }
-  for (const e of lot.edges) { if (room() < 30) break; if (e.nx * n[0] + e.nz * n[1] > 0.5) continue; fence(B, e, 0.05, e.L - 0.05, L.fen || 'wall', false, L, R); }
+  if (!P.tilt) for (const e of lot.edges) { if (room() < 30) break; if (e.nx * n[0] + e.nz * n[1] > 0.5) continue; fence(B, e, 0.05, e.L - 0.05, L.fen || 'wall', false, L, R); }   // ななめの ときは 区画の 塀なし
 }
 const CLOOK = [
   { n: '白い塗り壁・中庭', w: 'stucco', wc: '#f3f2ee', rf: 'flat', fr: 2, dr: 1, fen: 'wall', fenc: '#efede8', fc: '#b9bbbd' },

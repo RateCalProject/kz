@@ -24,7 +24,7 @@ A.pOf = A.pOf || (() => null);            // プリセット（map3d.js・ため
 A.rng = seed => { let s = (Math.imul(seed | 0, 2654435761) >>> 0) || 1; return () => { s = (s + 0x6D2B79F5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; };
 A.hash = (a, b) => { let h = (a * 374761393 + b * 668265263) | 0; h = (h ^ (h >>> 13)) * 1274126177 | 0; return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
 const CC = new Map();
-const col = c => { if (typeof c !== 'string') return c || [1, 1, 1]; let v = CC.get(c); if (!v) { let m;   // '#rrggbb'・'#rgb'・'rgb(a)(r, g, b[, a])'
+const col = c => { if (typeof c !== 'string') return c && typeof c === 'object' ? c : [1, 1, 1]; let v = CC.get(c); if (!v) { let m;   // '#rrggbb'・'#rgb'・'rgb(a)(r, g, b[, a])'
     if (c[0] === '#' && c.length === 4) v = [parseInt(c[1] + c[1], 16) / 255, parseInt(c[2] + c[2], 16) / 255, parseInt(c[3] + c[3], 16) / 255];
     else if ((m = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/i.exec(c))) v = [Math.min(255, +m[1]) / 255, Math.min(255, +m[2]) / 255, Math.min(255, +m[3]) / 255];
     else { const n = parseInt(c.slice(1), 16); v = [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; }
@@ -767,7 +767,7 @@ A.buildFar = (B, b, cells, g0, gmin, o, K, ar, L, li) => {
   const cs = o.cs || 10;
   let X0 = Infinity, Y0 = Infinity, X1 = -Infinity, Y1 = -Infinity; for (const c of cells) { if (c[0] < X0) X0 = c[0]; if (c[1] < Y0) Y0 = c[1]; if (c[0] > X1) X1 = c[0]; if (c[1] > Y1) Y1 = c[1]; }
   const P = { id: b.id | 0, kind: b.kind, pr: A.pOf(b.kind) || {}, f: Math.max(0, b.floors | 0), ko: K.o, look: li, rng: A.rng((b.id | 0) * 7 + li * 1013), cs,
-    n: cells.length, w: (X1 - X0 + 1) * cs, d: (Y1 - Y0 + 1) * cs };   // n：区画の数・w, d：はば・おく（m）
+    n: cells.length, w: (X1 - X0 + 1) * cs, d: (Y1 - Y0 + 1) * cs, sc: b.sc || null };   // n：区画の数・w, d：はば・おく（m）・sc：1階のお店の色（近くと高さをそろえる）
   let sp = null; try { sp = ar.far ? ar.far(L, P) : null; } catch (e) { sp = null; }
   if (!sp) sp = farDef(P);
   B.ox = X0 * cs * A.U; B.oz = Y0 * cs * A.U; B.oy = g0; B.top = 0; B.jit = 0.95 + 0.08 * A.hash(b.id | 0, 6);
