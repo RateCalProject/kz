@@ -237,13 +237,20 @@ function analyze(X, c, cx, cy, full) {
       const t = T[k];
       Wt[k] = t === TD || t === TS ? 0 : t === TL ? L0[k] : Math.max(0, Math.min(L1[k], L0[k] + 0.3, HB[k] - 0.8));
     }
+    // 川は 岸より高くしない（t67）：となり（1マス。なければ 2マス）の いちばん低い陸より 0.6m 下まで（低い岸から あふれて、まわりの陸が 水びたしに見えないように）
+    for (let y = 0; y < NW; y++) for (let x = 0; x < NW; x++) {
+      const k = y * NW + x; if (!isW[k] || T[k] !== TR) continue;
+      let lo = Infinity;
+      for (let r = 1; r <= 2 && lo === Infinity; r++) for (let b = y > r ? y - r : 0; b <= Math.min(NW - 1, y + r); b++) for (let a = x > r ? x - r : 0; a <= Math.min(NW - 1, x + r); a++) { const q = b * NW + a; if (!isW[q] && EL[q] < lo) lo = EL[q]; }
+      if (lo < Infinity) Wt[k] = Math.max(0, Math.min(Wt[k], lo - 0.6));
+    }
   }
   // 陸のマスにも（となりの水のマスの平均）：岸の近くの 補間のため
   for (let y = 0; y < NW; y++) for (let x = 0; x < NW; x++) {
     const k = y * NW + x; if (isW[k] || dW[k] > 2.9) continue;
-    let s = 0, m = 0, hw = 0;
-    for (let r = 1; r <= 2 && !m; r++) for (let b = y > r ? y - r : 0; b <= Math.min(NW - 1, y + r); b++) for (let a = x > r ? x - r : 0; a <= Math.min(NW - 1, x + r); a++) { const q = b * NW + a; if (isW[q]) { s += Wt[q]; hw += HW[q]; m++; } }
-    if (m) { Wt[k] = s / m; HW[k] = hw / m; }
+    let s = 0, m = 0, hw = 0, sea = false;
+    for (let r = 1; r <= 2 && !m; r++) for (let b = y > r ? y - r : 0; b <= Math.min(NW - 1, y + r); b++) for (let a = x > r ? x - r : 0; a <= Math.min(NW - 1, x + r); a++) { const q = b * NW + a; if (isW[q]) { s += Wt[q]; hw += HW[q]; m++; if (T[q] === TD || T[q] === TS) sea = true; } }
+    if (m) { Wt[k] = sea ? s / m : Math.min(s / m, EL[k] - 0.3); HW[k] = hw / m; }   // 川・湖のそばの陸は 水の下にしない（t67）
   }
   return Wn;
 }
@@ -1160,7 +1167,7 @@ function poll() {
   const X = PL.X; if (!X) return; const M3 = X.M3; if (!M3 || !M3.on || !M3.cm) return;
   const inv = [];
   for (const [, o] of M3.cm) {
-    const u = o.mesh && o.mesh.userData && o.mesh.userData.tk; if (!u || !u.water || o.st > 1) continue;
+    const u = o.mesh && o.mesh.userData && o.mesh.userData.tk; if (!u || !(u.water || u.hw) || o.st > 1) continue;   // 遠くで あらく作った 水のチャンクも（前は こまかくならず、川が 陸の高さの 水の板のまま。t67）
     const want = levelWant(X, u.cx, u.cy, o.st, true, u.lvl);
     if (o.st < 1 && !want) continue;
     if (want !== u.lvl) inv.push([Math.hypot(u.cx * CS + 32 - M3.tx, u.cy * CS + 32 - M3.ty), o]);
@@ -1240,7 +1247,7 @@ function chunk(X, c, cx, cy, st) {
   // こまかい網のときだけ 水のくわしい しらべ（あらい網は 海・湖の水面だけ）
   let lvl = st < 1 ? Math.max(4, levelWant(X, cx, cy, st, true, -1)) : levelWant(X, cx, cy, st, true, -1);   // 海ぞい（半マスの網）は いつも こまかく
   setWin(lvl > 0 ? 26 : 8);
-  const Wn = analyze(X, c, cx, cy, lvl > 0), water = lvl > 0 && waterHere(Wn, cx, cy);
+  const Wn = analyze(X, c, cx, cy, lvl > 0), hw = waterHere(Wn, cx, cy), water = lvl > 0 && hw;
   if (!water && st >= 1) lvl = 0;
   tq = TPH('analyze', tq);
   // 水のマスの はんい（＋1.5 マス）：橋・切らないところの しるし
@@ -1249,7 +1256,7 @@ function chunk(X, c, cx, cy, st) {
   const decks = water ? findDecks(X, Wn, cx, cy) : [];
   tq = TPH('decks', tq);
   const mesh = lvl ? buildFine(X, Wn, c, cx, cy, lvl, st, decks) : buildCoarse(X, Wn, c, cx, cy, st, decks);
-  mesh.userData.tk = { cx, cy, lvl, water, wb, ik: water ? itemKey(wb) : '' };
+  mesh.userData.tk = { cx, cy, lvl, water, hw, wb, ik: water ? itemKey(wb) : '' };   // hw：水がある（遠くで あらく作ったときも。近づいたら こまかく。t67）
   mesh.onBeforeRender = onBR;
   const dt = performance.now() - t0;
   ST.n++; ST.ms += dt; if (lvl) { ST.n5++; ST.ms5 += dt; } ST.last = dt; (ST.recent || (ST.recent = [])).push(Math.round(dt * 10) / 10); if (ST.recent.length > 12) ST.recent.shift();

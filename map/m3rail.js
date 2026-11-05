@@ -92,12 +92,13 @@ function rtK(C, k) {
   const s = C.ds[k]; at(C, s, TP);
   const g = X.m3Surf(TP.x, TP.y), sg = C.sg; let r = g;
   if (sg.pf && sg.L) { const z = X.pfZ(sg.pf, s) * U * VEX, c = codeS(sg, s); r = c === 'V' || c === 'B' || c === 'T' ? z : Math.max(z, g); }
+  else if (X.vpz) { const z = X.vpz(sg, s); if (z != null) r = z * U * VEX; }   // 縦断のない線：仮の縦断（なめらか・川は 岸の高さの橋。t67）
   return (C.rt[k] = r + LIFT);
 }
 // s のところの高さを、つくり c として（トンネルの入口：外がわの高さ）
 function rtAt(C, s, c) {
   at(C, s, TP); const g = X.m3Surf(TP.x, TP.y), sg = C.sg;
-  if (!(sg.pf && sg.L)) return g + LIFT;
+  if (!(sg.pf && sg.L)) { const z = X.vpz ? X.vpz(sg, s) : null; return (z != null ? z * U * VEX : g) + LIFT; }
   const z = X.pfZ(sg.pf, s) * U * VEX; return (c === 'V' || c === 'B' ? z : Math.max(z, g)) + LIFT;
 }
 function dloc(C, s) {
