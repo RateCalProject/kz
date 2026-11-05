@@ -101,6 +101,7 @@ async function m3Open() {
     tx: S.cam.x, ty: S.cam.y, d: Math.max(10, Math.min(700, (S.H / S.cam.z) * 0.95)), yaw: 0, pitch: 0.92, gy: 0, dirty: true });
   M3.tex = m3WinTex(T3);
   S.v3 = M3; S.wrap.classList.add('mp-3d');
+  m3Mods().then(r => { if (!M3.on || !r.some(Boolean)) return; for (const [, o] of M3.cm) { M3.grpT.remove(o.mesh); m3Dispose(o.mesh); } M3.cm.clear(); M3.tg++; M3.tgN++; M3.bKey = ''; S.dirty = true; });   // 線路・地形のファイル（t64c）
   m3Bind(cv);
   hint(S.layer.run ? '3D は見るだけです（指でうごかす・2本指で回す／かたむける・列車をタップで情報）' : '3D は見るだけです（指でうごかす・2本指で回す／かたむける）'); setTimeout(() => { if (M3.on) hint(''); }, 4000);
   S.dirty = true;
@@ -119,7 +120,7 @@ function m3Close() {
   M3.on = false; S.v3 = null; S.v3rect = null; S.wrap.classList.remove('mp-3d');
   saveCam(); S.dirty = true;
 }
-function m3Clear(g) { for (const o of [...g.children]) { g.remove(o); if (o.geometry) o.geometry.dispose(); if (o.material && !o.material.keep) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.dispose()); } }
+function m3Clear(g) { for (const o of [...g.children]) { g.remove(o); m3Dispose(o); } }   // 子のメッシュも（t64c）
 const alertMsg = m => { try { hint(m); setTimeout(() => hint(''), 3500); } catch (e) {} };
 
 // 窓のテクスチャ（壁の色にかける）：ガラス張り・格子の窓・家の窓
@@ -212,14 +213,29 @@ function m3Terrain(rc) {
   for (const t of todo) {
     if (n >= 2 && performance.now() - t0 > bud) break;
     const old = M3.cm.get(t.k);
-    if (old) { M3.grpT.remove(old.mesh); old.mesh.geometry.dispose(); }
-    const mesh = t.mode === 'f' ? m3ChunkMesh(T3, t.c, t.cx, t.cy, t.st) : m3LoMesh(T3, t.cx, t.cy); M3.grpT.add(mesh);
+    if (old) { M3.grpT.remove(old.mesh); m3Dispose(old.mesh); }
+    const mesh = m3TerraMesh(T3, t); M3.grpT.add(mesh);
     // H：網の点の高さ（建物・道路・列車を、この網の上に。m3Surf）。gen：作った順の番号（上に のせるものを作りなおす合図）
     M3.cm.set(t.k, { mesh, st: t.st, nb: t.nb, mode: t.mode, H: mesh.userData.H, gen: ++M3.tg }); n++;
     const nr = rc.near; if (t.cx * CS <= nr.x1 + 1 && t.cx * CS + CS >= nr.x0 - 1 && t.cy * CS <= nr.y1 + 1 && t.cy * CS + CS >= nr.y0 - 1) M3.tgN++;
   }
   if (n < todo.length) M3.dirty = true;
-  for (const [k, o] of M3.cm) if (!keep.has(k)) { M3.grpT.remove(o.mesh); o.mesh.geometry.dispose(); M3.cm.delete(k); M3.tg++; }
+  for (const [k, o] of M3.cm) if (!keep.has(k)) { M3.grpT.remove(o.mesh); m3Dispose(o.mesh); M3.cm.delete(k); M3.tg++; }
+}
+// チャンクの網（t64c）：地形のファイル（map/m3terra.js の M3TERRA）があれば それで（川・岸・浜など）。なければ・こわれたら 前のまま
+//   M3TERRA.chunk(X, c, cx, cy, st) / M3TERRA.lo(X, cx, cy) → メッシュ（userData.H：網の点の高さ。m3Surf が使う。子に 水面などを入れてよい）
+function m3TerraMesh(T3, t) {
+  const TM = window.M3TERRA;
+  if (TM && !TM.fail) try { const r = t.mode === 'f' ? (TM.chunk && TM.chunk(m3X(), t.c, t.cx, t.cy, t.st)) : (TM.lo && TM.lo(m3X(), t.cx, t.cy)); if (r) return r; }
+  catch (e) { console.error(e); TM.fail = 1; }
+  return t.mode === 'f' ? m3ChunkMesh(T3, t.c, t.cx, t.cy, t.st) : m3LoMesh(T3, t.cx, t.cy);
+}
+// メッシュをこわす（子も。のこす質感（keep）は のこす）
+const m3Dispose = o => o.traverse(x => { if (x.geometry) x.geometry.dispose(); if (x.material) (Array.isArray(x.material) ? x.material : [x.material]).forEach(m => { if (!m.keep) m.dispose(); }); });
+// 3D の中のもの（線路・地形のファイルに わたす。t64c）
+function m3X() {
+  return { T3: M3.T, M3, S, CS, MQ, PAL, LO, tileAt, ckey, loAt, loH, now, m3Hash, m3Half, m3Coast, m3W, m3ChunkMesh, m3LoMesh, m3Surf, m3OnLine, pfZ, runRef,
+    M3_U, M3_VEX, M3_LIFT, M3_FH, M3_TMAT, visibleItems };
 }
 const M3_TMAT = { m: null };
 // 海ぞいか（陸のタイルの となりに 海 D・S がある）。チャンクに おぼえる（となりのチャンクを読んだら はかりなおす）（t64）
@@ -497,7 +513,7 @@ function m3Roads(T3, segs) {
   const props = M3.d < 30, curbs = M3.d < 12, marks = M3.d < 80, wide = M3.d < 150, nr = M3.nearQ || { cx: M3.tx, cy: M3.ty };
   const RO = Math.max(12, M3.d * 1.2), pnear = (x, y) => Math.abs(x - nr.cx) < RO && Math.abs(y - nr.cy) < RO;
   const far = M3.d >= 40;   // 遠い：歩道は路面の絵に（帯は全体のはばを1枚）
-  const T = new Map(), CP = [], CC = [], MP = [], MC = [], LIGHT = [], SIG = [];
+  const T = new Map(), CP = [], CC = [], MP = [], MC = [], LIGHT = [], SIG = [], POLES = [];
   const q4 = (P, C, a, b, c, d, col) => { P.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2], a[0], a[1], a[2], c[0], c[1], c[2], d[0], d[1], d[2]); for (let k = 0; k < 6; k++) C.push(col[0], col[1], col[2]); };
   const quad = (a, b, c, d, col) => q4(CP, CC, a, b, c, d, col), mark = (a, b, c, d, col) => q4(MP, MC, a, b, c, d, col);
   const tri = (a, b, c, col) => { CP.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]); for (let k = 0; k < 3; k++) CC.push(col[0], col[1], col[2]); };
@@ -637,7 +653,7 @@ function m3Roads(T3, segs) {
     const p = s._prof, b = p.W / 100, a = far ? b : p.cw / 100, tr = trim.get(s) || [0, 0], len = lenOf(s), lo = tr[0], hi = len - tr[1];
     if (hi - lo < 0.01) continue;
     const tk = p.key + (far ? ':f' : ''); let tx = T.get(tk); if (!tx) T.set(tk, tx = { tex: m3RoadTex(T3, p, far), P: [], UV: [] });
-    const P = s.P, U = normals(s); let acc = 0, nextPier = 0, nextLight = lo + 0.3, side = 1;
+    const P = s.P, U = normals(s), PL = []; let acc = 0, nextPier = 0, nextLight = lo + 0.3, side = 1, nextPole = lo + 0.25;
     for (let i = 0; i < s.np - 1; i++) {
       const ax = P[2 * i], ay = P[2 * i + 1], bx = P[2 * i + 2], by = P[2 * i + 3], D = Math.hypot(bx - ax, by - ay); if (D < 1e-6) continue;
       const L0 = s.L ? s.L[i] : acc; acc += D;
@@ -666,8 +682,18 @@ function m3Roads(T3, segs) {
           }
           nextLight += 0.6; side = -side;
         }
+        // 電柱（t65。日本の町らしく）：高速と 大きい道（片がわ2車線以上）をのぞく 地面の道。35m ごと・片がわ（+横）。電線で となりと つなぐ
+        while (props && !p.exp && (p.ln || 0) <= 1 && c === 'G' && nextPole < s1) {
+          if (nextPole >= s0 && pnear(x0, y0)) {
+            const f = (nextPole - s0) / Math.max(1e-6, s1 - s0), x = x0 + (x1 - x0) * f, y = y0 + (y1 - y0) * f, ux = ux0 + (ux1 - ux0) * f, uy = uy0 + (uy1 - uy0) * f;
+            const o = b - (p.sw > 0 ? 0.45 : 0.3) / 50, h = A[2] + (B[2] - A[2]) * f;
+            PL.push([x + ux * o, h, y + uy * o, ux, uy]);
+          } else PL.push(null);   // とぎれ（つながない）
+          nextPole += 0.7;
+        }
       }
     }
+    if (PL.some(Boolean)) POLES.push(PL);
   }
   // 交差点：路面（白線なし）・歩道の角（まるい縁石）・横断歩道・停止線・信号
   const bez = (A, C, B, t) => [(1 - t) * (1 - t) * A[0] + 2 * t * (1 - t) * C[0] + t * t * B[0], (1 - t) * (1 - t) * A[1] + 2 * t * (1 - t) * C[1] + t * t * B[1]];
@@ -740,11 +766,11 @@ function m3Roads(T3, segs) {
     const g = new T3.BufferGeometry(); g.setAttribute('position', new T3.Float32BufferAttribute(P, 3)); g.setAttribute('color', new T3.Float32BufferAttribute(C, 3)); g.computeVertexNormals();
     M3.grpR.add(new T3.Mesh(g, lam({ vertexColors: true, side: T3.DoubleSide, polygonOffsetFactor: off, polygonOffsetUnits: off })));
   }
-  m3Props(T3, LIGHT, SIG);
+  m3Props(T3, LIGHT, SIG, POLES);
   M3.tRoad = performance.now() - tR0;
 }
 // 街灯・信号（まとめて描く：InstancedMesh）。信号の灯は 40秒で ひとまわり（交差点の向きで2つの組）
-function m3Props(T3, LIGHT, SIG) {
+function m3Props(T3, LIGHT, SIG, POLES) {
   const mtx = new T3.Matrix4(), q = new T3.Quaternion(), pos = new T3.Vector3(), sc = new T3.Vector3(), up = new T3.Vector3(0, 1, 0), m = 1 / 50;
   const inst = (geo, mat, list, fn) => {
     if (!list.length) return null;
@@ -757,6 +783,26 @@ function m3Props(T3, LIGHT, SIG) {
   inst(box(), gray(), LIGHT, o => { pos.set(o[0], o[1] + 4 * m, o[2]); q.identity(); sc.set(0.18 * m, 8 * m, 0.18 * m); });
   inst(box(), gray(), LIGHT, o => { pos.set(o[0] + Math.cos(o[3]) * 0.8 * m, o[1] + 7.9 * m, o[2] + Math.sin(o[3]) * 0.8 * m); q.setFromAxisAngle(up, -o[3]); sc.set(1.6 * m, 0.12 * m, 0.12 * m); });
   inst(box(), new T3.MeshBasicMaterial({ color: '#fff4d6' }), LIGHT, o => { pos.set(o[0] + Math.cos(o[3]) * 1.6 * m, o[1] + 7.8 * m, o[2] + Math.sin(o[3]) * 1.6 * m); q.setFromAxisAngle(up, -o[3]); sc.set(0.7 * m, 0.14 * m, 0.32 * m); });
+  // 電柱（t65）：コンクリートの柱（12m）・腕木2本・ときどき変圧器。電線（高い3本・低い2本。たるませる）
+  const PO = []; for (const L of POLES || []) for (const o of L) if (o) PO.push(o);
+  if (PO.length) {
+    const cg = new T3.CylinderGeometry(0.5, 0.62, 1, 8), ar = o => Math.atan2(o[4], o[3]);
+    inst(cg, new T3.MeshLambertMaterial({ color: '#a3a39b' }), PO, o => { pos.set(o[0], o[1] + 6 * m, o[2]); q.identity(); sc.set(0.32 * m, 12 * m, 0.32 * m); });
+    inst(box(), dark(), PO, o => { pos.set(o[0], o[1] + 11.4 * m, o[2]); q.setFromAxisAngle(up, -ar(o)); sc.set(1.7 * m, 0.1 * m, 0.1 * m); });
+    inst(box(), dark(), PO, o => { pos.set(o[0] - o[3] * 0.2 * m, o[1] + 9.4 * m, o[2] - o[4] * 0.2 * m); q.setFromAxisAngle(up, -ar(o)); sc.set(1.1 * m, 0.09 * m, 0.09 * m); });
+    const TR = PO.filter((o, i) => i % 3 === 1);
+    inst(new T3.CylinderGeometry(0.5, 0.5, 1, 8), new T3.MeshLambertMaterial({ color: '#8d969b' }), TR, o => { pos.set(o[0] - o[3] * 0.5 * m, o[1] + 8.4 * m, o[2] - o[4] * 0.5 * m); q.identity(); sc.set(0.7 * m, 1.1 * m, 0.7 * m); });
+    const LP = [], WI = [[0.75, 11.5, 0.35], [0, 11.5, 0.35], [-0.75, 11.5, 0.35], [-0.45, 9.45, 0.5], [-0.25, 7.2, 0.55]];   // [横（m。−は道のがわ）, 高さ m, たるみ m]
+    for (const L of POLES || []) for (let i = 0; i + 1 < L.length; i++) {
+      const a = L[i], c = L[i + 1]; if (!a || !c || Math.hypot(c[0] - a[0], c[2] - a[2]) > 0.95) continue;
+      for (const [o, h, sg] of WI) {
+        const P0 = [a[0] + a[3] * o * m, a[1] + h * m, a[2] + a[4] * o * m], P1 = [c[0] + c[3] * o * m, c[1] + h * m, c[2] + c[4] * o * m];
+        let prev = P0;
+        for (let k = 1; k <= 4; k++) { const t = k / 4, dz = -4 * sg * t * (1 - t) * m, Q = [P0[0] + (P1[0] - P0[0]) * t, P0[1] + (P1[1] - P0[1]) * t + dz, P0[2] + (P1[2] - P0[2]) * t]; LP.push(...prev, ...Q); prev = Q; }
+      }
+    }
+    if (LP.length) { const g = new T3.BufferGeometry(); g.setAttribute('position', new T3.Float32BufferAttribute(LP, 3)); M3.grpR.add(new T3.LineSegments(g, new T3.LineBasicMaterial({ color: '#2b2d2f' }))); }
+  }
   // 信号：柱（6m）・アーム・灯の箱（車線の上）・灯（青・黄・赤。左から）
   M3.sig = null;
   if (!SIG.length) return;
@@ -794,7 +840,9 @@ function m3Blds(v) {
   const segs = [...it.segs.values()].filter(s => s.bb[2] >= v.x0 && s.bb[0] <= v.x1 && s.bb[3] >= v.y0 && s.bb[1] <= v.y1);
   const rws = [...(it.rwys ? it.rwys.values() : [])].filter(r => r.bb && r.bb[2] >= v.x0 && r.bb[0] <= v.x1 && r.bb[3] >= v.y0 && r.bb[1] <= v.y1);
   const sts = [...it.stas.values()].filter(t => t.fx >= v.x0 - 2 && t.fx <= v.x1 + 2 && t.fy >= v.y0 - 2 && t.fy <= v.y1 + 2);   // 駅（t62）
-  const key = bs.length + ':' + bs.reduce((a, b) => (a + b.id * 31 + b.floors) % 1e9, 0) + '|' + segs.length + ':' + segs.reduce((a, s) => (a + s.id * 17 + (s.pf ? Math.round(s.pf.reduce((u, w) => u + w, 0)) : 0)) % 1e9, 0)
+  const prs = it.props ? [...it.props.values()] : [];   // 小物（t65）
+  const key = bs.length + ':' + bs.reduce((a, b) => (a + b.id * 31 + b.floors + (b.lk || 0) * 7 + (b.rot == null ? 0 : b.rot + 1) * 11 + (b.sc ? JSON.stringify(b.sc).length * 13 : 0)) % 1e9, 0)
+            + '|' + prs.length + ':' + prs.reduce((a, p) => (a + p.id * 17 + Math.round(p.x * 100) + Math.round(p.y * 100) * 3 + p.rot * 5 + (p.col ? parseInt(p.col.slice(1), 16) % 997 : 0)) % 1e9, 0) + '|' + segs.length + ':' + segs.reduce((a, s) => (a + s.id * 17 + (s.pf ? Math.round(s.pf.reduce((u, w) => u + w, 0)) : 0)) % 1e9, 0)
             + '|' + rws.length + ':' + rws.reduce((a, r) => (a + r.id * 13) % 1e9, 0) + '|' + sts.length + ':' + sts.reduce((a, t) => (a + t.id * 7 + (t.pl || 0) * 3 + (t.tr || 0)) % 1e9, 0)
             + '|' + M3.tgN   // 近くの地形の網を作りなおしたら、のせなおす（t64）
             + '|' + (M3.d < 12 ? 'k' : M3.d < 30 ? 'p' : M3.d < 40 ? 'n' : M3.d < 80 ? 'm' : M3.d < 150 ? 'w' : 'f')   // 道のまわりの物の段（t64b）
@@ -809,10 +857,15 @@ function m3Blds(v) {
   const push = (arr, x, y, z, nx, ny, nz, c, u, w) => arr.push(x, y, z, nx, ny, nz, c[0], c[1], c[2], u, w);
   const hex = (h, f) => { const n = parseInt(h.slice(1), 16); return [((n >> 16) & 255) / 255 * f, ((n >> 8) & 255) / 255 * f, (n & 255) / 255 * f]; };
   const FND = [0.64, 0.63, 0.60];   // 土台（坂の低いがわ。コンクリート）
+  // 建物の型（t65）：読めていれば 型と見た目で組み立てる（近いほど細かく・入口は道のほうへ）。まだなら前の箱
+  const AR = m3ArchNow(), AB = AR ? new AR.Builder() : null, FRo = AB ? m3FrontIdx(segs) : null;
+  if (!AR) m3Arch().then(() => { M3.bKey = ''; S.dirty = true; }).catch(() => {});
+  else { AR.tq = MQ.d3 <= 0 ? 0.5 : MQ.d3 >= 3 ? 2 : 1; AR.aniso = Math.min(8, M3.r.capabilities.getMaxAnisotropy()); }
+  const G5 = Math.max(4, Math.round((v.x1 - v.x0) / 10));   // 近いはんいの目の半分ほど（中心がずれていても 近くは細かく）
+  M3.bst = [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]];
+  const kq = MQ.d3 <= 0 ? 0.6 : MQ.d3 >= 3 ? 1.5 : MQ.d3 >= 2 ? 1.2 : 1;   // 細かくする遠さ（画質の設定）：近い 300m・中 600m・遠い 1.1km。その先は いちばん軽く（lod -1）
   for (const b of bs) {
-    const st = m3Style(b.kind, b), f = Math.max(0, b.floors);
-    const hgt = f > 0 ? (f * M3_FH + 0.8) * M3_U : 0.25 * M3_U;
-    const wc = hex(st.wc, st.jit), rcol = hex(f > 0 ? st.rc : (bcol(b.kind)[0] || '#bbb'), st.jit), wa = W[st.win] || W.none;
+    const f = Math.max(0, b.floors), hgt = f > 0 ? (f * M3_FH + 0.8) * M3_U : 0.25 * M3_U;
     // 長方形にまとめる
     const rows = new Map();
     for (const k of b.set) { const i = k.indexOf(','), x = +k.slice(0, i), y = +k.slice(i + 1); let r = rows.get(y); if (!r) rows.set(y, r = []); r.push(x); }
@@ -831,6 +884,17 @@ function m3Blds(v) {
       for (let j = 0; j <= nj; j++) for (let i = 0; i <= ni; i++) { const h = m3Surf(x0 + (x1 - x0) * i / ni, z0 + (z1 - z0) * j / nj); if (h > g0) g0 = h; if (h < lo) lo = h; }
       gl.push(lo);
     }
+    if (AB) {   // t65
+      let gmin = Infinity; for (const h of gl) if (h < gmin) gmin = h;
+      const dc = Math.hypot(M3.d, Math.max(0, Math.hypot(b.cx - v.cx, b.cy - v.cy) - G5 * 0.5));   // カメラまでの遠さの めやす（マス）
+      let top = g0 + hgt;
+      const lod = dc < 6 * kq ? 2 : dc < 12 * kq ? 1 : dc < 22 * kq ? 0 : -1, tf0 = performance.now(), fr = FRo(b), tb0 = performance.now(); M3.bst[4][1] += tb0 - tf0;   // 道のほう（向きの自動にも。遠くでも）
+      try { top = AR.build(AB, b, g0, gmin, { lod, front: fr }); } catch (e) { console.error(e); }
+      const sx = M3.bst[lod + 1]; sx[0]++; sx[1] += performance.now() - tb0;   // 段ごとの数と時間（たしかめる用）
+      if (b.name) M3.labs.push({ x: b.cx, y: b.cy, h: top + 2 * M3_U, n: b.name, f });
+      continue;
+    }
+    const st = m3Style(b.kind, b), wc = hex(st.wc, st.jit), rcol = hex(f > 0 ? st.rc : (bcol(b.kind)[0] || '#bbb'), st.jit), wa = W[st.win] || W.none;
     if (b.name) M3.labs.push({ x: b.cx, y: b.cy, h: g0 + hgt + 2 * M3_U, n: b.name, f });
     for (let ri = 0; ri < rects.length; ri++) {
       const [X0, Y0, X1, Y1] = rects[ri];
@@ -907,7 +971,8 @@ function m3Blds(v) {
       side(A, B, sn, -c); side(B, C, c, sn); side(C, D, -sn, c); side(D, A, -c, -sn);
     };
     const BED = [0.50, 0.47, 0.44], PLAT = [0.84, 0.84, 0.81], EDGE = [0.93, 0.80, 0.25], ROOF = [0.42, 0.52, 0.60], HALL = [0.94, 0.93, 0.89], HALLR = [0.62, 0.66, 0.70], BUS = [0.26, 0.45, 0.78];
-    for (const t of sts) {
+    const RLs = window.M3RAIL && window.M3RAIL.build && window.M3RAIL.stations && !window.M3RAIL.fail;   // 線路のファイル（t64c）が 駅も描く
+    for (const t of (RLs ? [] : sts)) {
       let g0 = m3Surf(t.fx, t.fy);
       if (t.k === 'rail' && t.zl === 'U') {   // 地下駅（t108）：地上は出入口だけ
         obox(t.fx, t.fy, t.a || 0, 0.16, 0.1, g0 - 0.012, g0 + 3 * M3_U, HALL);
@@ -943,6 +1008,14 @@ function m3Blds(v) {
   }
   for (const k of Object.keys(W)) mkMesh(W[k], M3.tex[k], M3.grpB);
   mkMesh(RF, null, M3.grpB);
+  // 小物（t65・DB の更新103）：近くだけ（遠いと見えないので描かない）。タップ用に まん中の点を おぼえる
+  M3.propHit = [];
+  if (AB && AR.buildProp) for (const pr of (it.props ? it.props.values() : [])) {
+    if (pr.x < v.x0 || pr.x > v.x1 || pr.y < v.y0 || pr.y > v.y1 || Math.hypot(M3.d, Math.hypot(pr.x - v.cx, pr.y - v.cy) - G5 * 0.5) > 9) continue;
+    const gy = m3Surf(pr.x, pr.y), top = AR.buildProp(AB, pr, gy, { lod: Math.hypot(M3.d, Math.hypot(pr.x - v.cx, pr.y - v.cy)) < 5 ? 2 : 1 });
+    M3.propHit.push({ x: pr.x, y: (gy + top) / 2, z: pr.y, o: pr });
+  }
+  if (AB) { const t1 = performance.now(); M3.nBv = AR.flush(T3, AB, M3.grpB); M3.tBf = performance.now() - t1; }   // 建物の型（t65）：質感ごとのメッシュに
   // 道路・線路：地面の少し上に帯で（道のはば・地形の面にそって。t64）
   //   地面（G）・縦断のない線：帯の左右のはしも 地形の面にそって（坂を横ぎっても うまらない）。縦断があれば その高さより下にしない（盛土は すそを地面まで）
   //   高架・橋（V・B）：縦断の高さに。1.5マスごとに はしら。トンネル（T）：描かない
@@ -1004,10 +1077,10 @@ function m3Blds(v) {
       }
     }
   };
-  for (const s of segs) {   // 線路（道路は m3Roads で。t64b）
-    if (s.k !== 'rail') continue;
-    band(s, s.P, s.np, Math.max(0.18, s.w || 0.2), [0.42, 0.38, 0.35], M3_LIFT);
-  }
+  // 線路（道路は m3Roads で。t64b）：線路のファイル（map/m3rail.js の M3RAIL。t64c）があれば それで（バラスト・枕木・レール・架線・高架橋・踏切など）。なければ・こわれたら 前の帯
+  const RL = window.M3RAIL, railOld = () => { for (const s of segs) { if (s.k !== 'rail') continue; band(s, s.P, s.np, Math.max(0.18, s.w || 0.2), [0.42, 0.38, 0.35], M3_LIFT); } };
+  if (RL && RL.build && !RL.fail) { try { RL.build(Object.assign(m3X(), { grp: M3.grpR, segs, sts, v, it, band })); } catch (e) { console.error(e); RL.fail = 1; railOld(); } }
+  else railOld();
   // 滑走路（t61）：黒っぽい帯（はば r.w マス）と、白い中心線
   for (const r of rws) {
     const [ax, ay, bx, by] = r.P;
@@ -1020,7 +1093,10 @@ function m3Blds(v) {
     const g = new T3.BufferGeometry(); g.setAttribute('position', new T3.Float32BufferAttribute(P, 3)); g.setAttribute('color', new T3.Float32BufferAttribute(C, 3)); g.computeVertexNormals();
     M3.grpR.add(new T3.Mesh(g, new T3.MeshBasicMaterial({ vertexColors: true, side: T3.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })));
   }
-  try { m3Roads(T3, segs.filter(s => s.k === 'road')); } catch (e) { console.error(e); }   // 道路（t64b）
+  // 道路（t64b）：道路のファイル（map/m3road.js の M3ROAD。t64c）があれば それで（IC・JCT・高架の高速・駅との立体交差など）。なければ・こわれたら 前のまま
+  const RD2 = window.M3ROAD, roads = segs.filter(s => s.k === 'road');
+  if (RD2 && RD2.build && !RD2.fail) { try { RD2.build(Object.assign(m3X(), { grp: M3.grpR, segs, roads, sts, v, it, m3Roads, m3Props, m3RoadProf, m3RoadTex, m3SigTick })); } catch (e) { console.error(e); RD2.fail = 1; try { m3Roads(T3, roads); } catch (e2) { console.error(e2); } } }
+  else try { m3Roads(T3, roads); } catch (e) { console.error(e); }
 }
 
 /* ---------- 走行位置（t61・t62）：列車は両ごと、バス・船・飛行機は1つの箱。線路・道路・航路の上を、ダイヤのとおりに。
@@ -1043,7 +1119,8 @@ function m3Runs(v) {
   for (const o of list) {
     const k = o.R.k, cars = k === 'rail' ? o.T.fn : 1, sel = runIsSel(o);
     // 大きさは決まった大きさ（t62：遠くから見ても大きくしない）。見やすいように、はばと高さは本物より少し大きめ
-    const hh = (k === 'rail' ? 4.6 : k === 'bus' ? 3.6 : k === 'ship' ? 9 : 5) * M3_U, ww = (k === 'rail' ? 5.5 : k === 'bus' ? 4 : k === 'ship' ? 16 : 30) * M3_U;
+    const RC = k === 'rail' && window.M3RAIL && !window.M3RAIL.fail && window.M3RAIL.car;   // 線路のファイル（t64c）の 車両の大きさ { w, h }（m）
+    const hh = (RC ? RC.h : k === 'rail' ? 4.6 : k === 'bus' ? 3.6 : k === 'ship' ? 9 : 5) * M3_U, ww = (RC ? RC.w : k === 'rail' ? 5.5 : k === 'bus' ? 4 : k === 'ship' ? 16 : 30) * M3_U;
     const cl = o.car, gap = k === 'rail' ? cl * 0.05 : 0;
     const off0 = k === 'rail' || k === 'bus' ? ww / 2 + 0.8 * M3_U : 0;   // 進む向きの左
     col.set(o.R.c || '#d23');
@@ -1051,9 +1128,13 @@ function m3Runs(v) {
       const dc = o.d - (c + 0.5) * cl, p = runPt(o.H, dc);
       // 高さ（t64）：走っている線の高さ（高架は高架の上・地面は帯の上）。トンネル・地下は見せない。単線の鉄道は まん中を
       const ref = k === 'rail' || k === 'bus' ? runRef(o.H, dc) : null, sg = ref ? it.segs.get(ref[0]) : null;
-      const off = sg && k === 'rail' && !sg.dbl && !sg.q ? 0 : off0, px = p[0] + Math.sin(p[2]) * off, pz = p[1] - Math.cos(p[2]) * off;
+      // 線路・道路のファイル（t64c）：off(sg, k)（左右のずれ。マス）・runY(sg, s, x, y, k)（走る面の高さ。{ y, hide } か null）
+      const MOD = k === 'rail' ? window.M3RAIL : k === 'bus' ? window.M3ROAD : null, MD = MOD && !MOD.fail ? MOD : null;
+      const off = o.yard ? 0 : MD && MD.off && sg ? MD.off(sg, k, ref[1]) : sg && k === 'rail' && !sg.dbl && !sg.q ? 0 : off0, px = p[0] + Math.sin(p[2]) * off, pz = p[1] - Math.cos(p[2]) * off;   // 留置線の編成は線の まん中（DB の更新105）
       let y, hide = false;
+      const my = MD && MD.runY && sg ? MD.runY(sg, ref[1], px, pz, k) : null;
       if (k === 'ship') y = 0.05 * M3_U;
+      else if (my) { y = my.y; hide = !!my.hide; }
       else if (sg) { const th = m3OnLine(sg, ref[1], p[0], p[1]); hide = th.c === 'T'; y = (th.c === 'V' || th.c === 'B' ? th.y : Math.max(th.y, m3Surf(px, pz))) + M3_LIFT + 0.1 * M3_U; }
       else y = m3Surf(px, pz) + M3_LIFT + 0.1 * M3_U;
       if (k === 'air') { const f = o.H.len > 0 ? o.d / o.H.len : 0; y = Math.max(y, Math.min(1, 6 * f, 6 * (1 - f)) * 900 * M3_U); }   // 飛行機：まん中は 900m の高さ
@@ -1075,6 +1156,7 @@ function m3Runs(v) {
 }
 // 3D をタップ：いちばん近い列車・バス（画面で 26px まで）の情報
 function m3Tap(cx, cy) {
+  if (S.v3edit) return m3EditTap(cx, cy);   // 小物を置く（t65）
   if (!S.layer.run || !M3.runHit || !M3.runHit.length) return;
   const r = M3.cv.getBoundingClientRect(), X = cx - r.left, Y = cy - r.top, v = new M3.T.Vector3();
   let best = null, bd = Infinity;
@@ -1084,6 +1166,26 @@ function m3Tap(cx, cy) {
     if (d < 26 && d < bd) { bd = d; best = h.o; }
   }
   if (best) showTrain(best.R, best.T);
+}
+// 小物を置く（編集モード。t65・DB の更新103）：自分の小物（28px 以内）をタップ → 回す・色・動かす・かたづける。地面をタップ → その位置に置く（自分の土地だけ。たしかめは サーバー）
+function m3EditTap(cx, cy) {
+  const r = M3.cv.getBoundingClientRect(), X = cx - r.left, Y = cy - r.top, T3 = M3.T, v = new T3.Vector3();
+  let best = null, bd = Infinity;
+  for (const h of M3.propHit || []) {
+    v.set(h.x, h.y, h.z).project(M3.cam); if (v.z > 1 || v.z < -1) continue;
+    const d = Math.hypot((v.x + 1) / 2 * S.W - X, (1 - v.y) / 2 * S.H - Y);
+    if (d < 28 && d < bd) { bd = d; best = h.o; }
+  }
+  const MP = window.MapProp; if (!MP) return;
+  if (best && best.mine) return MP.tapProp(best);
+  const rc = new T3.Raycaster(); rc.setFromCamera(new T3.Vector2(X / S.W * 2 - 1, -(Y / S.H) * 2 + 1), M3.cam);
+  const hit = rc.intersectObjects(M3.grpT.children, true)[0];
+  if (!hit) return;
+  // 建物・道路・線路が 地面より手前にあれば 置かない（建物の中・道の上に 小物が入らないように）
+  const ob = rc.intersectObjects(M3.grpB.children, true)[0], orr = rc.intersectObjects(M3.grpR.children, true)[0];
+  if (ob && ob.distance < hit.distance - 1e-4 && !(orr && orr.distance < ob.distance)) return MP.tapBlock && MP.tapBlock('bld');
+  if (orr && orr.distance < hit.distance - 1e-4) return MP.tapBlock && MP.tapBlock('road');
+  MP.tapGround(hit.point.x, hit.point.z);
 }
 /* ---------- 建物の名前（t61）：上がきのキャンバスに、近いものから・重ならないように ---------- */
 function m3Labels() {
@@ -1188,6 +1290,88 @@ function m3Bind(cv) {
 function m3Zoom(f) { M3.d = Math.max(M3_DMIN, Math.min(900, M3.d / f)); }
 function m3Target(x, y) { M3.tx = x; M3.ty = y; }
 function m3Resize() { if (!M3.on) return; M3.r.setPixelRatio(m3PR()); M3.r.setSize(S.W, S.H, false); M3.cam.aspect = S.W / Math.max(1, S.H); M3.cam.updateProjectionMatrix(); }
+
+/* ---------- 線路・地形のファイル（t64c）：3D をひらいたときに読む（ないときは 前のまま） ---------- */
+const M3_MODS = ['m3rail', 'm3road'];   // m3terra（川岸・砂浜）は できあがってから足す
+let m3ModsP = null;
+function m3Mods() {
+  if (m3ModsP) return m3ModsP;
+  const v = typeof MAPV !== 'undefined' ? MAPV : '';
+  const add = n => new Promise(ok => { const s = document.createElement('script'); s.src = 'map/' + n + '.js?v=' + v; s.onload = () => ok(true); s.onerror = () => ok(false); document.head.appendChild(s); });
+  return (m3ModsP = Promise.all(M3_MODS.map(add)));
+}
+/* ---------- 建物の型（t65）：map/m3arch.js（組み立ての道具）と 型の4つのファイルを、はじめて使うときに読む ---------- */
+const M3_ARCH = ['m3a_home', 'm3a_biz', 'm3a_ind', 'm3a_pub', 'm3a_prop'];
+let m3ArchP = null;
+function m3ArchNow() { const A = window.M3A; return A && A.ready ? A : null; }
+function m3Arch() {
+  if (m3ArchNow()) return Promise.resolve(window.M3A);
+  if (m3ArchP) return m3ArchP;
+  if (!pOf) m3Init();
+  const v = typeof MAPV !== 'undefined' ? MAPV : '';
+  const add = src => new Promise((ok, ng) => { const s = document.createElement('script'); s.src = src + '?v=' + v; s.onload = ok; s.onerror = () => ng(new Error('建物の見た目を読めません')); document.head.appendChild(s); });
+  m3ArchP = add('map/m3arch.js').then(() => Promise.all(M3_ARCH.map(n => add('map/' + n + '.js')))).then(() => { const A = window.M3A; A.pOf = k => pOf(k); A.ready = true; return A; });
+  m3ArchP.catch(() => { m3ArchP = null; });
+  return m3ArchP;
+}
+// 道のほう（t65）：建物のまん中から いちばん近い道の点への向き [x, z]（近くに道がなければ null）。入口・お店の前・車庫を そちらに
+function m3FrontIdx(segs) {
+  const G = 0.5, H = new Map();
+  for (const s of segs) {
+    if (s.k !== 'road' || !s.P) continue;
+    const P = s.P, n = s.np || P.length / 2;
+    for (let i = 0; i + 1 < n; i++) {
+      const ax = P[2 * i], ay = P[2 * i + 1], bx = P[2 * i + 2], by = P[2 * i + 3], m = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / 0.1));
+      for (let k = 0; k <= m; k++) { const x = ax + (bx - ax) * k / m, y = ay + (by - ay) * k / m, key = Math.floor(x / G) + ',' + Math.floor(y / G); let a = H.get(key); if (!a) H.set(key, a = []); a.push(x, y); }
+    }
+  }
+  return b => {
+    const r = Math.max(0.6, Math.hypot(b.bb[2] - b.bb[0], b.bb[3] - b.bb[1]) / 2 + 0.5);
+    let best = Infinity, px = 0, py = 0;
+    for (let gx = Math.floor((b.cx - r) / G); gx <= Math.floor((b.cx + r) / G); gx++) for (let gy = Math.floor((b.cy - r) / G); gy <= Math.floor((b.cy + r) / G); gy++) {
+      const a = H.get(gx + ',' + gy); if (!a) continue;
+      for (let i = 0; i < a.length; i += 2) { const d = (a[i] - b.cx) * (a[i] - b.cx) + (a[i + 1] - b.cy) * (a[i + 1] - b.cy); if (d < best) { best = d; px = a[i]; py = a[i + 1]; } }
+    }
+    if (best === Infinity) return null;
+    const dx = px - b.cx, dy = py - b.cy, L = Math.hypot(dx, dy) || 1; return [dx / L, dy / L];
+  };
+}
+// 見た目のためし見（t65）：建てる画面・建物の画面のキャンバスに、その建物を 南東から（道は南）。3D を開いていなくても使える
+const PV = { r: null };
+async function m3LookDraw(cv, o) {
+  const [A, T3] = await Promise.all([m3Arch(), m3Lib()]);
+  if (!PV.r) {
+    try { PV.r = new T3.WebGLRenderer({ canvas: document.createElement('canvas'), antialias: true, preserveDrawingBuffer: true }); } catch (e) { return false; }
+    PV.sc = new T3.Scene(); PV.sc.background = new T3.Color('#dce7ef');
+    PV.sc.add(new T3.HemisphereLight('#e8f0ff', '#7d7566', 0.68));
+    const sun = new T3.DirectionalLight('#fff6e8', 0.55); sun.position.set(-0.35, 1.2, 0.55); PV.sc.add(sun);
+    PV.cam = new T3.PerspectiveCamera(30, 1.5, 0.001, 300); PV.g = new T3.Group(); PV.sc.add(PV.g);
+  }
+  const W = cv.width, H = cv.height; PV.r.setPixelRatio(1); PV.r.setSize(W, H, false); PV.cam.aspect = W / H;
+  A.aniso = Math.min(8, PV.r.capabilities.getMaxAnisotropy());
+  m3Clear(PV.g);
+  const cells = o.cells && o.cells.length ? o.cells : [[0, 0], [1, 0], [0, 1], [1, 1]];
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const c of cells) { x0 = Math.min(x0, c[0]); y0 = Math.min(y0, c[1]); x1 = Math.max(x1, c[0] + 1); y1 = Math.max(y1, c[1] + 1); }
+  const B = new A.Builder();
+  let top;
+  if (o.prop) { top = A.buildProp(B, { id: 1, kind: o.prop, x: (x0 + x1) / 2 * 10 * M3_U, y: (y0 + y1) / 2 * 10 * M3_U, rot: o.rot == null ? 180 : o.rot, col: o.col }, 0, { lod: 2 }); }   // 小物（t65）
+  else top = A.build(B, { id: o.id || 1, kind: o.kind, floors: o.floors, lk: o.look, cells, rot: o.rot == null ? null : o.rot, sc: o.sc || null }, 0, 0, { lod: 2, front: [0, 1] });
+  const Gd = new A.Builder(), wm = (x1 - x0) * 10, dm = (y1 - y0) * 10;
+  Gd.ox = x0 * 10 * M3_U; Gd.oz = y0 * 10 * M3_U;
+  Gd.flat('c', [-40, -40, wm + 40, dm + 40], -0.05, [0.5, 0.57, 0.42]);
+  Gd.flat('c', [-40, dm + 2, wm + 40, dm + 10], -0.03, [0.36, 0.37, 0.39]);
+  A.flush(T3, Gd, PV.g); A.flush(T3, B, PV.g);
+  const cx = (x0 + x1) / 2 * 10 * M3_U, cz = (y0 + y1) / 2 * 10 * M3_U, sz = Math.max(x1 - x0, y1 - y0) * 10 * M3_U, h = Math.max(top, 2 * M3_U);
+  const R = o.prop ? Math.max(h * 0.75, 1.6 * M3_U) : Math.max(sz * 0.62, h * 0.62, 6 * M3_U), dist = R / Math.tan(15 * Math.PI / 180), yaw = 0.62, pitch = o.prop ? 0.3 : 0.36 + Math.min(0.3, sz / Math.max(h, 1e-3) * 0.05);
+  PV.cam.position.set(cx + Math.sin(yaw) * Math.cos(pitch) * dist, h * 0.45 + Math.sin(pitch) * dist, cz + Math.cos(yaw) * Math.cos(pitch) * dist);
+  PV.cam.near = dist / 200; PV.cam.far = dist * 20; PV.cam.lookAt(cx, h * 0.42, cz); PV.cam.updateProjectionMatrix();
+  PV.r.render(PV.sc, PV.cam);
+  const g = cv.getContext('2d'); g.clearRect(0, 0, W, H); g.drawImage(PV.r.domElement, 0, 0, W, H);
+  return true;
+}
+window.M3Look = { load: m3Arch, looks: kind => m3Arch().then(A => A.looksOf(kind).map(l => l.n)), auto: (id, n) => m3ArchNow() ? window.M3A.lookOf({ id }, n) : 1, draw: m3LookDraw,
+  props: () => m3Arch().then(A => A.PROP || {}) };   // 小物の型（t65）
 
 M3.surf = m3Surf;   // 地形の面の高さ（たしかめる用。t64）
 Object.assign(window, { m3Open, m3Close, m3Frame, m3Zoom, m3Target, m3Resize, m3State: M3 });

@@ -530,6 +530,7 @@ function prepArea(d) {
   d.chos = d.chos || [];
   d.lanes = d.lanes || []; for (const l of d.lanes) prepLane(l);   // 航路（t54o）
   d.rwys = d.rwys || []; for (const r of d.rwys) prepRwy(r);         // 滑走路（t57）
+  d.props = (d.props || []).map(a => ({ id: a[0], kind: a[1], x: a[2] / 100, y: a[3] / 100, rot: a[4], col: a[5], mine: a[6] === 1 }));   // 小物（DB の更新103）
 }
 // 滑走路（t57）：両はし（マス）・向き・はしの番号（北から右まわりの角度 ÷ 10。a のはしは a → b の向き）
 function prepRwy(r) {
@@ -570,7 +571,7 @@ function prepParcel(a) {
 function visibleItems() {
   const [lod, cs] = lodOf(S.cam.z), v = view();
   const i0 = Math.floor(v.x0 / cs), j0 = Math.floor(v.y0 / cs), i1 = Math.floor(v.x1 / cs), j1 = Math.floor(v.y1 / cs);
-  const segs = new Map(), stas = new Map(), deps = new Map(), subs = new Map(), attrs = new Map(), nodes = new Map(), parcels = new Map(), places = new Map(), chos = new Map(), blds = new Map(), lanes = new Map(), rwys = new Map(), names = {};
+  const segs = new Map(), stas = new Map(), deps = new Map(), subs = new Map(), attrs = new Map(), nodes = new Map(), parcels = new Map(), places = new Map(), chos = new Map(), blds = new Map(), props = new Map(), lanes = new Map(), rwys = new Map(), names = {};
   const take = d => {
     for (const s of d.segs) segs.set(s.id, s);
     for (const s of d.stas) stas.set(s.id, s);
@@ -580,6 +581,7 @@ function visibleItems() {
     for (const n of d.nodes) nodes.set(n.id, n);
     for (const p of d.parcels) parcels.set(p.id, p);
     for (const b of (d.blds || [])) blds.set(b.id, b);
+    for (const q of (d.props || [])) props.set(q.id, q);   // 小物（t65）
     for (const p of d.places) places.set(p.id, p);
     for (const c of d.chos) chos.set(c[0], c);
     for (const l of (d.lanes || [])) lanes.set(l.id, l);
@@ -598,7 +600,7 @@ function visibleItems() {
       if (any) break;
     }
   }
-  return { segs, stas, deps, subs, attrs, attrB: new Set([...attrs.values()].map(a => a.bld)), nodes, parcels, places, chos, blds, lanes, rwys, names };
+  return { segs, stas, deps, subs, attrs, attrB: new Set([...attrs.values()].map(a => a.bld)), nodes, parcels, places, chos, blds, props, lanes, rwys, names };
 }
 // 変わったもの（ほかの人の工事など）。15秒ごと
 async function poll() {
@@ -1525,7 +1527,7 @@ function drawStation(g, s, z) {
 }
 // 車庫の大きさ：[長さ, はば, 線からのあき, 留置線の数]（マス）。'T400x6' は線路をなぞったもの（400m・6本）
 function depDim(k, sz) {
-  const m = /^T(\d+)x(\d+)$/.exec(sz || '');
+  const m = /^[TR](\d+)x(\d+)$/.exec(sz || '');   // R：留置線（DB の更新105）
   if (m && k === 'rail') { const l = Number(m[1]), n = Number(m[2]); return [l / 50, (n * 5 + 10) / 50, 0.25, n]; }
   const s = (DEP_SIZE[k] || DEP_SIZE.rail)[sz] || [5, 2];
   return [s[0], s[1], 0.9, Math.round(s[1] / 0.35)];
@@ -1541,7 +1543,8 @@ function drawDepot(g, d, z) {
   if (z < 2) return;
   const P = depPoly(d);
   g.beginPath(); P.forEach((p, i) => i ? g.lineTo(sx(p[0]), sy(p[1])) : g.moveTo(sx(p[0]), sy(p[1]))); g.closePath();
-  g.fillStyle = d.k === 'rail' ? 'rgba(170,160,150,.85)' : 'rgba(150,170,190,.85)'; g.fill();
+  const tome = /^R/.test(d.sz || '');   // 留置線（DB の更新105）：砂利の色で、線路だけ
+  g.fillStyle = tome ? 'rgba(190,182,168,.7)' : d.k === 'rail' ? 'rgba(170,160,150,.85)' : 'rgba(150,170,190,.85)'; g.fill();
   g.strokeStyle = d.mine ? '#1f5fbf' : '#555'; g.lineWidth = 1.5; g.stroke();
   if (z >= 6 && d.k === 'rail') {   // 留置線
     g.strokeStyle = 'rgba(60,60,60,.7)'; g.lineWidth = 1;
@@ -1806,6 +1809,7 @@ function prepRun(D) {
     const t0 = sc[0][2], t1 = sc[sc.length - 1][1]; if (t0 == null || t1 == null) continue;
     R.tr.push({ id: t.id, dir: t.dir, num: t.num, kind: t.kind, day: t.day, fn: Math.max(1, t.fn || 1), s: sc, t0, t1, idx: null,
                 fname: t.fname || '', fser: t.fser || '', onum: t.onum || '', form: t.form == null ? null : t.form,
+                lay: Array.isArray(t.lay) ? t.lay : null, lz: Array.isArray(t.lay) && t.lay[6] != null ? t.lay[6] : null,   // 折り返しを待つ（DB の更新105）
                 wk: Array.isArray(t.wk) ? t.wk : null, wkk: t.wkk || '',   // wk：編成の工事中［はじめ（null は前から）, おわり］（1970年からの秒。DB の更新60）
                 sub: Array.isArray(t.sub) ? t.sub : null,   // sub：予備編成の代走［運行日, 発車（1970年からの秒）, 予備編成］（DB の更新80）
                 ordd: Array.isArray(t.ordd) && t.ordd.length ? new Map(t.ordd.map(c => [c[0], c[1]])) : null });   // 運転整理（DB の更新100）：その日は走らない（v 運転整理の列車が かわりに走る・x 運休）
@@ -1915,7 +1919,8 @@ function runPos(R, tn, tm, it) {
   const W = tm.abs ? unkoTrW(R, tn) : null;
   for (const [day, off] of [[tm.date, 0], [tm.prev, 86400]]) {   // きょう・きのう（日をまたぐ列車。24時すぎ）
     if (tn.day && tn.day !== day) continue;
-    const t = tm.sec + off; if (t < tn.t0 || t > tn.t1 + (W ? 43200 : 0)) continue;   // 遅れていても12時間まで
+    const t1x = tn.lz != null && !tn.day ? Math.max(tn.t1, tn.lz) : tn.t1;   // 折り返しを待つ（DB の更新105）：ホームをあけるまで 終着駅に
+    const t = tm.sec + off; if (t < tn.t0 || t > t1x + (W ? 43200 : 0)) continue;   // 遅れていても12時間まで
     const d0 = tm.day0 - off + tn.t0;
     if (runOffK(tn, day, d0)) continue;
     let dly = 0;
@@ -1923,7 +1928,7 @@ function runPos(R, tn, tm, it) {
     if (W) { const c = unkoCanW(W, d0, tn.id, tn.t1 - tn.t0); if (c && c.k !== 'ori') continue; ori = c; dly = unkoDlyW(W, d0, tm.abs); }
     const tau = t - dly;
     if (ori && tau - tn.t0 >= ori.za && tau - tn.t0 < ori.zb) continue;   // 区間折り返し（DB の更新82）：見合わせの区間の手前で折り返した
-    if (tau >= tn.t0 && tau <= tn.t1) { tt = tau; dl = dly; rday = day; rd0 = d0; break; }
+    if (tau >= tn.t0 && tau <= t1x) { tt = tau; dl = dly; rday = day; rd0 = d0; break; }
   }
   if (tt == null) return null;
   if (!tn.idx) tn.idx = runIdx(R, tn);
@@ -1961,6 +1966,18 @@ function runList(it, v) {
       if (p.x < v.x0 - pad || p.x > v.x1 + pad || p.y < v.y0 - pad || p.y > v.y1 + pad) continue;
       out.push({ R, T: tn, H: p.H, d: p.d, x: p.x, y: p.y, a: p.a, at: p.at, nx: p.nx, len: carL * (R.k === 'rail' ? tn.fn : 1), car: carL, dl: p.dl || 0 });
     }
+    // 留置線で待つ編成（DB の更新105）：着いて3分〜出る3分前。留置線の その線の まん中に
+    if (R.k === 'rail' && it.deps) for (const tn of R.tr) {
+      const L = tn.lay; if (!L || L[3] !== 2 || tn.day || !runPass(R, tn)) continue;
+      const tt = tm.sec; if (tt < L[1] + 180 || tt > L[2] - 180) continue;
+      const dp = it.deps.get(L[4]); if (!dp) continue;
+      const P = depPoly({ fx: dp.fx, fy: dp.fy, a: dp.a, side: dp.side, sz: dp.sz, k: 'rail' }), nn = depDim('rail', dp.sz)[3], f = (L[5] || 1) / (nn + 1);
+      const a = [P[0][0] + (P[3][0] - P[0][0]) * f, P[0][1] + (P[3][1] - P[0][1]) * f], b = [P[1][0] + (P[2][0] - P[1][0]) * f, P[1][1] + (P[2][1] - P[1][1]) * f];
+      const Ln = Math.hypot(b[0] - a[0], b[1] - a[1]); if (Ln < 1e-6) continue;
+      const len = Math.min(Ln, carL * tn.fn), H = { pts: [a, b], cum: [0, Ln], len: Ln }, d = (Ln + len) / 2, q = runPt(H, d);
+      if (q[0] < v.x0 - pad || q[0] > v.x1 + pad || q[1] < v.y0 - pad || q[1] > v.y1 + pad) continue;
+      out.push({ R, T: tn, H, d, x: q[0], y: q[1], a: q[2], at: -1, nx: -1, len, car: carL, dl: 0, yard: true });
+    }
   }
   return out;
 }
@@ -1980,7 +1997,7 @@ function drawRunLayer() {
     if (k === 'rail' || k === 'bus') {
       // 太さは地図といっしょに大きくなる（決まった大きさ。t62：遠くから見ても大きすぎないように）
       const wd = k === 'rail' ? clamp(0.42 * z, 2.5, 22) : clamp(0.3 * z, 2, 16), hl = Math.max(1.2, wd * 0.3);
-      const off = (wd / 2 + hl) / z, hx = o.x + Math.sin(o.a) * off, hy = o.y - Math.cos(o.a) * off;   // 進む向きの左
+      const off = o.yard ? 0 : (wd / 2 + hl) / z, hx = o.x + Math.sin(o.a) * off, hy = o.y - Math.cos(o.a) * off;   // 進む向きの左（留置線は まん中）
       if (o.len * z >= 10) {
         // 車両の形：線路・道路にそって、頭から うしろへ。両ごとにすきま
         const pts = runOff(runSub(o.H, o.d - o.len, o.d), off).map(q => [sx(q[0]), sy(q[1])]);
@@ -3257,7 +3274,7 @@ function build(root) {
     <canvas class="mp-cv"></canvas><canvas class="mp-cvr"></canvas>
     <div class="mp-top">
       <div class="mp-topb"><select class="mp-as" title="だれの名前で"></select>
-      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-lay="track" title="非電化はオレンジ・単線はむらさきの点線">非電化・単線</button><button data-lay="run" title="列車・バスの走行位置">🚃 走行</button><button data-lay="wxmap" title="天気図（等圧線・高気圧と低気圧・雨と雪・気温）">🌤 天気図</button><button data-lay="jam" title="道路の混みぐあい（オレンジ 混雑・赤 渋滞・黒 通行止め）" hidden>🚗 渋滞</button><button data-lay="er" title="救急車（いま出ているもの）" hidden>🚑 救急</button><button data-lay="snowz" title="雪の地域（雪国・豪雪地帯・特別豪雪地帯。雪の対策の補助金）">❄ 雪の地域</button><button data-lay="elev" title="高低差（標高を色で。北西から光を当てた陰つき）">⛰ 高低差</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button><button data-v3 title="ななめから立体に見る">🗻 3D</button><button data-v3x hidden title="横に回す向きを反対にする（2本指でひねる・右ドラッグ）">⇄ 左右反転</button></div>
+      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-lay="track" title="非電化はオレンジ・単線はむらさきの点線">非電化・単線</button><button data-lay="run" title="列車・バスの走行位置">🚃 走行</button><button data-lay="wxmap" title="天気図（等圧線・高気圧と低気圧・雨と雪・気温）">🌤 天気図</button><button data-lay="jam" title="道路の混みぐあい（オレンジ 混雑・赤 渋滞・黒 通行止め）" hidden>🚗 渋滞</button><button data-lay="er" title="救急車（いま出ているもの）" hidden>🚑 救急</button><button data-lay="snowz" title="雪の地域（雪国・豪雪地帯・特別豪雪地帯。雪の対策の補助金）">❄ 雪の地域</button><button data-lay="elev" title="高低差（標高を色で。北西から光を当てた陰つき）">⛰ 高低差</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button><button data-v3 title="ななめから立体に見る">🗻 3D</button><button data-v3x hidden title="横に回す向きを反対にする（2本指でひねる・右ドラッグ）">⇄ 左右反転</button><button data-v3e hidden title="自分の土地に 自販機・ベンチ・植木などを置く">🧰 小物</button></div>
       <span class="mp-addr" translate="no" hidden></span>
     </div>
     <div class="mp-zoom"><button data-find title="さがす">🔍</button><button data-full title="大きく">⤢</button><button data-zin>＋</button><button data-zout>－</button><button data-home title="瑠璃市役所">⌂</button><button data-opt title="地図の設定">⚙</button></div>
@@ -3339,7 +3356,11 @@ function build(root) {
     try { S.v3x = localStorage.getItem('mp_v3x') === '1'; } catch (e) { S.v3x = false; }
     v3x.classList.toggle('on', !!S.v3x);
     v3x.onclick = () => setOpt('v3x', !S.v3x);
-    v3.onclick = async () => { if (S.v3) m3Close(); else await m3Open(); v3.classList.toggle('on', !!S.v3); b25.hidden = !!S.v3; v3x.hidden = !S.v3; optSync(); }; }
+    lookOn();   // サーバーの版（DB の更新103〜105：見た目・小物・留置線）を はじめに しらべておく
+    const v3e = S.wrap.querySelector('[data-v3e]');   // 小物を置く（編集モード。t65）
+    const e3 = on => { S.v3edit = !!on; v3e.classList.toggle('on', S.v3edit); if (S.v3edit) { hint('小物：自分の土地をタップして置く・置いた小物をタップして回す／動かす'); setTimeout(() => hint(''), 4000); } };
+    v3e.onclick = () => { if (!S.lookDB && S.lookDB !== null) return toast(T('サーバーの更新のあとで使えます')); e3(!S.v3edit); };
+    v3.onclick = async () => { if (S.v3) m3Close(); else await m3Open(); v3.classList.toggle('on', !!S.v3); b25.hidden = !!S.v3; v3x.hidden = !S.v3; v3e.hidden = !S.v3 || !lookOn(); if (!S.v3) e3(false); optSync(); }; }
   S.wrap.querySelector('[data-full]').onclick = () => { S.wrap.classList.toggle('mp-full'); resize(); };
   S.wrap.querySelector('[data-find]').onclick = () => openFind();   // さがす（t59）
   S.wrap.querySelector('.mp-wx').onclick = () => { const [x, y] = wxCenter(); openWx(x, y); };   // 天気（t62）
@@ -4197,6 +4218,8 @@ function showSta(s) {
       ${s.k === 'rail' && S.hgtOK ? `<b>高さ</b><span>${STA_LV[s.zl || 'G']}</span>` : ''}
       ${s.k === 'rail' && S.supOK ? `<b>補給</b><span>${s.wt || s.cl ? `<span>${[s.wt ? '💧 給水' : '', s.cl ? '⛏ 給炭' : ''].filter(Boolean).join('・')}</span><small class="muted">（蒸気機関車）</small>` : '<span class="muted">給水・給炭の設備はありません</span>'}</span>` : ''}
       ${s.k === 'rail' && s.tk ? `<b>発着番線</b><span>${s.tk.map((t, i) => `<span>${esc(trkL(t, i))}</span>`).join('<br>')}</span>` : ''}
+      ${s.k === 'rail' && tomeOn() ? (() => { const ts = [...S.vis.deps.values()].filter(d => d.st === s.id);   // 留置線（DB の更新105）
+        return `<b>留置線</b><span>${ts.length ? ts.map(d => { const [l, n] = tomeDim(d.sz); return `<span translate="no">${esc(d.n)}</span>（${esc(T(`${l}m・${n}本`))}）`; }).join('<br>') : '<span class="muted">なし</span>'}</span>`; })() : ''}
       ${gov ? `<b>使用料</b><span>${s.ln != null ? `<span>空路に入れると 1路線・1日 ${X(s.ln)}（国庫へ）</span>` : '<span>いまは新しい空路に使えません</span>'}</span>`
         : s.k === 'bus' || port ? `<b>貸し出し</b><span>${s.ln != null ? `<span>ほかの人・会社に貸しています（1系統・1日 ${X(s.ln)}）</span>` : '<span>ほかの人・会社には貸していません</span>'}</span>` : ''}
       ${air ? `<b>滑走路</b><span>${s.pl > 0 ? `<span>${fmt(s.pl)}m（いちばん長い滑走路）</span>` : '<span class="mp-warn">まだありません（飛行機は飛べません）</span>'}</span><b>発着口</b><span><span>${s.tr}こ</span>（<span>1つで1時間に1便</span>）</span>` : ''}
@@ -4206,7 +4229,7 @@ function showSta(s) {
     ${gov ? `<div class="mp-row"><button class="btn main" data-slot>🛫 発着口・入札</button>${pdep ? '<button class="btn" data-cars>飛行機を見る・注文する</button>' : ''}<button class="btn" data-newr>＋ 空路</button>${adm ? '<button class="btn" data-ren>名前を変える</button><button class="btn" data-lend>使用料</button>' : ''}</div>
       <p class="muted small"><span>国の空港です。だれでも駐機場に飛行機を置いて（≡ →「車両と編成」）、空路に使えます。空路に入れると、1路線・1日の使用料を国にはらいます（使いはじめたときの値段のまま）。</span><span>この空港を出る便は、1時間に、持っている発着口の数まで（発着口の権利は入札で買います）</span></p>`
     : s.mine && port ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button><button class="btn" data-lend>貸し出し</button>${pdep ? (air ? '<button class="btn" data-cars>飛行機を見る</button>' : '<button class="btn" data-cars>船を見る</button>') : ''}${air ? '<button class="btn" data-newr>＋ 空路</button>' : '<button class="btn" data-newr>＋ 航路</button>'}</div>
-      <p class="muted small">${air ? '空港は、空港の建物をこわすとなくなります' : '港は、フェリーターミナルの建物をこわすとなくなります'}</p>` : s.mine ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button>${s.k === 'bus' ? '<button class="btn" data-lend>貸し出し</button>' : '<button class="btn" data-plat>ホーム・番線</button><button class="btn" data-trk>発着番線</button>' + (S.hgt2 ? '<button class="btn" data-sth>⛰ 駅の高さ</button>' : '')}${s.k === 'rail' && S.snowOK && (s.ml || snowZoneAt(s.fx, s.fy) > 0) ? `<button class="btn" data-melt>${s.ml ? '融雪器をはずす' : '❄ 融雪器をつける'}</button>` : ''}${s.k === 'rail' && S.supOK ? `<button class="btn" data-sup="water">${s.wt ? '給水設備をはずす' : '💧 給水設備をつくる'}</button><button class="btn" data-sup="coal">${s.cl ? '給炭設備をはずす' : '⛏ 給炭設備をつくる'}</button>` : ''}<button class="btn" data-del>こわす</button></div>` : ''}
+      <p class="muted small">${air ? '空港は、空港の建物をこわすとなくなります' : '港は、フェリーターミナルの建物をこわすとなくなります'}</p>` : s.mine ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button>${s.k === 'bus' ? '<button class="btn" data-lend>貸し出し</button>' : '<button class="btn" data-plat>ホーム・番線</button><button class="btn" data-trk>発着番線</button>' + (S.hgt2 ? '<button class="btn" data-sth>⛰ 駅の高さ</button>' : '') + (tomeOn() ? '<button class="btn" data-tome>🅿 留置線をつくる</button>' : '')}${s.k === 'rail' && S.snowOK && (s.ml || snowZoneAt(s.fx, s.fy) > 0) ? `<button class="btn" data-melt>${s.ml ? '融雪器をはずす' : '❄ 融雪器をつける'}</button>` : ''}${s.k === 'rail' && S.supOK ? `<button class="btn" data-sup="water">${s.wt ? '給水設備をはずす' : '💧 給水設備をつくる'}</button><button class="btn" data-sup="coal">${s.cl ? '給炭設備をはずす' : '⛏ 給炭設備をつくる'}</button>` : ''}<button class="btn" data-del>こわす</button></div>` : ''}
     ${S.admin && (s.rt || []).length ? '<div class="mp-row"><button class="btn" data-unkomk>🚦 乱れを起こす（管理者）</button></div>' : ''}`, sh => {
     const cs = sh.querySelector('[data-cars]'); if (cs) cs.onclick = () => openCars(pdep.id);
     const um = sh.querySelector('[data-unkomk]'); if (um) um.onclick = () => unkoMake(s);   // t108
@@ -4227,6 +4250,7 @@ function showSta(s) {
       const r = await api('mp_stop_lend', { p_id: s.id, p_lend: n }, gov ? (n == null ? '新しい空路には使えなくしました' : '使用料を決めました') : n == null ? '貸すのをやめました' : '貸し出します');
       if (r) { s.ln = r.lend; refreshBox(s.fx - 3, s.fy - 3, s.fx + 3, s.fy + 3); showSta(s); }
     };
+    { const tb = sh.querySelector('[data-tome]'); if (tb) tb.onclick = () => { setTool('dep'); S.toolState = { tome: s.id }; hint('留置線：駅の近くの線路の上で、はじめと終わりをタップします（ホームの はしより先・同じ線路の上）'); }; }   // 留置線（DB の更新105）
     const r = sh.querySelector('[data-ren]'); if (r) r.onclick = async () => { const nm = prompt(T('新しい名前'), s.n); if (nm && await api('mp_sta_edit', { p_id: s.id, p_name: nm, p_del: false }, '名前を変えました')) refreshBox(s.fx - 3, s.fy - 3, s.fx + 3, s.fy + 3); };
     const d = sh.querySelector('[data-del]'); if (d) d.onclick = async () => { if (await confirm2(T('こわしますか？（工事費はもどりません）'), { what: `「${s.n}」`, q: '本当にこわしますか？', ok: 'こわす', note: 'もとに戻せません。工事費はもどりません。' }) && await api('mp_sta_edit', { p_id: s.id, p_name: null, p_del: true }, 'こわしました')) { refreshBox(s.fx - 3, s.fy - 3, s.fx + 3, s.fy + 3); sheet(null); } };
   });
@@ -4343,6 +4367,7 @@ async function trkEdit(s) {
 }
 function showDep(d) {
   S.sel = { kind: 'dep', id: d.id }; S.dirty = true;
+  if (/^R/.test(d.sz || '')) return showTome(d);   // 留置線（DB の更新105）
   sheet(`<h4>🏭 ${esc(d.n)}</h4><div class="mp-kv"><b>種類</b><span>${d.k === 'rail' ? '車両基地' : 'バスの営業所'}（${d.sz}）</span><b>入る数</b><span>${d.k === 'rail' ? `${d.cap}両` : `${d.cap}台`}</span>${depSnowRow(d)}</div>
     ${d.mine ? `<div class="mp-row"><button class="btn" data-cars>車両を見る</button>${S.snowOK && (d.k === 'rail' || d.k === 'bus') ? `<button class="btn" data-plow>❄ ${d.k === 'rail' ? 'ラッセル車' : '除雪トラック'}</button>` : ''}<button class="btn" data-ren>名前を変える</button><button class="btn" data-del>こわす</button></div>` : ''}`, sh => {
     const c = sh.querySelector('[data-cars]'); if (c) c.onclick = () => openCars(d.id);
@@ -5090,8 +5115,8 @@ async function depTap(x, y) {
     }
     if (!st.da || st.da.s.id !== hr.s.id || st.ddone) {
       if (why === 'far') toast(T('同じ線路の上で終点をタップしてください（起点をえらびなおしました）'));
-      S.toolState = { da: hr }; sheet(null);
-      hint('車両基地：終点をタップしてください（同じ線路の上・20m単位）');
+      S.toolState = { da: hr, tome: st.tome || null }; sheet(null);
+      hint(st.tome ? '留置線：終点をタップしてください（同じ線路の上・20m単位）' : '車両基地：終点をタップしてください（同じ線路の上・20m単位）');
       S.drawTool = (g, z) => { const t = S.toolState; if (!t || !t.da) return; const p = segPointAt(t.da.s, t.da.at); g.fillStyle = '#8a5a1f'; g.beginPath(); g.arc(sx(p.x), sy(p.y), 6, 0, 6.3); g.fill(); g.strokeStyle = '#fff'; g.lineWidth = 2; g.stroke(); };
       S.dirty = true; return;
     }
@@ -5140,12 +5165,34 @@ async function depTap(x, y) {
   draw();
 }
 
+/* ---- 留置線（DB の更新105）：駅の近くに 線路をなぞって つくる。折り返しで 8分以上 待つ編成が 番線をあけて待つ（車両は置けない） ---- */
+const tomeOn = () => { lookOn(); return (S.dbv || 0) >= 105; };
+const tomeDim = sz => { const m = /^R(\d+)x(\d+)$/.exec(sz || ''); return m ? [Number(m[1]), Number(m[2])] : [0, 0]; };
+function showTome(d) {
+  const [len, n] = tomeDim(d.sz), sta = d.st != null && S.vis && S.vis.stas.get(d.st);
+  sheet(`<h4>🅿 <span translate="no">${esc(d.n)}</span></h4><div class="mp-kv"><b>種類</b><span>留置線</span><b>駅</b><span translate="no">${sta ? esc(sta.n) : '—'}</span>
+      <b>大きさ</b><span>${T(`${len}m・${n}本`)}</span></div>
+    <p class="muted small"><span>折り返しで 8分以上 待つ編成（この長さに入るもの）は、着いて3分で ここへ入り、番線をあけて待ちます（出る3分前に もどります）。車両は置けません。</span></p>
+    ${d.mine ? '<div class="mp-row"><button class="btn" data-ren>名前を変える</button><button class="btn" data-del>こわす</button></div>' : ''}`, sh => {
+    const r = sh.querySelector('[data-ren]'); if (r) r.onclick = async () => { const nm = prompt(T('新しい名前'), d.n); if (nm && await api('mp_dep_edit', { p_id: d.id, p_name: nm, p_del: false }, '名前を変えました')) { refreshBox(d.fx - 3, d.fy - 3, d.fx + 3, d.fy + 3); sheet(null); } };
+    const x = sh.querySelector('[data-del]'); if (x) x.onclick = async () => { if (await confirm2(T('こわしますか？（工事費はもどりません）'), { what: `「${d.n}」`, q: '本当にこわしますか？', ok: 'こわす' }) && await api('mp_dep_edit', { p_id: d.id, p_name: null, p_del: true }, 'こわしました')) { refreshBox(d.fx - 14, d.fy - 14, d.fx + 14, d.fy + 14); sheet(null); } };
+  });
+}
+// 駅の近くの 自分の駅（留置線をつくれる駅）：留置線のまん中から（ホームの半分＋留置線の半分＋500m）まで。近い順
+function tomeNear(p, len) {
+  return [...(S.vis ? S.vis.stas.values() : [])].filter(x => x.k === 'rail' && x.mine)
+    .map(x => ({ s: x, d: Math.hypot(x.fx - p.x, x.fy - p.y) - (x.pl || 0) / 100 - len / 100 })).filter(o => o.d <= 10).sort((a, b) => a.d - b.d);
+}
+
 // 車両基地（線路をなぞる）：長さ（20m単位）・留置線の数・どちら側か
 function depSheetRail(h1, h2) {
   const seg = h1.s, span = Math.abs(h2.at - h1.at);
-  const st = { len: clamp(Math.round(span * 50 / 20) * 20, 40, 1000), mid: (h1.at + h2.at) / 2, n: 6, side: 1, name: nearDist(h1.x, h1.y) + '車両基地', q: null, err: null };
-  const sz = () => `T${st.len}x${st.n}`;
+  const st = { len: clamp(Math.round(span * 50 / 20) * 20, 40, 1000), mid: (h1.at + h2.at) / 2, n: 6, side: 1, name: nearDist(h1.x, h1.y) + '車両基地', q: null, err: null,
+               mode: 'dep', sta: null };   // mode：dep 車両基地・tome 留置線（駅の。DB の更新105）
+  const sz = () => `${st.mode === 'tome' ? 'R' : 'T'}${st.len}x${st.n}`;
   const at = () => { const p = segPointAt(seg, st.mid); return p; };
+  const near = () => tomeOn() ? tomeNear(at(), Math.min(st.len, 600)) : [];
+  { const t0 = S.toolState && S.toolState.tome, nr = near(); if (nr.length && (t0 || false)) { st.mode = 'tome'; st.sta = (nr.find(o => o.s.id === t0) || nr[0]).s.id; st.n = 2; st.len = clamp(st.len, 40, 600); } }
   S.sel = { kind: 'seg', id: seg.id };
   S.drawTool = (g, z) => {
     const p = at(), P = depPoly({ fx: p.x, fy: p.y, a: p.ang, side: st.side, sz: sz(), k: 'rail' });
@@ -5154,38 +5201,45 @@ function depSheetRail(h1, h2) {
     g.lineCap = 'butt'; g.strokeStyle = 'rgba(138,90,31,.85)'; g.lineWidth = Math.max(5, 0.3 * z); pathPart(g, seg, st.mid - st.len / 100, st.mid + st.len / 100); g.stroke(); g.lineCap = 'round';
   };
   S.dirty = true;
-  const args = dry => { const p = at(); return { p_kind: 'rail', p_seg: seg.id, p_x: p.x, p_y: p.y, p_side: st.side, p_size: sz(), p_name: st.name || '仮', p_as: S.as, p_dry: dry }; };
+  const args = dry => { const p = at(); return st.mode === 'tome' ? { p_sta: st.sta, p_seg: seg.id, p_x: p.x, p_y: p.y, p_side: st.side, p_len: st.len, p_n: st.n, p_as: S.as, p_dry: dry }
+    : { p_kind: 'rail', p_seg: seg.id, p_x: p.x, p_y: p.y, p_side: st.side, p_size: sz(), p_name: st.name || '仮', p_as: S.as, p_dry: dry }; };
+  const fn = () => st.mode === 'tome' ? 'mp_tome_build' : 'mp_dep_build';
   const quote = async () => {
     const my = st.seq = (st.seq || 0) + 1; st.quoting = true; draw();
     let q = null, err = null;
-    try { q = await call('mp_dep_build', args(true)); } catch (e) { err = e.message; }
+    try { q = await call(fn(), args(true)); } catch (e) { err = e.message; }
     if (st.seq !== my) return;
     st.quoting = false; st.q = q; st.err = err;
     draw(); S.dirty = true;
   };
   const changed = () => { st.seq = (st.seq || 0) + 1; st.quoting = false; st.q = null; st.err = null; draw(); S.dirty = true; };
   const step = (k, d, lo, hi) => `<button class="btn" data-${k}="${-d}" style="flex:none;padding:4px 12px">−</button><b style="min-width:4.2em;text-align:center">${k === 'len' ? st.len + 'm' : T(`${st.n}本`)}</b><button class="btn" data-${k}="${d}" style="flex:none;padding:4px 12px">＋</button>`;
-  const draw = () => sheet(`<h4>🏭 車両基地をつくる</h4>
-    <div class="mp-row"><input class="mp-inp" data-nm value="${esc(st.name)}" placeholder="車両基地の名前"></div>
+  const draw = () => { const nr = near(), tm = st.mode === 'tome';
+    sheet(`<h4>${tm ? '🅿 留置線をつくる' : '🏭 車両基地をつくる'}</h4>
+    ${nr.length ? `<div class="mp-row"><span class="mp-seg"><button data-md="dep" class="${tm ? '' : 'on'}">🏭 車両基地</button><button data-md="tome" class="${tm ? 'on' : ''}">🅿 留置線（駅の）</button></span></div>` : ''}
+    ${tm ? `<div class="mp-row"><span>駅</span><select class="mp-inp" style="flex:1 1 140px" data-tsta>${nr.map(o => `<option value="${o.s.id}" ${o.s.id === st.sta ? 'selected' : ''}>${esc(o.s.n)}</option>`).join('')}</select></div>`
+      : `<div class="mp-row"><input class="mp-inp" data-nm value="${esc(st.name)}" placeholder="車両基地の名前"></div>`}
     <div class="mp-row"><span>長さ</span> ${step('len', 20)}</div>
-    <div class="mp-row"><span>留置線</span> ${step('n', 1)} <button class="btn" data-side>反対側にする</button></div>
-    <p class="small" style="margin:4px 0 0">20m の車両 ${Math.floor(st.len / 20) * st.n}両まで（${Math.floor(st.len / 20)}両 × ${st.n}本）</p>
+    <div class="mp-row"><span>${tm ? '線の数' : '留置線'}</span> ${step('n', 1)} <button class="btn" data-side>反対側にする</button></div>
+    <p class="small" style="margin:4px 0 0">${tm ? `<span>${T(`${st.len}m の編成まで・${st.n}本`)}</span>（<span>折り返しで 8分以上 待つ編成が、番線をあけて待ちます。車両は置けません</span>）` : `20m の車両 ${Math.floor(st.len / 20) * st.n}両まで（${Math.floor(st.len / 20)}両 × ${st.n}本）`}</p>
     <div class="mp-row">${st.q ? (S.as === 'gov' && !st.q.cost ? '<span>工事費なし（国の工事は無料）</span>' : `<span class="mp-cost">工事費 ${X(st.q.cost)}</span><span class="small">使用料 1日 ${X(st.q.lease)}・維持費 1日 ${X(st.q.up_day)}</span>`) : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button><span class="muted small">工事費を出してから、つくれます</span>'}</div>
     ${st.q ? needH(st.q.need) : ''}
     <div class="mp-row"><button class="btn main" data-ok ${st.q && !hasNeed(st.q) ? '' : 'disabled'}>つくる（${esc(asName())}）</button></div>
-    <p class="muted small" style="margin:4px 0 0">起点と終点のあいだに、線路にそって車両基地をつくります（20m単位）。もう一度タップすると、えらびなおせます</p>`, s => {
-    s.querySelector('[data-nm]').onchange = e => { st.name = e.target.value; };
+    <p class="muted small" style="margin:4px 0 0">${tm ? '起点と終点のあいだに、線路にそって留置線をつくります（20m単位・40〜600m・1〜8本。駅の近く、ホームの はしより先）。もう一度タップすると、えらびなおせます' : '起点と終点のあいだに、線路にそって車両基地をつくります（20m単位）。もう一度タップすると、えらびなおせます'}</p>`, s => {
+    { const e = s.querySelector('[data-nm]'); if (e) e.onchange = ev => { st.name = ev.target.value; }; }
+    s.querySelectorAll('[data-md]').forEach(b => b.onclick = () => { st.mode = b.dataset.md; if (st.mode === 'tome') { const n2 = near(); st.sta = st.sta && n2.some(o => o.s.id === st.sta) ? st.sta : n2.length ? n2[0].s.id : null; st.n = clamp(st.n, 1, 8); st.len = clamp(st.len, 40, 600); } changed(); });
+    { const e = s.querySelector('[data-tsta]'); if (e) e.onchange = () => { st.sta = Number(e.value); changed(); }; }
     needBind(s, st.q && st.q.need, () => quote());
-    s.querySelectorAll('[data-len]').forEach(b => b.onclick = () => { st.len = clamp(st.len + Number(b.dataset.len), 40, 1000); changed(); });
-    s.querySelectorAll('[data-n]').forEach(b => b.onclick = () => { st.n = clamp(st.n + Number(b.dataset.n), 1, 20); changed(); });
+    s.querySelectorAll('[data-len]').forEach(b => b.onclick = () => { st.len = clamp(st.len + Number(b.dataset.len), 40, st.mode === 'tome' ? 600 : 1000); changed(); });
+    s.querySelectorAll('[data-n]').forEach(b => b.onclick = () => { st.n = clamp(st.n + Number(b.dataset.n), 1, st.mode === 'tome' ? 8 : 20); changed(); });
     s.querySelector('[data-side]').onclick = () => { st.side = -st.side; changed(); };
     { const es = s.querySelector('[data-est]'); if (es) es.onclick = () => quote(); }
     s.querySelector('[data-ok]').onclick = async () => {
-      st.name = s.querySelector('[data-nm]').value.trim(); if (!st.name) return toast('名前をつけてください');
+      if (st.mode !== 'tome') { st.name = s.querySelector('[data-nm]').value.trim(); if (!st.name) return toast('名前をつけてください'); }
       const p = at();
-      if (await api('mp_dep_build', args(false), 'つくりました')) { refreshBox(p.x - 14, p.y - 14, p.x + 14, p.y + 14); sheet(null); S.drawTool = null; S.toolState = null; S.sel = null; hint(TOOL_HINT.dep); }
+      if (await api(fn(), args(false), 'つくりました')) { refreshBox(p.x - 14, p.y - 14, p.x + 14, p.y + 14); sheet(null); S.drawTool = null; S.toolState = null; S.sel = null; hint(TOOL_HINT.dep); if (st.mode === 'tome') runListStale(); }
     };
-  });
+  }); };
   S.onSheetClose = () => { S.drawTool = null; S.toolState = null; S.dirty = true; if (S.tool === 'dep') hint(TOOL_HINT.dep); };
   draw();
 }
@@ -5760,6 +5814,10 @@ function openHelp() {
     <p><b>待避と発着番線</b>：種別ごとに優先番号（0〜9。0 がいちばん優先）があります。優先番号の大きい列車は、待避できる駅で、うしろから来る優先番号の小さい列車に先をゆずって待ちます（待避）。追いつく列車は、前の列車のあとを走ります（続行）。時刻は自動でずれます。駅の番線ごとに、下り・上り・両方と、本線・待避線を決められます（駅をタップ →「発着番線」）。種別と優先番号は、系統の画面の「種別と優先番号」で。</p>
     <p><b>ほかの系統との待避・続行</b>：系統の画面で「ほかの系統と待避・続行」をオンにすると、その系統の列車は、同じ駅を通るほかの系統（乗り入れてくる他社の列車もふくむ）の列車のうち、優先番号の小さい列車（同じなら系統の番号の小さいほう）にもゆずります。相手の時刻は変わりません。同じ駅の同じ番線に重なる列車は、系統の画面の「重なりを直す」で直せます。</p>
     <p><b>停車駅のパターン</b>：系統の画面の「停車駅のパターン」で、種別ごとに止まる駅を決めておけます（例：快速はこの駅だけ）。端の駅も通過にでき、止まる最初の駅が始発、最後の駅が終着になります（列車ごとの「止まる駅」も同じ）。列車をつくるとき・まとめてつくるとき・種別を変えたときに、そのパターンになります。「この種別の列車にも当てはめる」で、いまある列車もまとめて変えられます。</p>
+    <p><b>1時間の型（パターンダイヤ）</b>：系統の画面の「⏱ 1時間の型」で、毎時 同じ分に出る列車の型（行ごとに 種別・下り／上り／両方・発車の分・走る区間）をつくり、何時から何時まで くりかえして、1日のダイヤを組めます。停車駅は 種別の停車駅のパターンどおりです。その時間帯の列車を消して つくりなおすこともでき、「↶ 取り消す」で もどせます。型は系統に のこります。ダイヤグラムの線は 種別ごとの色で、種別で しぼりこめます。</p>
+    <p><b>留置線と折り返し</b>：編成が終着駅に着いて、同じ駅から つぎの列車で出るまで、その駅の番線を1本つかいます。待つ編成と止まる列車で 番線が足りなくなると注意が出ます。駅の画面の「🅿 留置線をつくる」で、駅の近くの線路をなぞって 留置線をつくると、8分以上 待つ編成は 着いて3分で留置線へ入り、番線をあけて待ちます。ダイヤグラムでは 終着駅の横に 待つあいだの点線（留置線は灰色の破線）が出ます。</p>
+    <p><b>電化と区間で しぼりこむ</b>：ダイヤグラム・時刻表・列車の一覧は、編成の電化（直流・交流・交直流・非電化）と、走る区間（始発駅 → 終着駅）でも しぼりこめます。「運用を自動で組む」の編成も 電化で しぼりこめます。</p>
+    <p><b>種別ごとの運用</b>：「運用を自動で組む」の「種別ごと」で、種別ごとに使う編成をえらべます。系統の画面の「運用番号を種別ごとに」で、運用番号を 種別ごとに まとめられます（例：快速は 101・102…）。運用の画面では、種別で しぼりこめます。</p>
     <p><b>車歴と譲渡</b>：車両ごとに、新製・転属・譲渡・廃車が車歴にのこります（車両をえらんで「車歴」。廃車した車両は「廃車した車両」）。編成は「ゆずる」、編成に入っていない車両はえらんで「ゆずる」で、ほかの人・会社にゆずれます。まん中にも運転台つきの Tc を入れられます（中間封じ込め）。</p>
     <p><b>乗り入れ（他社直通）</b>：ほかの人・会社の駅か線路をタップ →「乗り入れを申請」。持ち主が許可する（線路使用料：1列車・1km）と、系統にその持ち主の駅を入れて、持ち主の線路を走れます。線路をつなぐこともできます（どちらかの向きに許可があれば）。運賃は系統の持ち主に、走った km ぶんの線路使用料は1時間ごとに線路の持ち主に入ります。同じ駅の番線は、ほかの持ち主の列車ともかさならないように見ます。持ち主が「やめる」と、その線路・駅を使う系統は走れなくなります。≡ →「乗り入れ」で、許可・ことわる・使用料を変える・やめる。</p>
     <p><b>連結</b>：列車ごとに、ほかの運用の編成をつなげます（3つ・16両まで）。とちゅうの駅でつなぐ・切りはなすこともできます（その運用の編成は、つなぐ駅に2分前までに着いていること）。ダイヤグラムでは太い線です。</p>
@@ -6229,13 +6287,26 @@ const hms = s => { if (s == null) return ''; s = ((s % 86400) + 86400) % 86400; 
 const parseHM = t => { const m = String(t || '').trim().match(/^(\d{1,2})[:：]?(\d{2})(?:[:：](\d{2}))?$/); if (!m) return null; return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3] || 0); };
 const KIND_COL = { 普通: '#222', 各停: '#222', 快速: '#e07020', 急行: '#d42', 特急: '#c0186a', 回送: '#999', 試運転: '#7b4fd8' };
 const KINDS = ['普通', '快速', '急行', '特急', '回送', '試運転'];
+// 種別の色（DB の更新104：ダイヤグラム・時刻表・運用で 種別ごとに見分ける）。決まった種別は KIND_COL、ほかは 名義の種別の順に パレットから（名義の一覧がないときは 名前から）
+const KIND_PAL = ['#1f6fd1', '#1a9e5a', '#0e9fb0', '#8a5a2b', '#b8860b', '#5b6abf', '#d1477a', '#4f7d1f', '#7a4fb8', '#c85a12'];
+function kindCol(D, k) {
+  if (KIND_COL[k]) return KIND_COL[k];
+  const ks = ((D && D.kinds) || []).map(x => x.name).filter(x => !KIND_COL[x]);
+  let i = ks.indexOf(k);
+  if (i < 0) { i = 0; for (const c of String(k)) i = (i * 31 + c.charCodeAt(0)) >>> 0; }
+  return KIND_PAL[i % KIND_PAL.length];
+}
+// 電化方式で しぼりこむ（DB の更新104）：d 直流・a 交流・x 交直流・n 非電化（気動車・客車など）・'' 編成なし
+const PW_L = { d: '直流', a: '交流', x: '交直流', n: '非電化', '': '編成なし' }, PW_O = ['d', 'a', 'x', 'n', ''];
+const pwCls = (el, ps) => !el ? 'n' : (ps & 1) && (ps & 6) ? 'x' : (ps & 6) ? 'a' : 'd';
+const kindSw = c => `<span style="display:inline-block;width:12px;height:4px;border-radius:2px;background:${c};vertical-align:middle;margin-right:4px"></span>`;
 const mdL = d => { const m = String(d || '').match(/^\d{4}-(\d{2})-(\d{2})/); return m ? T(`${Number(m[1])}月${Number(m[2])}日`) : ''; };   // 臨時列車の日付（10月25日）
 const dayAdd = (d, n) => { const t = new Date(d + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
 const kindL = k => k === '普通' ? '各停' : k;   // 種別の見せ方（データは「普通」のまま）
 async function openDia(rid) {
   const m = modal(['系統', '<p class="muted small">読みこんでいます…</p>'], null, 'mp-wide');
   let D = null, tab = 'dia';
-  const lf = { kinds: new Set(), sers: new Set(), dirs: new Set(), sort: 'dep', err: false, sel: null, day: '' };   // 列車一覧の絞り込み（空はぜんぶ）・並べ替え・エラーだけ・えらんで消す（sel：えらんだ列車）・日（'' ぜんぶ・'*' 毎日のダイヤ・日付。DB の更新100）
+  const lf = { kinds: new Set(), sers: new Set(), dirs: new Set(), pws: new Set(), secs: new Set(), sort: 'dep', err: false, sel: null, day: '' };   // pws：電化方式・secs：走る区間（DB の更新104）   // 列車一覧の絞り込み（空はぜんぶ）・並べ替え・エラーだけ・えらんで消す（sel：えらんだ列車）・日（'' ぜんぶ・'*' 毎日のダイヤ・日付。DB の更新100）
   const load = async () => { D = await api('mp_dia', { p_route: rid }); if (!D) return m.close(); if (D.gov && D.mine && S.as !== 'gov') { D.mine = false; D.govLock = true; }   // 国の系統は、名義「国」のときだけ編集（DB の更新101）
     S.routeHi = { legs: D.legs, color: D.color, kind: D.kind }; S.dirty = true; draw(); };
   m.onclose = () => { S.routeHi = null; S.dirty = true; };
@@ -6247,7 +6318,7 @@ async function openDia(rid) {
       ${(D.branches || []).length ? `<p class="small" style="margin:4px 0 0">🔀 <span>支線</span>：${D.branches.map(x => `<a href="#" data-gor="${x.id}" translate="no">${esc(x.name)}</a>${(x.jct || []).length ? `（<span translate="no">${x.jct.map(esc).join('・')}</span>）` : ''}`).join('・')}</p>` : ''}
       <div class="tabs-s" style="margin-top:8px">${[['dia', 'ダイヤグラム'], ['tt1', '時刻表（下り）'], ['tt2', '時刻表（上り）'], ['list', '列車'], ...(D.ord && D.mine ? [['ord', '運転整理']] : [])].map(t => `<button data-tab="${t[0]}" class="${tab === t[0] ? 'on' : ''}">${t[1]}</button>`).join('')}</div>
       <div data-flt style="margin-top:6px"></div><div data-pane style="margin-top:8px"></div>
-      ${D.mine ? `<div class="mp-row"><button class="btn main" data-add>${D.kind === 'ship' || D.kind === 'air' ? '＋ 便' : '＋ 列車'}</button><button class="btn" data-bulk>＋ まとめて</button>${D.ord ? '<button class="btn" data-ordb>✂ 運転整理</button>' : ''}<button class="btn" data-auto>運用を自動で組む</button>
+      ${D.mine ? `<div class="mp-row"><button class="btn main" data-add>${D.kind === 'ship' || D.kind === 'air' ? '＋ 便' : '＋ 列車'}</button><button class="btn" data-bulk>＋ まとめて</button>${'hpat' in D ? '<button class="btn" data-hpat>⏱ 1時間の型</button>' : ''}${D.ord ? '<button class="btn" data-ordb>✂ 運転整理</button>' : ''}<button class="btn" data-auto>運用を自動で組む</button>${'hpat' in D && D.trains.some(t => t.onum) ? '<button class="btn" data-orn>運用番号を種別ごとに</button>' : ''}
         <button class="btn" data-edit>${D.kind === 'air' ? '空港の順を直す' : D.kind === 'ship' ? '港の順・航路を直す' : '駅の順を直す（途中に入れる）'}</button>${'branches' in D && (D.kind === 'rail' || D.kind === 'bus') ? '<button class="btn" data-br>＋ 支線をつくる</button>' : ''}${D.parent ? '<button class="btn" data-brx>支線をやめる</button>' : ''}<button class="btn" data-ai>🤖 AIで編集</button><button class="btn" data-kp>種別と優先番号</button><button class="btn" data-pat>停車駅のパターン</button><button class="btn" data-fix>重なりを直す${(() => { const n = D.trains.filter(t => /とかさなります/.test(t.warn || '')).length; return n ? `<span>（${n}本）</span>` : ''; })()}</button>${D.kind === 'rail' ? `<button class="btn" data-xw>${D.xwait ? 'ほかの系統と待避・続行：オン' : 'ほかの系統と待避・続行：オフ'}</button>` : ''}<button class="btn" data-del>系統を消す</button></div>
         <div class="mp-row"><button class="btn" style="flex:none" data-undo ${D.undo ? '' : 'disabled'}>↶ 取り消す</button>${D.undo ? `<span class="small muted"><span>もどす：</span><span>${esc(D.undo.what)}</span><span>（${D.undo.n}回もどせます）</span></span>` : '<span class="small muted">もどせる操作はありません</span>'}</div>` : ''}`, b => {
       b.querySelectorAll('[data-tab]').forEach(x => x.onclick = () => { tab = x.dataset.tab; draw(); });
@@ -6258,16 +6329,27 @@ async function openDia(rid) {
       const pane = b.querySelector('[data-pane]'), flt = b.querySelector('[data-flt]');
       // 形式（編成の系列・両数）・種別・向きで絞りこむ（t62：ダイヤグラム・時刻表でも）。一覧は、発車時刻・列車番号・種別・形式で並べかえる
       const serOf = t => t.fser ? t.fser + '|' + t.fn : '';   // 形式（系列）と両数
+      // 電化方式（編成の。DB の更新104）と 走る区間（どこからどこまで：始発駅 → 終着駅）
+      const hasPw = D.trains.some(t => 'fpw' in t), pwOf = t => t.fpw == null ? '' : pwCls(t.fpw > 0, t.fpw);
+      const secOf = t => { const sc = t.sched || []; return sc.length > 1 ? sc[0][0] + '>' + sc[sc.length - 1][0] : ''; };
+      const stN = id => (D.stops.find(x => String(x.id) === String(id)) || {}).name || '';
+      const secL = k => { if (!k) return T('時刻なし'); const [a, z] = k.split('>'); return stN(a) + ' → ' + stN(z); };
       const serH = k => { if (!k) return '<span>編成なし</span>'; const [a, n] = k.split('|'); return `<span>${esc(a)}</span>${D.kind === 'ship' || D.kind === 'air' ? '' : `・<span>${D.kind === 'bus' ? `${n}台` : `${n}両`}</span>`}`; };
       const ko = k => { const x = (D.kinds || []).find(y => y.name === k); return x ? x.prio * 100 + (KINDS.indexOf(k) + 1) : 999; };   // 優先番号の順
       const kinds = [...new Set(D.trains.map(t => t.kind))].sort((a, b) => ko(a) - ko(b) || a.localeCompare(b, 'ja'));
       const sers = [...new Set(D.trains.map(serOf))].sort((a, b) => (a === '') - (b === '') || a.localeCompare(b, 'ja', { numeric: true }));
       for (const k of [...lf.kinds]) if (!kinds.includes(k)) lf.kinds.delete(k);
       for (const k of [...lf.sers]) if (!sers.includes(k)) lf.sers.delete(k);
+      const pws = hasPw ? PW_O.filter(k => D.trains.some(t => pwOf(t) === k)) : [];
+      const secCnt = new Map(); for (const t of D.trains) { const k = secOf(t); secCnt.set(k, (secCnt.get(k) || 0) + 1); }
+      const secs = [...secCnt.keys()].sort((a, b) => secCnt.get(b) - secCnt.get(a) || secL(a).localeCompare(secL(b), 'ja'));
+      for (const k of [...lf.pws]) if (!pws.includes(k)) lf.pws.delete(k);
+      for (const k of [...lf.secs]) if (!secs.includes(k)) lf.secs.delete(k);
+      const pwSec = t => (!lf.pws.size || lf.pws.has(pwOf(t))) && (!lf.secs.size || lf.secs.has(secOf(t)));
       const isErr = t => !!(t.bad || t.warn || !t.fname);   // エラーの列車：走れない・注意がある・編成がない
       // 日（DB の更新100）：毎日のダイヤ（臨時・運転整理の列車はのぞく）か、その日に走る列車（運転整理で その日は走らない毎日の列車はのぞく）
       const dayOk = t => !lf.day ? true : lf.day === '*' ? !t.day : t.day ? t.day === lf.day : !(t.ordd || []).some(c => c[0] === lf.day);
-      const pass = t => (!lf.kinds.size || lf.kinds.has(t.kind)) && (!lf.sers.size || lf.sers.has(serOf(t))) && (!lf.dirs.size || lf.dirs.has(t.dir)) && dayOk(t);
+      const pass = t => (!lf.kinds.size || lf.kinds.has(t.kind)) && (!lf.sers.size || lf.sers.has(serOf(t))) && (!lf.dirs.size || lf.dirs.has(t.dir)) && dayOk(t) && pwSec(t);
       const passL = t => pass(t) && (!lf.err || isErr(t));   // 一覧は「エラーだけ」でもしぼる
       if (lf.sel) for (const id of [...lf.sel]) if (!D.trains.some(t => t.id === id)) lf.sel.delete(id);
       const byNum = (a, b) => String(a.num).localeCompare(String(b.num), 'ja', { numeric: true });
@@ -6276,16 +6358,22 @@ async function openDia(rid) {
       const L = D.trains.filter(passL).sort(cmp), nErr = D.trains.filter(isErr).length;
       const chip = (g, v, label, on) => `<button data-${g}="${esc(String(v))}" class="${on ? 'on' : ''}">${label}</button>`;
       const row = (title, g, all, items) => `<div class="mp-row small" style="align-items:center"><span style="min-width:3.5em">${title}</span><span class="mp-seg" style="flex-wrap:wrap">${chip(g, '*', 'すべて', !all.size)}${items.join('')}</span></div>`;
-      const D2 = Object.assign({}, D, { trains: D.trains.filter(tab === 'tt1' || tab === 'tt2' ? (t => (!lf.kinds.size || lf.kinds.has(t.kind)) && (!lf.sers.size || lf.sers.has(serOf(t))) && dayOk(t)) : pass) });   // 時刻表は向きのタブなので、向きでは しぼらない
+      const D2 = Object.assign({}, D, { trains: D.trains.filter(tab === 'tt1' || tab === 'tt2' ? (t => (!lf.kinds.size || lf.kinds.has(t.kind)) && (!lf.sers.size || lf.sers.has(serOf(t))) && dayOk(t) && pwSec(t)) : pass) });   // 時刻表は向きのタブなので、向きでは しぼらない
       const hasDay = D.trains.some(t => t.day || (t.ordd || []).length);
-      flt.innerHTML = D.trains.length && tab !== 'ord' ? `${row('種別', 'fk', lf.kinds, kinds.map(k => chip('fk', k, `<span>${esc(kindL(k))}</span>`, lf.kinds.has(k))))}
+      flt.innerHTML = D.trains.length && tab !== 'ord' ? `${row('種別', 'fk', lf.kinds, kinds.map(k => chip('fk', k, `${kindSw(kindCol(D, k))}<span>${esc(kindL(k))}</span><small>（${D.trains.filter(t => t.kind === k).length}）</small>`, lf.kinds.has(k))))}
         ${sers.length > 1 ? row('形式', 'fs', lf.sers, sers.map(k => chip('fs', k, serH(k), lf.sers.has(k)))) : ''}
+        ${pws.length > 1 ? row('電化', 'fp', lf.pws, pws.map(k => chip('fp', k, `<span>${PW_L[k]}</span><small>（${D.trains.filter(t => pwOf(t) === k).length}）</small>`, lf.pws.has(k)))) : ''}
+        ${secs.length > 1 ? (secs.length <= 8 ? row('区間', 'fz', lf.secs, secs.map(k => chip('fz', k, `<span translate="no">${esc(secL(k))}</span><small>（${secCnt.get(k)}）</small>`, lf.secs.has(k))))
+          : `<div class="mp-row small" style="align-items:center"><span style="min-width:3.5em">区間</span><select class="mp-inp" style="flex:1 1 180px" data-fzs><option value="">${esc(T('すべて'))}（${D.trains.length}）</option>${secs.map(k => `<option value="${esc(k)}" ${lf.secs.size === 1 && lf.secs.has(k) ? 'selected' : ''}>${esc(secL(k))}（${secCnt.get(k)}）</option>`).join('')}</select></div>`) : ''}
         ${tab === 'dia' ? row('向き', 'fd', lf.dirs, [chip('fd', 1, '下り', lf.dirs.has(1)), chip('fd', -1, '上り', lf.dirs.has(-1))]) : ''}
         ${hasDay ? `<div class="mp-row small" style="align-items:center"><span style="min-width:3.5em">日付</span><span class="mp-seg" style="flex-wrap:wrap"><button data-fy="" class="${lf.day ? '' : 'on'}">すべて</button><button data-fy="*" class="${lf.day === '*' ? 'on' : ''}">毎日のダイヤ</button><button data-fy="d" class="${lf.day && lf.day !== '*' ? 'on' : ''}">日付で見る</button></span>
           ${lf.day && lf.day !== '*' ? `<input class="mp-inp" style="width:auto" type="date" data-fyd value="${esc(lf.day)}" min="${esc(D.today)}" max="${esc(dayAdd(D.today, 60))}">` : ''}</div>` : ''}` : '';
       { const tog = (set, v) => { if (v === '*') set.clear(); else if (set.has(v)) set.delete(v); else set.add(v); draw(); };
         flt.querySelectorAll('[data-fk]').forEach(x => x.onclick = () => tog(lf.kinds, x.dataset.fk));
         flt.querySelectorAll('[data-fs]').forEach(x => x.onclick = () => tog(lf.sers, x.dataset.fs));
+        flt.querySelectorAll('[data-fp]').forEach(x => x.onclick = () => tog(lf.pws, x.dataset.fp));
+        flt.querySelectorAll('[data-fz]').forEach(x => x.onclick = () => tog(lf.secs, x.dataset.fz));
+        if (flt.querySelector('[data-fzs]')) flt.querySelector('[data-fzs]').onchange = e => { lf.secs.clear(); if (e.target.value) lf.secs.add(e.target.value); draw(); };
         flt.querySelectorAll('[data-fd]').forEach(x => x.onclick = () => tog(lf.dirs, x.dataset.fd === '*' ? '*' : Number(x.dataset.fd)));
         flt.querySelectorAll('[data-fy]').forEach(x => x.onclick = () => { const v = x.dataset.fy; lf.day = v === 'd' ? (lf.day && lf.day !== '*' ? lf.day : D.today) : v; draw(); });
         if (flt.querySelector('[data-fyd]')) flt.querySelector('[data-fyd]').onchange = e => { lf.day = e.target.value || D.today; draw(); }; }
@@ -6328,6 +6416,8 @@ async function openDia(rid) {
       const q = k => b.querySelector(k);
       if (q('[data-add]')) q('[data-add]').onclick = () => trainEdit(D, null, load);
       if (q('[data-bulk]')) q('[data-bulk]').onclick = () => trainBulk(D, load);
+      if (q('[data-hpat]')) q('[data-hpat]').onclick = () => hourDia(D, load);   // 1時間の型（DB の更新104）
+      if (q('[data-orn]')) q('[data-orn]').onclick = () => opsRenum(D, load);   // 運用番号を種別ごとに（DB の更新104）
       if (q('[data-ordb]')) q('[data-ordb]').onclick = () => ordEdit(D, null, load);   // 運転整理（DB の更新100）
       if (q('[data-auto]')) q('[data-auto]').onclick = () => autoForm(D, load);
       if (q('[data-edit]')) q('[data-edit]').onclick = () => { m.close(); routeBuild(D.kind, D); };
@@ -6726,7 +6816,7 @@ function kindsEdit(D, reload) {
   const L = (D.kinds || []).map(k => ({ ...k }));
   const m = modal(['種別と優先番号', '']);
   const draw = () => m.set('種別と優先番号', `<div class="mp-list">${L.map((k, i) => `<div class="mp-row small" style="align-items:center;margin-top:4px">
-      <b style="min-width:5em;color:${KIND_COL[k.name] || '#2a7'}">${esc(kindL(k.name))}</b>
+      <b style="min-width:5em;color:${kindCol(D, k.name)}">${esc(kindL(k.name))}</b>
       <select class="mp-inp" style="width:auto" data-kp="${i}">${Array.from({ length: 10 }, (_, n) => `<option value="${n}" ${k.prio === n ? 'selected' : ''}>${n}</option>`).join('')}</select>
       ${k.std ? '' : `<button class="btn" style="flex:none" data-kx="${i}">×</button>`}</div>`).join('')}</div>
     <div class="mp-row"><input class="mp-inp" style="flex:1 1 120px" data-kn placeholder="種別を足す（例：準急）" maxlength="8"><button class="btn" data-ka>足す</button></div>
@@ -6772,6 +6862,7 @@ function patEdit(D, reload, kind0) {
     });
   };
   draw();
+  return m;
 }
 function ttTable(D, dir) {
   const n = D.stops.length, ordI = Array.from({ length: n }, (_, i) => dir === 1 ? i : n - 1 - i);   // 系統の何番目の駅か（走る順。環状線は、はじめの駅が2回）
@@ -6785,7 +6876,7 @@ function ttTable(D, dir) {
     const tm = D.timing.includes(s.id);
     return `<span style="${tm ? 'font-weight:800' : ''}">${e[2] != null ? hms(e[2]) : hms(e[1]) + '着'}</span>${tm && e[3] ? `<br><small class="muted">${e[3]}番</small>` : ''}`;
   };
-  return `<div class="mp-scroll"><table class="mp-tt"><tr><th></th>${trs.map(t => `<th style="color:${KIND_COL[t.kind] || '#222'}">${esc(t.num)}<br>${esc(kindL(t.kind))}${t.day ? `<br><small>${t.orig ? '✂' : ''}${mdL(t.day)}</small>` : ''}</th>`).join('')}</tr>
+  return `<div class="mp-scroll"><table class="mp-tt"><tr><th></th>${trs.map(t => `<th style="color:${kindCol(D, t.kind)}">${esc(t.num)}<br>${esc(kindL(t.kind))}${t.day ? `<br><small>${t.orig ? '✂' : ''}${mdL(t.day)}</small>` : ''}</th>`).join('')}</tr>
     ${ordI.map(ri => `<tr><td class="st">${esc(D.stops[ri].name)}${D.timing.includes(D.stops[ri].id) ? ' ◎' : ''}</td>${trs.map(t => `<td>${cell(t, ri)}</td>`).join('')}</tr>`).join('')}
     <tr><td class="st">運用</td>${trs.map(t => `<td><small>${t.onum ? esc(t.onum) : '—'}</small></td>`).join('')}</tr>
     <tr><td class="st">編成</td>${trs.map(t => `<td><small>${t.fname ? esc(t.fname) : '—'}</small></td>`).join('')}</tr>
@@ -6799,7 +6890,7 @@ function schedIdx(D, t) {
   return out;
 }
 function diaCanvas(pane, D, onTrain, V0) {
-  pane.innerHTML = `<canvas class="mp-dia"></canvas><p class="muted small" style="margin:4px 0 0">よこにドラッグで動かす・2本指でよこに拡大・列車の線をタップで編集（一点鎖線は臨時列車・灰色の点線は編成なし・太い線は連結している区間）</p>`;
+  pane.innerHTML = `<canvas class="mp-dia"></canvas><p class="muted small" style="margin:4px 0 0">よこにドラッグで動かす・2本指でよこに拡大・列車の線をタップで編集</p><p class="muted small" style="margin:2px 0 0">${(() => { const ks = [...new Set(D.trains.map(t => t.kind))]; return ks.map(k => `<span style="white-space:nowrap;margin-right:8px">${kindSw(kindCol(D, k))}<span>${esc(kindL(k))}</span></span>`).join(''); })()}<br><span>線の色は種別・点線は編成なし・一点鎖線は臨時列車・赤は注意のある列車・太い線は連結している区間</span>${D.trains.some(t => Array.isArray(t.lay)) ? '<br><span>駅の横の点線は 折り返しを待つあいだ（灰色の破線は 留置線で待つ）</span>' : ''}</p>`;
   const cv = pane.querySelector('canvas'), dpr = Math.min(2, window.devicePixelRatio || 1);
   const km = D.km.map(Number), tot = Math.max(0.1, km[km.length - 1]);
   const V = V0 || { t0: 5 * 3600, sec: 19 * 3600 };   // V0：しぼりこみで描きなおしても、見ている時刻のはんいをのこす（t62）
@@ -6825,12 +6916,19 @@ function diaCanvas(pane, D, onTrain, V0) {
       (t.sched || []).forEach((e, j) => { if (si[j] < 0) return; const k = km[si[j]], i0 = pts.length; if (e[1] != null) pts.push([X(e[1]), Y(k)]); if (e[2] != null) pts.push([X(e[2]), Y(k)]);
         if (!at.has(e[0])) at.set(e[0], [i0, pts.length - 1]); atB.set(e[0], [i0, pts.length - 1]); });
       if (pts.length < 2) continue;
-      g.strokeStyle = t.form && !t.warn ? (KIND_COL[t.kind] || '#222') : t.form ? '#d23' : '#aaa'; g.lineWidth = 1.4; g.setLineDash(!t.form ? [4, 3] : t.day ? [9, 3, 2, 3] : []);
-      g.beginPath(); pts.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.stroke(); g.setLineDash([]);
+      // 線の色は種別（DB の更新104。編成のない列車も 種別の色の点線・うすく）。注意のある列車は赤
+      g.strokeStyle = t.form && t.warn ? '#d23' : kindCol(D, t.kind); g.globalAlpha = t.form ? 1 : 0.6; g.lineWidth = 1.4; g.setLineDash(!t.form ? [4, 3] : t.day ? [9, 3, 2, 3] : []);
+      g.beginPath(); pts.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.stroke(); g.setLineDash([]); g.globalAlpha = 1;
       // 連結している区間は太く
       for (const c of t.cplx || []) {
         const a = c.ok && at.get(c.a), b = c.ok && atB.get(c.b); if (!a || !b) continue;
         g.lineWidth = 3.4; g.beginPath(); for (let i = a[1]; i <= b[0]; i++) { if (i === a[1]) g.moveTo(pts[i][0], pts[i][1]); else g.lineTo(pts[i][0], pts[i][1]); } g.stroke();
+      }
+      // 折り返しを待つあいだ（DB の更新105）：終着駅の高さに、着いてから出るまで（点線はホーム・破線は留置線）
+      if (Array.isArray(t.lay) && !t.day) {
+        const e = pts[pts.length - 1], xb = X(t.lay[2]);
+        if (xb > e[0] + 1) { g.strokeStyle = t.lay[3] === 2 ? 'rgba(120,120,120,.75)' : kindCol(D, t.kind); g.globalAlpha = t.lay[3] === 2 ? 1 : 0.55; g.lineWidth = t.lay[3] === 2 ? 1.2 : 2.2;
+          g.setLineDash(t.lay[3] === 2 ? [6, 3] : [2, 3]); g.beginPath(); g.moveTo(e[0], e[1]); g.lineTo(xb, e[1]); g.stroke(); g.setLineDash([]); g.globalAlpha = 1; }
       }
       D.paths.push([t, pts]);
     }
@@ -6993,7 +7091,7 @@ function trainBulk(D, reload) {
   const ops = D.ops || [];
   const m = modal(['まとめて列車をつくる', `
     <div class="mp-row"><span class="mp-seg"><button data-dir="1" class="on">下り</button><button data-dir="-1">上り</button></span>
-      <select class="mp-inp" style="width:auto" data-kind>${kindOpts(D, '普通')}</select></div>
+      <select class="mp-inp" style="width:auto" data-kind>${kindOpts(D, '普通')}</select><button class="btn" style="flex:none" data-bpat>停車駅のパターン</button></div>
     <p class="small muted" data-pn style="margin:0 0 4px"></p>
     ${D.stops.length > 2 ? '<div class="mp-row" style="align-items:center" data-sec></div>' : ''}
     <div class="mp-row"><label class="small">はじめの列車 <input class="mp-inp mp-num" data-from value="06:00"></label> <label class="small">さいごの列車 <input class="mp-inp mp-num" data-to value="23:00"></label> <label class="small">何分おき <input class="mp-inp mp-num" type="number" data-ev value="10" min="2" max="240"></label></div>
@@ -7016,6 +7114,7 @@ function trainBulk(D, reload) {
       b.querySelector('[data-pn]').innerHTML = p ? `<span>${esc(T(`停車駅は「${kindL(k)}」のパターン`))}</span>：${pass.length ? `<span>通過</span> <span translate="no">${pass.map(x => esc(x.name)).join('・')}</span>` : '<span>各駅に停車</span>'}${cut ? `<br><span>走る区間</span> <span translate="no">${esc(on[0].name)} → ${esc(on[on.length - 1].name)}</span>` : ''}`
         : `<span>${esc(T(`「${kindL(k)}」の停車駅のパターンはありません（各駅に停車）`))}</span>`; };
     pn(); b.querySelector('[data-kind]').onchange = pn;
+    b.querySelector('[data-bpat]').onclick = () => { const pm = patEdit(D, null, b.querySelector('[data-kind]').value); if (pm) pm.onclose = pn; };   // 種別の停車駅のパターンを そのまま直す（DB の更新104）
     b.querySelectorAll('[data-dir]').forEach(x => x.onclick = () => { dir = Number(x.dataset.dir); b.querySelectorAll('[data-dir]').forEach(y => y.classList.toggle('on', y === x)); secH(); pn(); });
     b.querySelectorAll('[data-day]').forEach(x => x.onclick = () => { day = x.dataset.day === '1'; b.querySelectorAll('[data-day]').forEach(y => y.classList.toggle('on', y === x)); b.querySelector('[data-dt]').hidden = !day; });
     b.querySelector('[data-ok]').onclick = async () => {
@@ -7027,6 +7126,131 @@ function trainBulk(D, reload) {
       if (r) { toast(T(`${r.n}本つくりました`)); m.close(); reload(); }
     };
   });
+}
+/* ---------- 1時間の型でつくる（パターンダイヤ。DB の更新104）：毎時 同じ分に出る列車の型（行ごとに 種別・向き・発車の分・走る区間・列車番号の頭）を、
+   何時から何時まで くりかえして つくる。停車駅は 種別の停車駅のパターン。型は系統に のこる（D.hpat） ---------- */
+const HP_N = [1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 30];   // 1時間に何本（等間隔）
+const hpMins = v => [...new Set(hw(v).split(/[^0-9]+/).filter(Boolean).map(Number).filter(n => n >= 0 && n <= 59))].sort((a, b) => a - b);
+function hourDia(D, reload) {
+  const hp = D.hpat && Array.isArray(D.hpat.rows) && D.hpat.rows.length ? D.hpat : null;
+  const st = { h0: hp ? hp.h0 : 6, h1: hp ? hp.h1 : 24, rep: hp ? hp.rep !== false : true, q: null, busy: false,
+    rows: hp ? hp.rows.map(r => ({ k: r.k, d: r.d, m: (r.m || []).slice(), sa: r.sa || null, sb: r.sb || null, pre: r.pre || '' }))
+             : [{ k: '普通', d: 0, m: [0, 15, 30, 45], sa: null, sb: null, pre: '' }] };
+  const unit = D.kind === 'ship' || D.kind === 'air' ? '便' : '列車';
+  const m = modal(['1時間の型でつくる', ''], null, 'mp-wide');
+  const stopName = id => (D.stops.find(x => x.id === id) || {}).name || '';
+  // 走る区間：下り・両方は 下りの順（両方の上りは 逆に走る）、上りは 上りの順。null は系統の端
+  const secSel = (r, i) => {
+    if (D.stops.length <= 2) return '';
+    const ord = r.d === -1 ? D.stops.slice().reverse() : D.stops, n = ord.length;
+    return `<div class="mp-row small" style="align-items:center"><span>走る区間</span><select class="mp-inp" style="flex:1 1 100px" data-hsa="${i}">${ord.slice(0, -1).map((x, j) => `<option value="${j === 0 ? '' : x.id}" ${(j === 0 ? r.sa == null : r.sa === x.id) ? 'selected' : ''}>${esc(j === 0 ? T(`${x.name}（系統の端）`) : x.name)}</option>`).join('')}</select>
+      <span>${r.d === 0 ? '⇄' : '→'}</span><select class="mp-inp" style="flex:1 1 100px" data-hsb="${i}">${ord.slice(1).map((x, j) => `<option value="${j === n - 2 ? '' : x.id}" ${(j === n - 2 ? r.sb == null : r.sb === x.id) ? 'selected' : ''}>${esc(j === n - 2 ? T(`${x.name}（系統の端）`) : x.name)}</option>`).join('')}</select></div>`;
+  };
+  // 1時間の図：向きごとに 0〜60分の帯に、種別の色で 発車の分
+  const bar = dir => {
+    const ts = []; st.rows.forEach((r, i) => { if (r.d === dir || r.d === 0) for (const mm of r.m) ts.push([mm, r.k, i]); });
+    return `<div class="mp-row small" style="align-items:center;margin:2px 0"><span style="min-width:2.5em">${dir === 1 ? '下り' : '上り'}</span>
+      <div style="position:relative;flex:1 1 auto;height:22px;background:var(--bg2,#f2f2f2);border-radius:4px;overflow:hidden">
+        ${[15, 30, 45].map(x => `<span style="position:absolute;left:${x / 60 * 100}%;top:0;bottom:0;width:1px;background:#0002"></span>`).join('')}
+        ${ts.map(([mm, k]) => `<span title="${esc(kindL(k))} :${String(mm).padStart(2, '0')}" style="position:absolute;left:calc(${mm / 60 * 100}% - 1px);top:3px;bottom:3px;width:3px;border-radius:1px;background:${kindCol(D, k)}"></span>`).join('')}
+      </div><small class="muted" style="min-width:3em;text-align:right">${ts.length}<span>本</span></small></div>`;
+  };
+  const draw = () => {
+    const hs = Array.from({ length: 25 }, (_, h) => h);
+    m.set('1時間の型でつくる', `<p class="small" style="margin-top:0"><span>毎時 同じ分に出る${unit}の型をつくって、1日に くりかえします（パターンダイヤ）。停車駅は 種別の「停車駅のパターン」どおりです。</span></p>
+      <div class="mp-row small" style="align-items:center"><span>時間帯</span><select class="mp-inp" style="width:auto" data-h0>${hs.slice(0, 24).map(h => `<option value="${h}" ${h === st.h0 ? 'selected' : ''}>${h}</option>`).join('')}</select><span>時から</span>
+        <select class="mp-inp" style="width:auto" data-h1>${hs.slice(1).map(h => `<option value="${h}" ${h === st.h1 ? 'selected' : ''}>${h}</option>`).join('')}</select><span>時まで</span></div>
+      <div class="mp-list">${st.rows.map((r, i) => `<div class="mp-item" style="border-left:4px solid ${kindCol(D, r.k)}">
+        <div class="mp-row small" style="align-items:center;margin-top:0"><select class="mp-inp" style="width:auto" data-hk="${i}">${kindOpts(D, r.k)}</select>
+          <span class="mp-seg">${[[1, '下り'], [-1, '上り'], [0, '両方']].map(([v, l]) => `<button data-hd="${i}" data-v="${v}" class="${r.d === v ? 'on' : ''}">${l}</button>`).join('')}</span>
+          ${st.rows.length > 1 ? `<button class="btn" style="flex:none;margin-left:auto" data-hx="${i}">×</button>` : ''}</div>
+        <div class="mp-row small" style="align-items:center"><span>発車の分</span><input class="mp-inp" style="flex:1 1 120px" data-hm="${i}" value="${r.m.map(x => String(x).padStart(2, '0')).join(', ')}" inputmode="numeric" placeholder="00, 15, 30, 45">
+          <select class="mp-inp" style="width:auto" data-hn="${i}"><option value="">${esc(T('1時間に何本'))}</option>${HP_N.map(n => `<option value="${n}">${esc(T(`${n}本（${60 / n}分おき）`))}</option>`).join('')}</select></div>
+        ${secSel(r, i)}
+        <div class="mp-row small" style="align-items:center"><span>列車番号の頭</span><input class="mp-inp" style="width:5em" data-hp="${i}" value="${esc(r.pre)}" maxlength="4" placeholder="${esc(T('なし'))}">
+          <small class="muted" style="flex:1 1 auto">${esc(pnLine(D, r))}</small></div></div>`).join('')}</div>
+      <div class="mp-row"><button class="btn" data-hadd ${st.rows.length >= 20 ? 'disabled' : ''}>＋ 行を足す</button></div>
+      <div style="margin:6px 0"><b class="small">1時間の型</b>${bar(1)}${bar(-1)}<div class="small" style="margin-top:2px">${[...new Set(st.rows.map(r => r.k))].map(k => `<span style="white-space:nowrap;margin-right:8px">${kindSw(kindCol(D, k))}<span>${esc(kindL(k))}</span></span>`).join('')}</div></div>
+      <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-hrep ${st.rep ? 'checked' : ''}><span>この時間帯に出る${unit}（型の向き・毎日の${unit}）を消して、つくりなおす</span></label>
+      <div class="mp-row"><button class="btn" data-hq>見つもる</button><button class="btn main" data-hgo ${st.q && !st.busy ? '' : 'disabled'}>つくる</button></div>
+      <p class="small" data-hres style="margin:2px 0">${st.busy ? `<span class="muted">${T('見つもり中…')}</span>` : st.q ? (st.q.err ? `<span class="mp-warn">${esc(st.q.err)}</span>` : `<b>${esc(T(`${unit}を ${st.q.n}本 つくります`))}</b>${st.q.del ? `<span>${esc(T(`（いまの${unit} ${st.q.del}本 を消します）`))}</span>` : ''}`) : `<span class="muted">${esc(T('「見つもる」で本数をたしかめてから、つくります'))}</span>`}</p>
+      <p class="muted small"><span>列車番号は、向きごとに 発車の順で「時×100＋下り 1・3・5…／上り 2・4・6…」（頭をつけた行は 頭＋番号）。編成は、あとで「運用を自動で組む」で わりあてます。「↶ 取り消す」で もどせます。型は この系統に のこります。</span></p>`, b => {
+      const chg = () => { st.q = null; draw(); };
+      b.querySelector('[data-h0]').onchange = e => { st.h0 = Number(e.target.value); if (st.h1 <= st.h0) st.h1 = st.h0 + 1; chg(); };
+      b.querySelector('[data-h1]').onchange = e => { st.h1 = Number(e.target.value); if (st.h1 <= st.h0) st.h0 = st.h1 - 1; chg(); };
+      b.querySelectorAll('[data-hk]').forEach(x => x.onchange = () => { st.rows[Number(x.dataset.hk)].k = x.value; chg(); });
+      b.querySelectorAll('[data-hd]').forEach(x => x.onclick = () => { const r = st.rows[Number(x.dataset.hd)], v = Number(x.dataset.v); if (r.d !== v) { if ((r.d === -1) !== (v === -1)) { const a = r.sa; r.sa = r.sb; r.sb = a; } r.d = v; } chg(); });
+      b.querySelectorAll('[data-hx]').forEach(x => x.onclick = () => { st.rows.splice(Number(x.dataset.hx), 1); chg(); });
+      b.querySelectorAll('[data-hm]').forEach(x => x.onchange = () => { const r = st.rows[Number(x.dataset.hm)]; r.m = hpMins(x.value); chg(); });
+      b.querySelectorAll('[data-hn]').forEach(x => x.onchange = () => { const n = Number(x.value); if (!n) return; const r = st.rows[Number(x.dataset.hn)], f = r.m.length ? r.m[0] % (60 / n) : 0;
+        r.m = Array.from({ length: n }, (_, j) => Math.round(f + j * 60 / n) % 60).sort((a, c) => a - c); chg(); });
+      b.querySelectorAll('[data-hsa]').forEach(x => x.onchange = () => { st.rows[Number(x.dataset.hsa)].sa = Number(x.value) || null; chg(); });
+      b.querySelectorAll('[data-hsb]').forEach(x => x.onchange = () => { st.rows[Number(x.dataset.hsb)].sb = Number(x.value) || null; chg(); });
+      b.querySelectorAll('[data-hp]').forEach(x => x.onchange = () => { st.rows[Number(x.dataset.hp)].pre = x.value.trim().slice(0, 4); chg(); });
+      b.querySelector('[data-hadd]').onclick = () => { const l = st.rows[st.rows.length - 1]; st.rows.push({ k: l ? l.k : '普通', d: l ? l.d : 0, m: [0, 30], sa: null, sb: null, pre: '' }); chg(); };
+      b.querySelector('[data-hrep]').onchange = e => { st.rep = e.target.checked; chg(); };
+      const args = dry => ({ p_route: D.id, p_rows: st.rows.map(r => ({ k: r.k, d: r.d, m: r.m, sa: r.sa, sb: r.sb, pre: r.pre })), p_h0: st.h0, p_h1: st.h1, p_replace: st.rep, p_as: S.as, p_dry: dry });
+      b.querySelector('[data-hq]').onclick = async () => {
+        if (st.rows.some(r => !r.m.length)) return toast('発車の分を入れてください');
+        st.busy = true; draw();
+        try { const r = await call('mp_train_pattern', args(true)); st.q = { n: r.n, del: r.del }; } catch (e) { st.q = { err: errJa(e.message) }; }
+        st.busy = false; draw();
+      };
+      b.querySelector('[data-hgo]').onclick = async () => {
+        if (!st.q || st.q.err) return;
+        if (st.q.del && !await confirm2(T(`いまの${unit} ${st.q.del}本 を消して、${st.q.n}本 つくりますか？`), { what: T(`${unit} ${st.q.del}本`), q: '消して つくりなおしますか？', ok: 'つくる', note: '「↶ 取り消す」で もどせます。' })) return;
+        const r = await api('mp_train_pattern', args(false));
+        if (r) { toast(T(`${r.n}本つくりました`)); m.close(); runListStale(); reload(); }
+      };
+    });
+  };
+  draw();
+}
+// 行の停車駅（種別の停車駅のパターン）のひとこと
+function pnLine(D, r) {
+  const p = (D.pats || {})[r.k];
+  if (!p || !p.length) return T(`「${kindL(r.k)}」は各駅に停車`);
+  const ns = D.stops.filter(x => p.includes(x.id)).map(x => x.name);
+  return T(`「${kindL(r.k)}」の停車駅のパターン`) + '：' + T('通過') + ' ' + ns.slice(0, 6).join('・') + (ns.length > 6 ? '…' : '');
+}
+/* ---------- 運用番号を種別ごとにまとめる（DB の更新104）：この系統の毎日の列車の運用を、いちばん多く走る種別で分けて、
+   種別ごとに 頭＋はじめの番号から（例：快速は 101・102…）。見つもり（だぶり）を見てから つけなおす ---------- */
+function opsRenum(D, reload) {
+  const daily = D.trains.filter(t => !t.day && t.onum);
+  const ko = k => { const x = (D.kinds || []).find(y => y.name === k); return x ? x.prio * 100 + (KINDS.indexOf(k) + 1) : 999; };
+  const kinds = [...new Set(daily.map(t => t.kind))].sort((a, b) => ko(a) - ko(b) || a.localeCompare(b, 'ja'));
+  const cfg = new Map(kinds.map((k, i) => [k, { on: true, pre: '', st: String((i + 1) * 100 + 1) }]));
+  const st = { q: null, busy: false, seq: 0 };
+  const m = modal(['運用番号を種別ごとにまとめる', '']);
+  const map = () => { const o = {}; for (const [k, c] of cfg) if (c.on) o[k] = { pre: c.pre, st: c.st }; return o; };
+  const quote = async () => {
+    const my = ++st.seq; st.busy = true; draw();
+    let q = null; try { q = await call('mp_ops_renum_kind', { p_route: D.id, p_map: map(), p_as: S.as, p_dry: true }); } catch (e) { q = { err: errJa(e.message) }; }
+    if (my !== st.seq) return; st.q = q; st.busy = false; draw();
+  };
+  const draw = () => {
+    const L = st.q && st.q.list || [], dup = new Set(st.q && st.q.dup || []);
+    m.set('運用番号を種別ごとにまとめる', `<p class="small" style="margin-top:0"><span>この系統の毎日の列車が入っている運用を、この系統で いちばん多く走る種別で分けて、種別ごとに 運用番号を つけなおします（はじめの列車が早い順）。</span></p>
+      <div class="mp-list">${kinds.map(k => { const c = cfg.get(k), n = L.filter(x => x.k === k).length; return `<div class="mp-item" style="border-left:4px solid ${kindCol(D, k)}"><div class="mp-row small" style="align-items:center;margin:0">
+          <label style="display:inline-flex;gap:6px;align-items:center;flex:1 1 auto"><input type="checkbox" data-ron="${esc(k)}" ${c.on ? 'checked' : ''}><b><span>${esc(kindL(k))}</span></b>${st.q && !st.q.err && c.on ? `<small class="muted">（<span>運用 ${n}つ</span>）</small>` : ''}</label>
+          <span>頭</span><input class="mp-inp" style="width:4em" data-rpre="${esc(k)}" value="${esc(c.pre)}" maxlength="4" placeholder="${esc(T('なし'))}">
+          <span>はじめの番号</span><input class="mp-inp" style="width:5em" data-rst="${esc(k)}" value="${esc(c.st)}" maxlength="4" inputmode="numeric"></div>
+        ${c.on && L.some(x => x.k === k) ? `<small translate="no">${L.filter(x => x.k === k).slice(0, 6).map(x => `${esc(x.old)} → <b style="${dup.has(x.new) ? 'color:#c33' : ''}">${esc(x.new)}</b>`).join('・')}${n > 6 ? '…' : ''}</small>` : ''}</div>`; }).join('')}</div>
+      <p class="small" style="margin:4px 0">${st.busy ? `<span class="muted">${esc(T('見つもり中…'))}</span>` : !st.q ? '' : st.q.err ? `<span class="mp-warn">${esc(st.q.err)}</span>`
+        : dup.size ? `<span class="mp-warn">${esc(T('ほかの運用と だぶる番号があります（赤）。頭か はじめの番号を変えてください'))}</span>` : `<b>${esc(T(`運用 ${st.q.n}つ の番号を つけなおします`))}</b>`}</p>
+      <div class="mp-row"><button class="btn main" data-rgo ${st.q && !st.q.err && !dup.size && st.q.n > 0 && !st.busy ? '' : 'disabled'}>つけなおす</button></div>
+      <p class="muted small"><span>つけなおす前に、運用のバックアップを自動でとります（≡ →「運用」→「バックアップ」から もどせます）。運用番号は 名義で1つです。ほかの系統も走る運用も、この系統で いちばん多い種別で分けます。</span></p>`, b => {
+      let tm = 0; const later = () => { clearTimeout(tm); tm = setTimeout(quote, 400); };
+      b.querySelectorAll('[data-ron]').forEach(x => x.onchange = () => { cfg.get(x.dataset.ron).on = x.checked; quote(); });
+      b.querySelectorAll('[data-rpre]').forEach(x => x.oninput = () => { cfg.get(x.dataset.rpre).pre = x.value.trim().slice(0, 4); later(); });
+      b.querySelectorAll('[data-rst]').forEach(x => x.oninput = () => { cfg.get(x.dataset.rst).st = hw(x.value).replace(/[^0-9]/g, '').slice(0, 4); later(); });
+      b.querySelector('[data-rgo]').onclick = async () => {
+        const r = await api('mp_ops_renum_kind', { p_route: D.id, p_map: map(), p_as: S.as, p_dry: false });
+        if (r) { toast(T(`運用番号を ${r.n}つ つけなおしました`)); m.close(); reload(); }
+      };
+    });
+  };
+  draw(); quote();
 }
 /* ---------- 運転整理（DB の更新100）：列車ごと・まとめて「○○駅で打ち切り」「延長運転（同じ系統の先の駅まで）」「途中から運転」「始発を延ばす」「臨時停車」「通過」「時刻をずらす」「運休」。
    毎日（ふだんのダイヤの列車を変える）か、日をきめて（31日まで・60日先まで・曜日も）。日をきめた分は、その日だけ走る「運転整理の列車」になり、もとの列車は その日は走らない ---------- */
@@ -7206,7 +7430,8 @@ async function autoForm(D, reload) {
   const counted = D.kind === 'rail' || D.kind === 'bus', unit = D.kind === 'bus' ? '台' : '両', fu = D.kind === 'ship' ? '隻' : D.kind === 'air' ? '機' : '編成';
   const serN = c => ((S.boot && S.boot.series) || []).find(x => x.code === c)?.name || c || '';
   const ns = [...new Set(forms.map(f => f.perf.n))].sort((a, b) => a - b), sers = [...new Set(forms.map(f => f.perf.series || ''))].filter(Boolean).sort();
-  let fn = null, fsr = null;
+  let fn = null, fsr = null, fpw = null;   // fpw：電化方式（DB の更新104）
+  const fPw = f => pwCls(!!(f.perf && f.perf.elec), (f.perf && f.perf.ps) || 0), pwsF = PW_O.filter(k => k && forms.some(f => fPw(f) === k));
   // 種別ごと（DB の更新97）：種別 → えらんだ編成。前に保存した えらびかた（いまもある、この系統で使える編成だけ・1つの編成は1つの種別だけ）
   const fid = new Set(forms.map(f => f.id)), kmap = new Map(kinds.map(k => [k, new Set()])), saved = (kf && kf.kform) || {};
   for (const k of kinds) for (const id of saved[k] || []) if (fid.has(id) && ![...kmap.values()].some(z => z.has(id))) kmap.get(k).add(id);
@@ -7215,12 +7440,14 @@ async function autoForm(D, reload) {
   const elsewhere = f => f.trains > D.trains.filter(t => t.form === f.id).length;   // ほかの系統の列車にも入っている編成（「ぜんぶえらぶ」ではえらばない）
   const fLabel = f => `${D.kind === 'ship' || D.kind === 'air' ? `便${f.trains}本` : D.kind === 'bus' ? `${f.perf.n}台・列車${f.trains}本` : `${f.perf.n}両・列車${f.trains}本`}`;
   const filters = () => `${counted && ns.length > 1 ? `<div class="mp-row small" style="align-items:center"><span>${unit === '台' ? '台数' : '両数'}</span><span class="mp-seg" style="flex-wrap:wrap"><button data-an="" class="${fn == null ? 'on' : ''}">すべて</button>${ns.map(n => `<button data-an="${n}" class="${fn === n ? 'on' : ''}">${T(`${n}${unit}`)}</button>`).join('')}</span></div>` : ''}
-      ${sers.length > 1 ? `<div class="mp-row small" style="align-items:center"><span>形式</span><span class="mp-seg" style="flex-wrap:wrap"><button data-as="" class="${fsr == null ? 'on' : ''}">すべて</button>${sers.map(c => `<button data-as="${esc(c)}" class="${fsr === c ? 'on' : ''}"><span translate="no">${esc(serN(c))}</span></button>`).join('')}</span></div>` : ''}`;
+      ${sers.length > 1 ? `<div class="mp-row small" style="align-items:center"><span>形式</span><span class="mp-seg" style="flex-wrap:wrap"><button data-as="" class="${fsr == null ? 'on' : ''}">すべて</button>${sers.map(c => `<button data-as="${esc(c)}" class="${fsr === c ? 'on' : ''}"><span translate="no">${esc(serN(c))}</span></button>`).join('')}</span></div>` : ''}
+      ${D.kind === 'rail' && pwsF.length > 1 ? `<div class="mp-row small" style="align-items:center"><span>電化</span><span class="mp-seg" style="flex-wrap:wrap"><button data-ap="" class="${fpw == null ? 'on' : ''}">すべて</button>${pwsF.map(c => `<button data-ap="${c}" class="${fpw === c ? 'on' : ''}"><span>${PW_L[c]}</span><small>（${forms.filter(f => fPw(f) === c).length}）</small></button>`).join('')}</span></div>` : ''}`;
   const modeRow = () => kinds.length > 1 ? `<div class="mp-row small" style="align-items:center"><span>使う編成</span><span class="mp-seg"><button data-mode="all" class="${mode === 'all' ? 'on' : ''}">いっしょに</button><button data-mode="kind" class="${mode === 'kind' ? 'on' : ''}">種別ごとに</button></span></div>` : '';
   const bindCommon = b => {
     b.querySelectorAll('[data-mode]').forEach(x => x.onclick = () => { mode = x.dataset.mode; ek = null; draw(); });
     b.querySelectorAll('[data-an]').forEach(x => x.onclick = () => { fn = x.dataset.an === '' ? null : Number(x.dataset.an); draw(); });
     b.querySelectorAll('[data-as]').forEach(x => x.onclick = () => { fsr = x.dataset.as === '' ? null : x.dataset.as; draw(); });
+    b.querySelectorAll('[data-ap]').forEach(x => x.onclick = () => { fpw = x.dataset.ap === '' ? null : x.dataset.ap; draw(); });
   };
   const done = r => { if (r) { toast(T(`${r.ok}本にわりあてました（${r.used}編成）`) + (r.none ? SEP() + T(`・${r.none}本は編成が足りません`) : '') + (r.busy ? SEP() + T(`・${r.busy}編成はほかの種別の列車に入っているので使いませんでした`) : '')); m.close(); reload(); } };
   // 種別ごと：まとめて わりあてる（まだのサーバー＝DB の更新97の前 では、種別ごとに順に。えらびかたの保存はなし）
@@ -7236,14 +7463,14 @@ async function autoForm(D, reload) {
     done(sum);
   };
   const draw = () => {
-    const vis = forms.filter(f => (fn == null || f.perf.n === fn) && (fsr == null || f.perf.series === fsr));
+    const vis = forms.filter(f => (fn == null || f.perf.n === fn) && (fsr == null || f.perf.series === fsr) && (fpw == null || fPw(f) === fpw));
     if (mode === 'kind' && ek == null) {   // 種別ごと：種別の一覧
       const on = kinds.filter(k => kmap.get(k).size), busyF = daily.some(t => !kmap.get(t.kind).size && t.form);
       const nm = id => (forms.find(f => f.id === id) || {}).name || id;
       m.set('運用を自動で組む', `<p class="small" style="margin-top:0">種別ごとに使う編成をえらんで、その種別の列車にわりあてます（始発駅にいて、2分前にあいている編成）</p>
         ${modeRow()}
         <div class="mp-list">${kinds.map(k => { const z = [...kmap.get(k)]; return `<div class="mp-item"><div class="mp-row" style="align-items:center;margin:0">
-            <b style="flex:1 1 auto"><span>${esc(kindL(k))}</span> <small class="muted">（${daily.filter(t => t.kind === k).length}本）</small></b>
+            <b style="flex:1 1 auto">${kindSw(kindCol(D, k))}<span>${esc(kindL(k))}</span> <small class="muted">（${daily.filter(t => t.kind === k).length}本）</small><br><small class="muted" style="font-weight:400">${esc(pnLine(D, { k }))}</small></b>
             <button class="btn ${z.length ? '' : 'main'}" data-kedit="${esc(k)}">${z.length ? '編成を変える' : '編成をえらぶ'}</button></div>
             <small>${z.length ? `<span>${z.length}${fu}えらんでいます</span>：<span translate="no">${z.slice(0, 8).map(id => esc(nm(id))).join('・')}${z.length > 8 ? '…' : ''}</span>` : '<span class="muted">えらんでいません（この種別の列車は、いまのまま）</span>'}</small></div>`; }).join('')}</div>
         <div class="mp-row"><button class="btn main" data-okk ${on.length ? '' : 'disabled'}>わりあてる</button></div>
@@ -7358,22 +7585,27 @@ async function opsBackup(reload) {
 }
 async function openOps() {
   const m = modal(['運用', '<p class="muted small">読みこんでいます…</p>'], null, 'mp-wide');
-  let D = null, kind = 'rail', flt = 'all';
-  const sel = new Set();   // まとめて消す・編集する運用（2026-10-28）
-  const load = async () => { D = await api('mp_ops_list', { p_as: S.as }); if (!D) return m.close(); for (const id of [...sel]) if (!D.ops.some(o => o.id === id)) sel.delete(id); draw(); };
+  let D = null, kind = 'rail', flt = 'all', KD = null;
+  const sel = new Set(), kf = new Set();   // まとめて消す・編集する運用（2026-10-28）・種別で しぼりこむ（DB の更新104：o.ks）
+  const load = async () => { const [d, kd] = await Promise.all([api('mp_ops_list', { p_as: S.as }), KD ? null : call('mp_kinds_list', { p_as: S.as }).catch(() => null)]); D = d; if (kd) KD = { kinds: kd };
+    if (!D) return m.close(); for (const id of [...sel]) if (!D.ops.some(o => o.id === id)) sel.delete(id); draw(); };
   // 絞りこみ：走れない列車がある・注意がある・編成なし・列車なし
   const FLT = [['all', 'すべて', () => true], ['bad', '走れない列車あり', o => o.bad > 0], ['warn', '注意あり', o => o.warn > 0], ['noform', '編成なし', o => !o.form], ['empty', '列車なし', o => !o.trains]];
   const exportOps = async (ids, name) => { const r = await api('mp_op_export', { p_ops: ids, p_as: S.as }); if (r) { saveJson(name, r); toast('書き出しました'); } };
   const draw = () => {
-    const LK = D.ops.filter(o => o.kind === kind), fx = (FLT.find(f => f[0] === flt) || FLT[0])[2], L = LK.filter(fx), forms = D.forms.filter(f => fKind(f) === kind);
+    const LK = D.ops.filter(o => o.kind === kind), fx = (FLT.find(f => f[0] === flt) || FLT[0])[2], forms = D.forms.filter(f => fKind(f) === kind);
+    const KS = [...new Set(LK.flatMap(o => o.ks || []))].sort((a, b) => (KINDS.indexOf(a) + 1 || 99) - (KINDS.indexOf(b) + 1 || 99) || a.localeCompare(b, 'ja'));
+    for (const k of [...kf]) if (!KS.includes(k)) kf.delete(k);
+    const L = LK.filter(fx).filter(o => !kf.size || (o.ks || []).some(k => kf.has(k)));
     const nsel = LK.filter(o => sel.has(o.id)).length;
     m.set('運用', `<p class="small" style="margin:0">${esc(asName())}</p>
       <div class="tabs-s" style="margin-top:6px">${[['rail', '鉄道'], ['bus', 'バス'], ['ship', '船'], ['air', '飛行機']].map(t => `<button data-kind="${t[0]}" class="${kind === t[0] ? 'on' : ''}">${t[1]}</button>`).join('')}</div>
       <div class="mp-row small" style="align-items:center"><span class="mp-seg" style="flex-wrap:wrap">${FLT.map(f => `<button data-flt="${f[0]}" class="${flt === f[0] ? 'on' : ''}"><span>${f[1]}</span>${f[0] === 'all' ? '' : `（${LK.filter(f[2]).length}）`}</button>`).join('')}</span></div>
+      ${KS.length > 1 ? `<div class="mp-row small" style="align-items:center"><span style="min-width:3em">種別</span><span class="mp-seg" style="flex-wrap:wrap"><button data-okf="*" class="${kf.size ? '' : 'on'}">すべて</button>${KS.map(k => `<button data-okf="${esc(k)}" class="${kf.has(k) ? 'on' : ''}">${kindSw(kindCol(KD, k))}<span>${esc(kindL(k))}</span>（${LK.filter(o => (o.ks || []).includes(k)).length}）</button>`).join('')}</span></div>` : ''}
       <div class="mp-row small" style="align-items:center"><button class="btn" data-sall ${L.length ? '' : 'disabled'}>表示中をぜんぶえらぶ</button>${nsel ? `<button class="btn" data-snone>えらぶのをやめる</button><b><span>${nsel}つ えらんでいます</span></b>
         <button class="btn main" data-bedit>まとめて編集</button><button class="btn" data-bex>書き出す</button><button class="btn" data-bdel>まとめて消す</button>` : '<span class="muted">運用の左の □ でえらぶと、まとめて消す・編集できます</span>'}</div>
       <div class="mp-list" style="margin-top:8px">${L.map(o => `<div class="mp-item">
-          <label style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" data-sel="${o.id}" ${sel.has(o.id) ? 'checked' : ''}><b>${esc(o.num)}</b></label> <small class="muted"><span>列車 ${o.trains}本</span>${o.daily !== o.trains ? `<span>（臨時 ${o.trains - o.daily}本）</span>` : ''}${o.cpl ? `<span>・連結 ${o.cpl}本</span>` : ''}${o.first != null ? `<span>・${hms(o.first)}〜${hms(o.last)}</span>` : ''}${o.routes.length ? `<span>・</span><span>${o.routes.map(esc).join('・')}</span>` : ''}</small>
+          <label style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" data-sel="${o.id}" ${sel.has(o.id) ? 'checked' : ''}><b>${esc(o.num)}</b></label> ${(o.ks || []).map(k => `<small style="white-space:nowrap">${kindSw(kindCol(KD, k))}<span>${esc(kindL(k))}</span></small>`).join(' ')} <small class="muted"><span>列車 ${o.trains}本</span>${o.daily !== o.trains ? `<span>（臨時 ${o.trains - o.daily}本）</span>` : ''}${o.cpl ? `<span>・連結 ${o.cpl}本</span>` : ''}${o.first != null ? `<span>・${hms(o.first)}〜${hms(o.last)}</span>` : ''}${o.routes.length ? `<span>・</span><span>${o.routes.map(esc).join('・')}</span>` : ''}</small>
           ${o.bad ? `<small class="mp-warn">・<span>走れない列車 ${o.bad}本</span></small>` : ''}${o.warn ? `<small class="mp-warn">・<span>注意 ${o.warn}本</span></small>` : ''}${o.note ? `<br><small>${esc(o.note)}</small>` : ''}
           <div class="mp-row small" style="align-items:center"><span>編成</span><select class="mp-inp" style="flex:1 1 140px" data-of="${o.id}"><option value="">（入れない）</option>${forms.map(f => `<option value="${f.id}" ${o.form === f.id ? 'selected' : ''} ${f.ok ? '' : 'disabled'}>${esc(T(f.op && f.op !== o.num ? (kind === 'ship' || kind === 'air' ? `${f.name}・いまは運用 ${f.op}` : kind === 'bus' ? `${f.name}（${f.perf.n}台）・いまは運用 ${f.op}` : `${f.name}（${f.perf.n}両）・いまは運用 ${f.op}`) : kind === 'ship' || kind === 'air' ? f.name : kind === 'bus' ? `${f.name}（${f.perf.n}台）` : `${f.name}（${f.perf.n}両）`))}</option>`).join('')}</select>
             <button class="btn" data-oren="${o.id}">運用番号</button><button class="btn" data-oex="${o.id}">書き出す</button><button class="btn" data-odel="${o.id}">消す</button></div></div>`).join('')
@@ -7383,6 +7615,7 @@ async function openOps() {
       <p class="muted small">列車は運用に入れ、運用に編成を入れます。編成を変えると、その運用の列車ぜんぶの編成が変わります（ほかの運用に入っていた編成は、そちらからはずれます）。運用ファイル（JSON）を読みこむと、ファイルにある運用の列車が、ファイルの列車に入れかわります${D.free ? `<span>（運用に入っていない列車 ${D.free}本）</span>` : ''}</p>`, b => {
       b.querySelectorAll('[data-kind]').forEach(x => x.onclick = () => { kind = x.dataset.kind; draw(); });
       b.querySelectorAll('[data-flt]').forEach(x => x.onclick = () => { flt = x.dataset.flt; draw(); });
+      b.querySelectorAll('[data-okf]').forEach(x => x.onclick = () => { const v = x.dataset.okf; if (v === '*') kf.clear(); else if (kf.has(v)) kf.delete(v); else kf.add(v); draw(); });
       b.querySelectorAll('[data-sel]').forEach(x => x.onchange = () => { const id = Number(x.dataset.sel); if (x.checked) sel.add(id); else sel.delete(id); draw(); });
       b.querySelector('[data-sall]').onclick = () => { for (const o of L) sel.add(o.id); draw(); };
       { const e = b.querySelector('[data-snone]'); if (e) e.onclick = () => { for (const o of LK) sel.delete(o.id); draw(); }; }
@@ -7876,9 +8109,9 @@ const mixW = (c, f) => { const n = parseInt(String(c).slice(1), 16); if (!Number
 function bcol(k) { if (BK[k]) return BK[k]; const p = pOf(k); if (!p || !p.c) return ['#bbb', '#eee', '#ccc']; return (BK[k] = [p.c, mixW(p.c, 0.72), mixW(p.c, 0.5)]); }
 // 高さで屋根をずらす（北西へ。見下ろしている感じ）
 const bldShift = f => { const h = Math.max(0, f) * 3.5; return [-h * 0.25 / 50, -h * 0.45 / 50]; };
-// 建物：[id, 筆, 種類, 階, 区画 [X0, Y0, …], 名前, 入っている%, 1 他人・2 自分]
+// 建物：[id, 筆, 種類, 階, 区画 [X0, Y0, …], 名前, 入っている%, 1 他人・2 自分, 見た目（1〜10。null は自動）, 向き（0〜345度。null は自動）]（DB の更新103）
 function prepBld(a) {
-  const b = { id: a[0], parcel: a[1], kind: a[2], floors: a[3], name: a[5] || '', occ: a[6], own: a[7], set: new Set() };
+  const b = { id: a[0], parcel: a[1], kind: a[2], floors: a[3], name: a[5] || '', occ: a[6], own: a[7], lk: a[8] || 0, rot: a[9] == null ? null : a[9], sc: a[10] || null, set: new Set() };
   const c = a[4] || [];
   for (let i = 0; i + 1 < c.length; i += 2) b.set.add(c[i] + ',' + c[i + 1]);
   const [dx, dy] = bldShift(b.floors); b.dx = dx; b.dy = dy;
@@ -8298,6 +8531,7 @@ function bFeats(p, o) {
   return f.join('');
 }
 async function bldStart(P) {
+  lookOn();   // 見た目をえらべるサーバーか（t65）
   const m = modal(['建物を建てる', '<p class="muted small">読みこんでいます…</p>'], null, 'mp-wide');
   const ops = await api('mp_bld_options', { p_parcel: P.id, p_as: S.as }); if (!ops) return m.close();
   const catOf = o => { const c = (pOf(o.k) || {}).cat; return CATS.includes(c) ? c : 'ind'; };
@@ -8340,6 +8574,7 @@ async function bldDesign(P, pr, o) {
     ${flat ? '' : `<div class="mp-row" data-shapes>${pr.sh.map(s => `<button class="btn" data-sh="${s}">${SHAPE_NAME[s] || s}</button>`).join('')}</div>
       <div class="mp-row"><b style="white-space:nowrap">階数</b><input type="range" class="mp-fl" style="flex:1" min="${pr.f0}" max="${pr.f1}" value="${st.floors}"><b class="mp-fln" style="min-width:3.5em;text-align:right"></b></div>`}
     ${(pr.opt || []).includes('shop1') ? `<label class="mp-row small" style="gap:6px"><input type="checkbox" class="mp-opt"> <span>1階を店舗にする</span></label>` : ''}
+    ${lookOn() ? lookHtml() : ''}
     <div class="mp-row"><input class="mp-inp" maxlength="30" placeholder="名前（空ならおまかせ）"></div>
     <div class="mp-kv" data-q></div>
     <div class="mp-row"><button class="btn" data-est>見つもる</button><button class="btn main" data-go disabled>建てる</button></div>`, b => {
@@ -8361,13 +8596,17 @@ async function bldDesign(P, pr, o) {
         if (q.floors > 0) g.fillText(T(`${q.floors}階`), W / 2, H - 9 > oy + (y1 - y0) * sc ? H - 9 : 10);
       }
     };
+    // 見た目（t65）：建てるときは無料でえらべる（はじめは どれかを えらんでおく）。ためし見は 見つもった形（なければ 土地の形）・階数で
+    const pCells = () => [...(S.vis && S.vis.parcels.get(P.id) ? S.vis.parcels.get(P.id).cells : [])].map(k => k.split(',').map(Number));
+    const lk = lookBind(b, { kind: pr.k, floors: () => Math.max(0, Math.min(st.floors, pr.f1)), id: 0, pick: v => { st.look = v; }, rot: null, pickRot: pr.f1 > 0 ? v => { st.rot = v; } : null,
+      cells: () => { if (last && last.cells) { const o = []; for (let i = 0; i + 1 < last.cells.length; i += 2) o.push([last.cells[i], last.cells[i + 1]]); return o; } return pCells(); } });
     // 見つもりは「見つもる」を押してから。形・階数を変えたら、やりなおし
-    const changed = () => { ++seq; last = null; go.disabled = true; qv.innerHTML = '<b>見つもり</b><span class="muted small">「見つもる」を押すと、工事費と部屋が出ます</span>'; draw(null); };
+    const changed = () => { ++seq; last = null; go.disabled = true; qv.innerHTML = '<b>見つもり</b><span class="muted small">「見つもる」を押すと、工事費と部屋が出ます</span>'; draw(null); lk.later(); };
     const quote = async () => {
       const my = ++seq; go.disabled = true; qv.innerHTML = '<b>見つもり</b><span class="muted small">見つもり中…</span>';
       const q = await api('mp_bld_quote', { p_parcel: P.id, p_kind: pr.k, p_shape: st.shape, p_floors: st.floors, p_opt: st.opt, p_as: S.as });
       if (my !== seq) return;
-      last = q; draw(q);
+      last = q; draw(q); lk.later();
       if (!q) { qv.innerHTML = '<b>見つもり</b><span class="mp-warn">建てられません</span>'; return; }
       const fe = b.querySelector('[data-ft]'); if (fe) fe.innerHTML = bFeats(pr, q);
       if (fl) { fl.min = q.f0; fl.max = q.f1; if (Number(fl.value) !== q.floors) fl.value = q.floors; st.floors = q.floors; }
@@ -8393,14 +8632,211 @@ async function bldDesign(P, pr, o) {
       go.disabled = true;
       const r = await api('mp_bld_build', { p_parcel: P.id, p_kind: pr.k, p_shape: st.shape, p_floors: st.floors, p_opt: st.opt, p_name: st.name, p_as: S.as }, '建てました');
       go.disabled = false;
+      if (r && (st.look || st.rot != null)) await lookSave(r.id, st.look, st.rot, S.as);   // 見た目と向き（t65。建てた直後は無料）
       if (r) { m.close(); refreshP(P); sheet(null); openBld(r.id); }
     };
     sync(); changed(); if (fln) fln.textContent = T(`${st.floors}階`);
   });
 }
 
+/* ---- 建物の見た目と向き（t65・DB の更新103）：建てるときに えらぶ（無料）。あとで変えるのは 見た目は外装工事・向きは曳家工事（前からある建物は はじめの1回は無料） ---- */
+// サーバーが 103 より前なら出さない（app_ver。わからないときは出す）
+function lookOn() {
+  if (!window.M3Look) return false;
+  if (S.lookDB === undefined) { S.lookDB = null; call('app_ver').then(v => { S.lookDB = !(v && v.db && v.db < 103); S.dbv = v && v.db ? v.db : 0; S.dirty = true; }).catch(() => {}); }
+  return S.lookDB !== false;
+}
+const lookHtml = () => `<div class="mp-look" data-look><div class="mp-row" style="margin:2px 0 0"><b>見た目</b><small class="muted" data-lkn></small></div>
+  <canvas width="360" height="220" style="width:100%;max-width:360px;height:auto;display:block;margin:2px auto;border:1px solid var(--line,#ddd);border-radius:10px;background:#dce7ef"></canvas>
+  <div class="mp-row" data-lks style="flex-wrap:wrap;gap:4px"></div>
+  <div class="mp-row" data-rotrow style="gap:4px;margin-top:4px"><b style="white-space:nowrap">向き</b><button class="btn" data-rl style="padding:3px 8px">⟲ 15°</button><b data-rotv style="min-width:6.5em;text-align:center"></b><button class="btn" data-rr style="padding:3px 8px">15° ⟳</button><button class="btn" data-ra style="padding:3px 8px">道にそろえる</button></div></div>`;
+const lookName = n => String(n || '').split('・').map(s => T(s)).join('・');
+// 向き（正面の方角。北 0・東 90・南 180・西 270）の名前。null は自動（近くの道のほう）
+const ROT_N = ['北', '北東', '東', '南東', '南', '南西', '西', '北西'];
+const rotName = r => r == null ? T('自動（道のほう）') : (r % 45 === 0 ? T(ROT_N[r / 45]) + ' ' : '') + r + '°';
+// えらぶところ（b の中の [data-look]）。o = { kind, floors(), cells(), id, cur（番号か (数) => 番号）, pick(番号), rot（向き。null は自動）, pickRot(向き) }
+//   返り値の later() で ためし見を描きなおす
+function lookBind(b, o) {
+  const el = b.querySelector('[data-look]'), R = { later() {} };
+  if (!el || !window.M3Look) return R;
+  const cv = el.querySelector('canvas'), lks = el.querySelector('[data-lks]'), nm = el.querySelector('[data-lkn]'), rv = el.querySelector('[data-rotv]');
+  let names = null, cur = 0, tm = 0, rot = o.rot == null ? null : o.rot;
+  const paint = () => { if (names) window.M3Look.draw(cv, { kind: o.kind, floors: o.floors(), cells: o.cells(), look: cur, id: o.id, rot }).catch(() => {}); };
+  R.later = () => { clearTimeout(tm); tm = setTimeout(paint, 160); };
+  const chips = () => {
+    lks.innerHTML = names.map((n, i) => `<button class="btn${i + 1 === cur ? ' main' : ''}" data-lk="${i + 1}" style="padding:3px 8px;font-size:12px">${esc(lookName(n))}</button>`).join('');
+    lks.querySelectorAll('[data-lk]').forEach(x => x.onclick = () => { cur = Number(x.dataset.lk); o.pick(cur); chips(); paint(); });
+    nm.textContent = `${cur} / ${names.length}`;
+  };
+  // 向き：15度ずつ（右まわり ⟳ は 方角が ふえる）。自動からは 南（道が南のとき）から
+  const rows = () => { rv.textContent = rotName(rot); el.querySelector('[data-ra]').classList.toggle('main', rot == null); };
+  const turn = d => { rot = (((rot == null ? 180 : rot) + d) % 360 + 360) % 360; if (o.pickRot) o.pickRot(rot); rows(); R.later(); };
+  el.querySelector('[data-rl]').onclick = () => turn(-15); el.querySelector('[data-rr]').onclick = () => turn(15);
+  el.querySelector('[data-ra]').onclick = () => { rot = null; if (o.pickRot) o.pickRot(null); rows(); R.later(); };
+  if (!o.pickRot) el.querySelector('[data-rotrow]').remove(); else rows();
+  nm.textContent = T('読みこんでいます…');
+  window.M3Look.looks(o.kind).then(ns => {
+    names = ns; if (!names || !names.length) { el.remove(); return; }
+    const c0 = typeof o.cur === 'function' ? o.cur(names.length) : o.cur;
+    cur = c0 >= 1 && c0 <= names.length ? c0 : 1 + Math.floor(Math.random() * names.length);
+    o.pick(cur, true); chips(); paint();   // true：はじめの（えらんだのではない）
+  }).catch(() => el.remove());
+  return R;
+}
+// 建てた直後に（無料）。古いサーバー（関数がない）なら、つぎから えらぶところを出さない
+async function lookSave(bid, look, rot, as) {
+  try { await call('mp_bld_look', { p_bld: bid, p_look: look || null, p_rot: rot == null ? null : rot, p_as: as }); return true; }
+  catch (e) { if (/mp_bld_look|function|schema cache/i.test(String(e && e.message))) S.lookDB = false; return false; }
+}
+// 建物の画面の「見た目」と「向き」（look_cost があるのは 103 のサーバー）
+const lookRow = d => 'look_cost' in d ? `<b>見た目</b><span><span data-lkname>…</span>${d.look_ok ? ' <button class="btn" data-lkchg style="padding:2px 8px">変える</button>' : ''}</span>
+  <b>向き</b><span>${esc(rotName(d.rot))}</span>` : '';
+function lookRowBind(b, d, load) {
+  const el = b.querySelector('[data-lkname]'); if (!el) return;
+  if (!window.M3Look) { el.textContent = d.look ? String(d.look) : T('おまかせ'); return; }
+  window.M3Look.looks(d.kind).then(ns => { const i = d.look && d.look <= ns.length ? d.look : window.M3Look.auto(d.id, ns.length); el.textContent = lookName(ns[i - 1] || '') + (d.look ? '' : T('（おまかせ）')); }).catch(() => { el.textContent = '—'; });
+  const bt = b.querySelector('[data-lkchg]'); if (bt) bt.onclick = () => lookChange(d, load);
+}
+function lookChange(d, done) {
+  const bb = S.vis && S.vis.blds && S.vis.blds.get(d.id), cells = bb ? [...bb.set].map(k => k.split(',').map(Number)) : null;
+  const free = d.style_free != null ? !!d.style_free : (!d.look || d.gov), r0 = d.rot == null ? null : d.rot;
+  let pick = 0, upick = false, rot = r0;
+  const lch = () => upick && pick !== (d.look || 0), rch = () => rot !== r0, cost = () => free ? 0 : (lch() ? d.look_cost : 0) + (rch() ? d.rot_cost || 0 : 0);
+  const m = modal(['見た目と向きを変える', '']);
+  m.set('見た目と向きを変える', `${lookHtml()}<p class="small" data-lkc style="margin:4px 0"></p>
+    <div class="mp-row"><button class="btn main" data-lkgo>これにする</button></div>
+    <p class="muted small" style="margin:4px 0 0"><span>見た目と向きは 3D の地図にあらわれます。</span>${free ? '<span>はじめの1回は無料です。</span>' : '<span>見た目を変えるのは外装工事（建てたときの工事費の10%。いちばん安くて1万 X）、向きを変えるのは曳家工事（30%。いちばん安くて3万 X）です</span>'}</p>`, b => {
+    const cl = b.querySelector('[data-lkc]'), go = b.querySelector('[data-lkgo]');
+    // 変えたもの（見た目は ボタンを押したときだけ）の 工事費：見た目は外装工事・向きは曳家工事（はじめの1回は無料）
+    const line = () => {
+      const any = lch() || rch(); go.disabled = !any;
+      if (!any) { cl.innerHTML = T('いまの見た目と向きです'); return; }
+      if (free) { cl.innerHTML = T('はじめの1回は無料です'); return; }
+      const parts = [];
+      if (lch()) parts.push(`<span>外装工事</span> <span class="mp-cost">${X(d.look_cost)}</span>`);
+      if (rch()) parts.push(`<span>曳家工事</span> <span class="mp-cost">${X(d.rot_cost || 0)}</span>`);
+      cl.innerHTML = parts.join('・') + (parts.length > 1 ? `　<b>${X(cost())}</b>` : '');
+    };
+    lookBind(b, { kind: d.kind, floors: () => d.floors, cells: () => cells, id: d.id, cur: n => d.look || window.M3Look.auto(d.id, n), pick: (v, init) => { pick = v; if (!init) upick = true; line(); },
+      rot: r0, pickRot: d.floors > 0 ? v => { rot = v; line(); } : null });
+    go.onclick = async () => {
+      if (!lch() && !rch()) return;
+      const c = cost();
+      if (c > 0 && !confirm(T(`工事をして、見た目と向きを変えます（${fmt(c)} X）。よろしいですか？`))) return;
+      go.disabled = true;
+      const r = await api('mp_bld_look', { p_bld: d.id, p_look: lch() ? pick : null, p_rot: rch() ? (rot == null ? -1 : rot) : null, p_as: d.gov ? 'gov' : S.as }, '見た目と向きを変えました');
+      go.disabled = false;
+      if (r) { m.close(); refreshBld(d); if (done) done(); }
+    };
+  });
+}
+
+/* ---- 小物（3D の編集モード。t65・DB の更新103）：自分の土地に置く（置くときに お金・国庫へ）。回す・色・動かすは無料、かたづけても もどらない ---- */
+let PROPK = null;   // 種類と値段（サーバー）
+const PROP_ORD = ['vend', 'bench', 'planter', 'shrub', 'tree', 'sakura', 'bikes', 'lantern', 'jizo', 'hokora', 'parasol', 'slide', 'swing', 'gomi', 'nobori', 'lamp', 'sign', 'shed', 'doghouse'];   // ならべる順
+const propKinds = async () => PROPK || (PROPK = await api('mp_prop_kinds', {}));
+const parcelAt = (x, y) => { const k = Math.floor(x * 5) + ',' + Math.floor(y * 5); for (const p of (S.vis && S.vis.parcels ? S.vis.parcels.values() : [])) if (p.cells.has(k)) return p; return null; };
+const PROP_MOVE = { o: null };   // 動かす小物（つぎに 地面をタップしたところへ）
+const propAs = (x, y) => { const P = parcelAt(x, y); return P && P.own === 3 ? 'gov' : S.as; };
+window.MapProp = {
+  tapGround(x, y) {
+    if (PROP_MOVE.o) { const o = PROP_MOVE.o; PROP_MOVE.o = null; hint(''); return propMove(o, x, y); }
+    const P = parcelAt(x, y);
+    if (!P || !(P.own === 2 || (P.own === 3 && S.as === 'gov'))) return toast(T('自分の土地をタップしてください'));
+    propPut(P, x, y);
+  },
+  tapProp(o) { propEdit(o); },
+  tapBlock(w) { toast(T(w === 'bld' ? '建物の上には置けません。地面をタップしてください' : '道路や線路の上には置けません。地面をタップしてください')); }
+};
+const propCv = '<canvas width="300" height="180" style="width:100%;max-width:300px;height:auto;display:block;margin:0 auto 4px;border:1px solid var(--line,#ddd);border-radius:10px;background:#dce7ef"></canvas>';
+const propRotRow = '<div class="mp-row" style="gap:4px"><b>向き</b><button class="btn" data-rl style="padding:3px 8px">⟲ 15°</button><b data-rv style="min-width:6.5em;text-align:center"></b><button class="btn" data-rr style="padding:3px 8px">15° ⟳</button></div>';
+const propColors = (b, cs, cur, pick) => {
+  const el = b.querySelector('[data-pc]'); if (!el) return;
+  el.innerHTML = cs.map(c => `<button class="btn${c === cur ? ' main' : ''}" data-c="${c}" style="padding:2px 6px"><span style="display:inline-block;width:18px;height:14px;border-radius:3px;background:${c};border:1px solid #0002;vertical-align:middle"></span></button>`).join('');
+  el.querySelectorAll('[data-c]').forEach(x => x.onclick = () => pick(x.dataset.c));
+};
+async function propPut(P, x, y) {
+  const K = await propKinds(); if (!K || !window.M3Look) return;
+  const PR = await window.M3Look.props(), ks = Object.keys(K).filter(k => PR[k]).sort((a, b) => (PROP_ORD.indexOf(a) + 1 || 99) - (PROP_ORD.indexOf(b) + 1 || 99)); if (!ks.length) return;
+  let kind = ks[0], rot = 180, col = null;
+  const m = modal(['小物を置く', '']);
+  m.set('小物を置く', `${propCv}<div class="mp-row" data-pk style="flex-wrap:wrap;gap:4px"></div><div class="mp-row" data-pc style="flex-wrap:wrap;gap:4px"></div>${propRotRow}
+    <div class="mp-row"><button class="btn main" data-go></button></div>
+    <p class="muted small"><span>自分の土地の中に置けます（土地ごとに 6＋区画×2 こまで）。お金は国庫へ。回す・色・動かすは無料で、かたづけても お金は もどりません</span></p>`, b => {
+    const cv = b.querySelector('canvas'), go = b.querySelector('[data-go]');
+    const paint = () => window.M3Look.draw(cv, { prop: kind, rot, col }).catch(() => {});
+    const draw = () => {
+      b.querySelector('[data-pk]').innerHTML = ks.map(k => `<button class="btn${k === kind ? ' main' : ''}" data-k="${k}" style="padding:3px 8px;font-size:12px"><span>${esc(T(K[k].n))}</span> <small>${X(K[k].c)}</small></button>`).join('');
+      b.querySelectorAll('[data-k]').forEach(x2 => x2.onclick = () => { kind = x2.dataset.k; col = null; draw(); paint(); });
+      const d = PR[kind] || {}, cs = d.col && d.cols ? d.cols : [];
+      if (!col && cs.length) col = cs[0];
+      propColors(b, cs, col, c => { col = c; draw(); paint(); });
+      b.querySelector('[data-rv]').textContent = rotName(rot);
+      go.textContent = T(`置く（${fmt(K[kind].c)} X）`);
+    };
+    b.querySelector('[data-rl]').onclick = () => { rot = (rot + 345) % 360; draw(); paint(); };
+    b.querySelector('[data-rr]').onclick = () => { rot = (rot + 15) % 360; draw(); paint(); };
+    go.onclick = async () => {
+      go.disabled = true;
+      const r = await api('mp_prop_put', { p_parcel: P.id, p_kind: kind, p_x: Math.round(x * 100), p_y: Math.round(y * 100), p_rot: rot, p_col: col, p_as: P.own === 3 ? 'gov' : S.as }, T(`${K[kind].n}を置きました`));
+      go.disabled = false;
+      if (r) { m.close(); refreshBox(x - 0.05, y - 0.05, x + 0.05, y + 0.05); }
+    };
+    draw(); paint();
+  });
+}
+async function propEdit(o) {
+  const K = await propKinds(); if (!K || !window.M3Look) return;
+  const PR = await window.M3Look.props(), d = PR[o.kind] || {}, cs = d.col && d.cols ? d.cols : [], as = propAs(o.x, o.y);
+  let rot = o.rot, col = o.col;
+  const m = modal([K[o.kind] ? K[o.kind].n : '小物', '']);
+  m.set(K[o.kind] ? K[o.kind].n : '小物', `${propCv}<div class="mp-row" data-pc style="flex-wrap:wrap;gap:4px"></div>${propRotRow}
+    <div class="mp-row"><button class="btn main" data-save>決める</button><button class="btn" data-mv>動かす</button><button class="btn" data-del style="color:#c33">かたづける</button></div>`, b => {
+    const cv = b.querySelector('canvas');
+    const paint = () => window.M3Look.draw(cv, { prop: o.kind, rot, col }).catch(() => {});
+    const draw = () => { propColors(b, cs, col, c => { col = c; draw(); paint(); }); b.querySelector('[data-rv]').textContent = rotName(rot); };
+    b.querySelector('[data-rl]').onclick = () => { rot = (rot + 345) % 360; draw(); paint(); };
+    b.querySelector('[data-rr]').onclick = () => { rot = (rot + 15) % 360; draw(); paint(); };
+    b.querySelector('[data-save]').onclick = async () => { if (await api('mp_prop_set', { p_id: o.id, p_x: null, p_y: null, p_rot: rot, p_col: col, p_as: as }, '変えました')) { m.close(); refreshBox(o.x - 0.05, o.y - 0.05, o.x + 0.05, o.y + 0.05); } };
+    b.querySelector('[data-mv]').onclick = () => { m.close(); PROP_MOVE.o = o; hint(T('動かす先の地面をタップしてください（同じ土地の中）')); };
+    b.querySelector('[data-del]').onclick = async () => {
+      if (!confirm(T('かたづけます（お金は もどりません）。よろしいですか？'))) return;
+      if (await api('mp_prop_del', { p_id: o.id, p_as: as }, 'かたづけました')) { m.close(); refreshBox(o.x - 0.05, o.y - 0.05, o.x + 0.05, o.y + 0.05); }
+    };
+    draw(); paint();
+  });
+}
+async function propMove(o, x, y) {
+  if (await api('mp_prop_set', { p_id: o.id, p_x: Math.round(x * 100), p_y: Math.round(y * 100), p_rot: null, p_col: null, p_as: propAs(o.x, o.y) }, '小物を動かしました'))
+    refreshBox(Math.min(o.x, x) - 0.05, Math.min(o.y, y) - 0.05, Math.max(o.x, x) + 0.05, Math.max(o.y, y) + 0.05);
+}
+/* ---- 1階のお店の看板の色（横線3つ。t65・DB の更新103）：建物の持ち主と、その部屋を借りている会社が、何度でも無料で ---- */
+function scSheet(d, u, load) {
+  const bb = S.vis && S.vis.blds && S.vis.blds.get(d.id), cells = bb ? [...bb.set].map(k => k.split(',').map(Number)) : null;
+  const shops = d.units.filter(x => x.f === 1 && x.use === 'shop').sort((a, b) => a.no - b.no), idx = shops.findIndex(x => x.id === u.id);
+  const c = (u.sc && u.sc.length ? [...u.sc] : []).concat(['#2f7d4a', '#e0a020', '#c8322d']).slice(0, 3);
+  const SW = ['#c8322d', '#e0603a', '#e0a020', '#f2d03b', '#2f7d4a', '#1e9e6a', '#2e86c1', '#1f4e9a', '#6c3fa0', '#d64f8c', '#ffffff', '#2b2b2b'];
+  const as = u.tmine ? corpOf(u) : d.gov ? 'gov' : S.as;
+  const m = modal(['看板の色', '']);
+  m.set('看板の色', `<canvas width="360" height="220" style="width:100%;max-width:360px;height:auto;display:block;margin:0 auto 4px;border:1px solid var(--line,#ddd);border-radius:10px;background:#dce7ef"></canvas>
+    <p class="small" style="margin:2px 0"><span translate="no">${esc(u.room)}</span>：<span>1階のお店の 横線の色（3つ）</span></p>
+    ${[0, 1, 2].map(i => `<div class="mp-row" style="gap:3px;flex-wrap:wrap"><b style="min-width:4em">${['1本目', '2本目', '3本目'][i]}</b><input type="color" data-ci="${i}" value="${c[i]}" style="width:44px;height:28px;padding:0;border:0">
+      ${SW.map(v => `<button class="btn" data-p="${i}" data-v="${v}" style="padding:1px 3px"><span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:${v};border:1px solid #0002;vertical-align:middle"></span></button>`).join('')}</div>`).join('')}
+    <div class="mp-row"><button class="btn main" data-save>決める</button><button class="btn" data-reset>もとの色にもどす</button></div>
+    <p class="muted small"><span>何度でも無料で変えられます。建物の持ち主と、この部屋を借りている会社が変えられます</span></p>`, b => {
+    const cv = b.querySelector('canvas');
+    const paint = () => { if (window.M3Look) window.M3Look.draw(cv, { kind: d.kind, floors: d.floors, cells, look: d.look, id: d.id, rot: d.rot, sc: shops.map((x, i) => i === idx ? c.slice() : (x.sc || null)) }).catch(() => {}); };
+    b.querySelectorAll('[data-ci]').forEach(x => x.oninput = () => { c[+x.dataset.ci] = x.value; paint(); });
+    b.querySelectorAll('[data-p]').forEach(x => x.onclick = () => { const i = +x.dataset.p; c[i] = x.dataset.v; b.querySelector(`[data-ci="${i}"]`).value = c[i]; paint(); });
+    b.querySelector('[data-save]').onclick = async () => { if (await api('mp_unit_colors', { p_unit: u.id, p_sc: c, p_as: as }, '看板の色を変えました')) { m.close(); refreshBld(d); load(); } };
+    b.querySelector('[data-reset]').onclick = async () => { if (await api('mp_unit_colors', { p_unit: u.id, p_sc: null, p_as: as }, 'もとの色にもどしました')) { m.close(); refreshBld(d); load(); } };
+    paint();
+  });
+}
+
 /* ---- 建物を見る：部屋・テナント・家賃の水準 ---- */
 async function openBld(bid) {
+  lookOn();
   const m = modal(['建物', '<p class="muted small">読みこんでいます…</p>'], null, 'mp-wide');
   const sel = new Set();
   const load = async () => {
@@ -8416,11 +8852,13 @@ async function openBld(bid) {
         <span class="rt">${u.tk ? `1日 ${X(u.rent)}` : u.mode === 'corp' ? `1日 ${X(u.ask)}` : ''}</span>
         ${d.mine && u.tk === 'corp' ? `<button class="btn" data-out="${u.id}">退去してもらう</button>` : ''}
         ${!d.mine && u.mode === 'corp' && !u.tk ? `<button class="btn main" data-lease="${u.id}">借りる</button>` : ''}
-        ${!d.mine && u.tk === 'corp' && u.tmine ? `<button class="btn" data-leave="${u.id}">退去する</button>` : ''}</div>`;
+        ${!d.mine && u.tk === 'corp' && u.tmine ? `<button class="btn" data-leave="${u.id}">退去する</button>` : ''}
+        ${u.can_sc && window.M3Look ? `<button class="btn" data-sc="${u.id}">🎨 看板の色</button>` : ''}</div>`;
     const dm = d.dem || {}, star = v => '★'.repeat(Math.max(1, Math.min(5, Math.round((v || 0) * 2.5))));
     const mainUses = [...new Set(d.units.map(u => u.use))];
     m.set(d.name || kindName(d.kind), `<div class="mp-kv">
         <b>種類</b><span><span>${esc(d.kname)}</span>${d.floors > 0 ? `・<span>${d.floors}階</span>・<span>${SHAPE_NAME[d.shape] || d.shape}</span>` : ''}</span>
+        ${lookRow(d)}
         <b>住所</b><span translate="no">${esc(d.addr)}</span>
         <b>持ち主</b><span><span>${esc(d.owner)}</span>${d.mine ? '<small>（あなた）</small>' : ''}</span>
         <b>延床面積</b><span>${fmt(d.fm2 * Math.max(1, d.floors))}㎡</span>
@@ -8442,6 +8880,8 @@ async function openBld(bid) {
         ${us.map(row).join('')}</details>`; }).join('')}</div>
       ${d.mine ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button><button class="btn" data-del style="color:#c33">こわす</button></div>` : ''}`, b => {
       scBind(b, d, load);
+      lookRowBind(b, d, load);   // 見た目（t65）
+      b.querySelectorAll('[data-sc]').forEach(x => x.onclick = () => scSheet(d, d.units.find(z => z.id === Number(x.dataset.sc)), load));   // 看板の色（t65）
       if (q0(b, '[data-attrs]')) attrFill(q0(b, '[data-attrs]'), bid, load);   // アトラクション（DB の更新91）
       if (q0(b, '[data-kb]')) kbFill(q0(b, '[data-kb]'), bid);   // 競馬場・場外馬券売り場（DB の更新92）
       if (q0(b, '[data-er]')) erBldFill(q0(b, '[data-er]'), bid);   // 救急（DB の更新68）
