@@ -1102,9 +1102,10 @@ function m3Blds(v) {
 /* ---------- 走行位置（t61・t62）：列車は両ごと、バス・船・飛行機は1つの箱。線路・道路・航路の上を、ダイヤのとおりに。
    大きさは決まった大きさ（遠くから見ても大きくしない）。上りと下りは進む向きの左にずらす ---------- */
 function m3Runs(v) {
-  const T3 = M3.T;
+  const T3 = M3.T, CAR = window.M3CAR && !window.M3CAR.fail ? window.M3CAR : null;   // 車両のモデル（t66）
   M3.runHit = []; M3.selLab = null;
-  if (!S.layer.run) { if (M3.run) M3.run.visible = false; if (M3.mark) M3.mark.visible = false; return; }
+  if (CAR) CAR.begin(M3.sc);
+  if (!S.layer.run) { if (M3.run) M3.run.visible = false; if (M3.mark) M3.mark.visible = false; if (CAR) CAR.end(); return; }
   const it = visibleItems(), list = runList(it, v);
   let n = 0; for (const o of list) n += o.R.k === 'rail' ? o.T.fn : 1;
   if (!M3.run || M3.runCap < n) {
@@ -1118,10 +1119,13 @@ function m3Runs(v) {
   let i = 0, selP = null;
   for (const o of list) {
     const k = o.R.k, cars = k === 'rail' ? o.T.fn : 1, sel = runIsSel(o);
+    // 車両のモデルがある系列（t66）：モデルで（読めるまでは 箱）
+    const md = CAR && k === 'rail' && o.T.fser && CAR.of(o.T.fser) ? CAR.need(o.T.fser) : null;
+    if (md) { const sp = m3RunCars(o, md, it, sel); if (sp) selP = sp; continue; }
     // 大きさは決まった大きさ（t62：遠くから見ても大きくしない）。見やすいように、はばと高さは本物より少し大きめ
     const RC = k === 'rail' && window.M3RAIL && !window.M3RAIL.fail && window.M3RAIL.car;   // 線路のファイル（t64c）の 車両の大きさ { w, h }（m）
     const hh = (RC ? RC.h : k === 'rail' ? 4.6 : k === 'bus' ? 3.6 : k === 'ship' ? 9 : 5) * M3_U, ww = (RC ? RC.w : k === 'rail' ? 5.5 : k === 'bus' ? 4 : k === 'ship' ? 16 : 30) * M3_U;
-    const cl = o.car, gap = k === 'rail' ? cl * 0.05 : 0;
+    const cl = o.car, gap = k === 'rail' ? cl * 0.05 : 0, trs = k === 'rail' ? m3RunTrk(o) : null;
     const off0 = k === 'rail' || k === 'bus' ? ww / 2 + 0.8 * M3_U : 0;   // 進む向きの左
     col.set(o.R.c || '#d23');
     for (let c = 0; c < cars; c++) {
@@ -1130,7 +1134,7 @@ function m3Runs(v) {
       const ref = k === 'rail' || k === 'bus' ? runRef(o.H, dc) : null, sg = ref ? it.segs.get(ref[0]) : null;
       // 線路・道路のファイル（t64c）：off(sg, k)（左右のずれ。マス）・runY(sg, s, x, y, k)（走る面の高さ。{ y, hide } か null）
       const MOD = k === 'rail' ? window.M3RAIL : k === 'bus' ? window.M3ROAD : null, MD = MOD && !MOD.fail ? MOD : null;
-      const off = o.yard ? 0 : MD && MD.off && sg ? MD.off(sg, k, ref[1]) : sg && k === 'rail' && !sg.dbl && !sg.q ? 0 : off0, px = p[0] + Math.sin(p[2]) * off, pz = p[1] - Math.cos(p[2]) * off;   // 留置線の編成は線の まん中（DB の更新105）
+      const off = o.yard ? 0 : MD && MD.off && sg ? MD.off(sg, k, ref[1], ref[2], trs) : sg && k === 'rail' && !sg.dbl && !sg.q ? 0 : off0, px = p[0] + Math.sin(p[2]) * off, pz = p[1] - Math.cos(p[2]) * off;   // 留置線の編成は線の まん中（DB の更新105）
       let y, hide = false;
       const my = MD && MD.runY && sg ? MD.runY(sg, ref[1], px, pz, k) : null;
       if (k === 'ship') y = 0.05 * M3_U;
@@ -1147,12 +1151,52 @@ function m3Runs(v) {
   }
   M3.run.count = i; M3.run.visible = i > 0;
   M3.run.instanceMatrix.needsUpdate = true; if (M3.run.instanceColor) M3.run.instanceColor.needsUpdate = true;
+  if (CAR) CAR.end();
   // えらんだ列車のしるし（黄色の、下向きの三角）と名前
   if (!M3.mark) { M3.mark = new T3.Mesh(new T3.ConeGeometry(0.5, 1, 4), new T3.MeshBasicMaterial({ color: '#ffc400' })); M3.mark.rotation.x = Math.PI; M3.sc.add(M3.mark); }
   if (selP) {
     const z = Math.max(selP[3] * 1.3, 16 * ppx); M3.mark.scale.set(z, z * 1.4, z); M3.mark.position.set(selP[0], selP[1] + z * 1.3, selP[2]); M3.mark.visible = true;
     const sl = list.find(o => runIsSel(o)); if (sl) M3.selLab = { x: selP[0], y: selP[2], h: selP[1] + z * 2.2, n: runName(sl.T) + ' → ' + runDest(sl.R, sl.T) };
   } else M3.mark.visible = false;
+}
+// 列車の入る番線（DB の更新107 の ホームの形）：［駅, 番線］（止まっている駅）か［前の駅, 番線, つぎの駅, 番線］（走っている）
+function m3RunTrk(o) {
+  const sc = o.T && o.T.s; if (!sc || o.yard) return null;
+  if (o.at >= 0) return sc[o.at] ? [sc[o.at][0], sc[o.at][3]] : null;
+  if (o.nx > 0 && sc[o.nx]) return [sc[o.nx - 1][0], sc[o.nx - 1][3], sc[o.nx][0], sc[o.nx][3]];
+  return null;
+}
+// モデルの列車（t66。window.M3CAR）：両ごとに 台車の2点の高さで 向きと かたむき。編成は 下り方から（下りの列車は 下り方が前）。トンネルの中は見せない。
+//   えらんだ列車なら しるしの位置［x, y, z, はば］を返す
+const M3_RC = { m: null, q: null, q2: null, p: null, s: null, up: null, ax: null };
+function m3RunCars(o, md, it, sel) {
+  const T3 = M3.T, C = M3_RC; if (!C.m) { C.m = new T3.Matrix4(); C.q = new T3.Quaternion(); C.q2 = new T3.Quaternion(); C.p = new T3.Vector3(); C.s = new T3.Vector3(); C.up = new T3.Vector3(0, 1, 0); C.ax = new T3.Vector3(0, 0, 1); }
+  const MOD = window.M3RAIL, MD = MOD && !MOD.fail ? MOD : null, CAR = window.M3CAR;
+  const P = md.len * M3_U, Bg = md.bogie * M3_U, comp = CAR.comp(md, o.T.fn, o.T.fm), n = comp.length, fwd = o.T.dir !== -1, dC = o.d - o.len / 2;
+  const off0 = (2.95 / 2 + 0.8) * M3_U, hh = 3.75 * M3_U, cam = M3.cam.position, trs = m3RunTrk(o);
+  const pt = d => {
+    const p = runPt(o.H, d), ref = runRef(o.H, d), sg = ref ? it.segs.get(ref[0]) : null;
+    const off = o.yard ? 0 : MD && MD.off && sg ? MD.off(sg, 'rail', ref[1], ref[2], trs) : sg && !sg.dbl && !sg.q ? 0 : off0, x = p[0] + Math.sin(p[2]) * off, z = p[1] - Math.cos(p[2]) * off;
+    const my = MD && MD.runY && sg ? MD.runY(sg, ref[1], x, z, 'rail') : null;
+    if (my) return [x, my.y, z, !!my.hide];
+    if (sg) { const th = m3OnLine(sg, ref[1], p[0], p[1]); return [x, (th.c === 'V' || th.c === 'B' ? th.y : Math.max(th.y, m3Surf(x, z))) + M3_LIFT + 0.1 * M3_U, z, th.c === 'T']; }
+    return [x, m3Surf(x, z) + M3_LIFT + 0.1 * M3_U, z, false];
+  };
+  let selP = null;
+  for (let k = 0; k < n; k++) {
+    const e = comp[fwd ? k : n - 1 - k], c = dC + ((n - 1) / 2 - k) * P, a = pt(c + Bg), b = pt(c - Bg);
+    if (a[3] || b[3]) { if (k === 0 && sel) selP = [a[0], m3Surf(a[0], a[2]) + hh, a[2], 2.95 * M3_U]; continue; }   // トンネルの中
+    const dx = a[0] - b[0], dz = a[2] - b[2], L = Math.hypot(dx, dz) || 1e-6, x = (a[0] + b[0]) / 2, y = (a[1] + b[1]) / 2, z = (a[2] + b[2]) / 2;
+    C.q.setFromAxisAngle(C.up, -Math.atan2(dz, dx));
+    C.q2.setFromAxisAngle(C.ax, Math.atan2(a[1] - b[1], L)); C.q.multiply(C.q2);   // 坂：前の台車が高ければ 前が上
+    if (fwd ? e.r : !e.r) { C.q2.setFromAxisAngle(C.up, Math.PI); C.q.multiply(C.q2); }   // 運転台が うしろ向き
+    C.p.set(x, y, z); C.s.set(M3_U, M3_U, M3_U); C.m.compose(C.p, C.q, C.s);
+    const lv = Math.hypot(cam.x - x, cam.y - y, cam.z - z) < 9 ? 'mid' : 'far';
+    CAR.put(md, e.c, lv, C.m);
+    M3.runHit.push({ o, x, y: y + hh / 2, z });
+    if (k === 0 && sel) selP = [x, y + hh, z, 2.95 * M3_U];
+  }
+  return selP;
 }
 // 3D をタップ：いちばん近い列車・バス（画面で 26px まで）の情報
 function m3Tap(cx, cy) {
@@ -1292,7 +1336,7 @@ function m3Target(x, y) { M3.tx = x; M3.ty = y; }
 function m3Resize() { if (!M3.on) return; M3.r.setPixelRatio(m3PR()); M3.r.setSize(S.W, S.H, false); M3.cam.aspect = S.W / Math.max(1, S.H); M3.cam.updateProjectionMatrix(); }
 
 /* ---------- 線路・地形のファイル（t64c）：3D をひらいたときに読む（ないときは 前のまま） ---------- */
-const M3_MODS = ['m3rail', 'm3terra', 'm3road'];
+const M3_MODS = ['m3rail', 'm3terra', 'm3road', 'm3car'];
 let m3ModsP = null;
 function m3Mods() {
   if (m3ModsP) return m3ModsP;

@@ -18071,6 +18071,9 @@ alter table public.mp_trains add column if not exists cplx jsonb not null defaul
 create index if not exists mp_trains_cpl on public.mp_trains using gin (cpl jsonb_path_ops);
 -- t54f：駅の発着番線・種別の優先番号（0 がいちばん優先）・待避と続行
 alter table public.mp_stations add column if not exists trk jsonb;   -- 番線の順に [{d: down・up・both, m: main・side}]。null はいつもの決まり
+alter table public.mp_series add column if not exists adm boolean not null default false;   -- 管理者だけ（ためし。DB の更新107）：ほかの人の注文の一覧に出さない
+alter table public.mp_series add column if not exists mdl text;   -- 3D のモデル（map/m3car.js のキー。DB の更新107）
+alter table public.mp_stations add column if not exists pf text;   -- ホームの形（DB の更新107）：番線のあいだ（両はしも）ごとに P（ホーム）・-（なし）。はじめの T は頭端式。null は おまかせ
 create table if not exists public.mp_kinds (       -- 種別（名義ごと）：優先番号 0〜9（0 がいちばん優先）
   id    bigserial primary key,
   own_u uuid references public.profiles(id) on delete cascade,
@@ -18566,6 +18569,16 @@ insert into public.mp_types(code, series, label, role, face, num_from, num_to, l
   ('LD55-D55', 'LD55', 'D55', 'L', '', 1, 999, 19.7, 0, 0, 125.0, 940, 0, true, 85, 0.9, 2.5, false, true, false, false, 220000000, 90000, 365, 'テンダー機（1D1）。重い列車・坂の多い線むけ', 3254, 'D55', '', 0, '{stm}', 1, 120, 280),
   ('LC66-C66', 'LC66', 'C66', 'L', '', 1, 999, 21.5, 0, 0, 145.0, 1190, 0, true, 110, 1.0, 2.5, false, true, false, false, 260000000, 100000, 365, 'テンダー機（2C2）。特急・急行むけ', 3255, 'C66', '', 0, '{stm}', 1, 160, 360)
 on conflict (code) do nothing;
+-- 風の芽製作所 500形（DB の更新107。管理者だけ：ためし）：18m・2ドア・ワンマン対応・貫通形の地方用電車。直流
+insert into public.mp_series(code, name, kind, note, ord, grp, yr, sets, adm, mdl) values
+  ('R500', '500形', 'emu', '風の芽製作所の 地方用電車（18m・2ドア・ワンマン対応・貫通形・VVVF・直流）。最高110km/h・セミクロスシート・冷房。Mc＋Tc の2両で1組。4・6両は 半室グリーンの Tcg 入り', 160, null, null,
+   '[{"n":"2両","t":["R500-Mc","R500-Tc"]},{"n":"4両（半室グリーン）","t":["R500-Mc","R500-Tc","R500-Mc","R500-Tcg"]},{"n":"6両（半室グリーン）","t":["R500-Mc","R500-Tc","R500-Mc","R500-Tc","R500-Mc","R500-Tcg"]}]'::jsonb, true, 'r500')
+on conflict (code) do nothing;
+insert into public.mp_types(code, series, label, role, face, num_from, num_to, len, cap, seats, mass, power, panto, cab, vmax, acc, dec, elec, heat, ac, toilet, price, upkeep, life, note, ord, nbase, cls, rooms, fn, npad, ps, gauge) values
+  ('R500-Mc', 'R500', 'Mc500', 'Mp', '奇数向き', 501, 549, 18.0, 128, 44, 35.5, 520, 1, true, 110, 3.0, 4.2, true, true, true, false, 56000000, 14000, 365, '電動車（運転台・シングルアームパンタ・VVVF 130kW×4）。車いすスペースあり。501〜', 4100, 'Mc', '', 0, '{}', 3, 1, 1067),
+  ('R500-Tc', 'R500', 'Tc500', 'Tc', '偶数向き', 551, 579, 18.0, 130, 46, 30.5, 0, 0, true, 110, 3.0, 4.2, true, true, true, false, 44000000, 11000, 365, '制御車（運転台・SIV・CP・蓄電池）。551〜', 4110, 'Tc', '', 0, '{}', 3, 1, 1067),
+  ('R500-Tcg', 'R500', 'Tcg500', 'Tc', '偶数向き', 581, 599, 18.0, 72, 40, 31.5, 0, 0, true, 110, 3.0, 4.2, true, true, true, false, 52000000, 13000, 365, '制御車・半室グリーン（運転台がわの半分が 2＋2 のリクライニング席。ゲームでは グリーン車）。4・6両の 最後に。581〜', 4120, 'Tcg', 'G', 0, '{}', 3, 1, 1067)
+on conflict (code) do nothing;
 
 /* ---------- 設定（管理者が app_settings の mp_rates で変えられる） ---------- */
 -- ふだんの値（運営が app_settings 'mp_rates' で変えていないとき）。DB の更新81：毎回 jsonb をつくらない（CASE。immutable なので式の中で前もって計算される）
@@ -18969,8 +18982,8 @@ begin
     'as', jsonb_build_array(jsonb_build_object('as', 'me', 'name', (select nickname from profiles where id = u) || '（自分）', 'k', 'u:' || u))
           || coalesce((select jsonb_agg(jsonb_build_object('as', c.cid, 'name', c.name, 'k', 'c:' || c.id) order by c.id) from companies c where c.owner = u and c.status = 'active'), '[]'::jsonb)
           || case when _is_admin(u) then jsonb_build_array(jsonb_build_object('as', 'gov', 'name', '国（役所）', 'k', 'gov')) else '[]'::jsonb end,
-    'types', (select coalesce(jsonb_agg(to_jsonb(t) order by t.ord), '[]'::jsonb) from mp_types t where t.on_sale),
-    'series', (select coalesce(jsonb_agg(to_jsonb(s) order by s.ord), '[]'::jsonb) from mp_series s),
+    'types', (select coalesce(jsonb_agg(to_jsonb(t) order by t.ord), '[]'::jsonb) from mp_types t where t.on_sale and _mp_type_vis(t.series, u)),   -- 管理者だけの系列（DB の更新107）
+    'series', (select coalesce(jsonb_agg(to_jsonb(s) order by s.ord), '[]'::jsonb) from mp_series s where not s.adm or _is_admin(u)),
     'rates', (select jsonb_object_agg(k, _mp_rate(k)) from unnest(array['rail','road','dbl_mul','elec','sta_base','sta_m','stop','dep_S','dep_M','dep_L','bdep_S','bdep_M',
               'lease','lease_gov','fare_base','fare_km','bus_fare','bus_km','catch_rail','catch_bus','max_tiles','up_rail','up_road','up_sta','up_stop','up_dep','up_bdep','prop_tax','urb_k','urb_sta']) k),
     'ver', coalesce((select max(ver) from mp_changes), 0),
@@ -19124,6 +19137,7 @@ begin
                   'mine', coalesce(s.own_u = u or s.own_c = any(me_cs), false) or (s.own_u is null and s.own_c is null and adm), 'o', case when s.own_u is not null then 'u:' || s.own_u when s.own_c is not null then 'c:' || s.own_c else 'gov' end,
                   'rt', (select coalesce(jsonb_agg(jsonb_build_object('id', ro.id, 'c', ro.color, 'n', ro.name)), '[]'::jsonb) from mp_routes ro where s.id = any(ro.stops)))
                   || case when s.melt then jsonb_build_object('ml', 1) else '{}'::jsonb end
+                  || case when s.pf is not null then jsonb_build_object('pf', s.pf) else '{}'::jsonb end   -- ホームの形（DB の更新107）
                   || case when s.water then jsonb_build_object('wt', 1) else '{}'::jsonb end || case when s.coal then jsonb_build_object('cl', 1) else '{}'::jsonb end   -- 給水・給炭（DB の更新78）
                   || coalesce((select jsonb_build_object('sn', round(sn.dep)) from mp_snow sn where sn.sta = s.id and sn.dep >= 1), '{}'::jsonb)
                   || case when s.kind = 'rail' then coalesce((select jsonb_build_object('zl', v) from (select _mp_sta_lv(s.seg, s.at, s.x, s.y) v) q where v is not null), '{}'::jsonb) else '{}'::jsonb end), '[]'::jsonb)
@@ -20072,7 +20086,7 @@ begin
     st2 := st; st2.trk := null; st2.tracks := p_tracks; dflt := _mp_sta_trk(st2);
     ntrk := (select jsonb_agg(case when k <= jsonb_array_length(st.trk) then st.trk -> (k - 1) else dflt -> (k - 1) end order by k) from generate_series(1, p_tracks) k);
   end if;
-  update mp_stations set plat = p_plat, tracks = p_tracks, cost = st.cost + addc, trk = ntrk where id = p_id;
+  update mp_stations set plat = p_plat, tracks = p_tracks, cost = st.cost + addc, trk = ntrk, pf = case when p_tracks = st.tracks then st.pf end where id = p_id;   -- 番線の数が変われば ホームの形は おまかせ（DB の更新107）
   delete from mp_occ where what = 'sta' and ref = p_id;
   perform _mp_occ_set(p_id, 'sta', tiles);
   perform _mp_lease_set('sta', p_id, st.own_u, st.own_c, false);
@@ -20319,6 +20333,11 @@ $$;
 -- 車両の持ち主か（自分か自分の会社）
 create or replace function public._mp_mine(u uuid, pu uuid, pc int) returns boolean
 language sql stable set search_path = public as $$ select coalesce(pu = u, false) or exists (select 1 from companies c where c.id = pc and c.owner = u) or (pu is null and pc is null and _is_admin(u)) $$;
+-- 系列を 注文の一覧に出すか（DB の更新107）：管理者だけ（adm）の系列は 管理者だけ
+create or replace function public._mp_type_vis(p_series text, u uuid) returns boolean
+language sql stable set search_path = public as $$
+  select not coalesce((select s.adm from mp_series s where s.code = p_series), false) or _is_admin(u)
+$$;
 -- 編成の性能
 create or replace function public._mp_form_perf(fid bigint) returns jsonb
 language plpgsql stable set search_path = public as $$
@@ -20454,7 +20473,7 @@ begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
   if not coalesce(p_dry, false) then perform _mp_lock(pa.pu, pa.pc); end if;   -- 同じ名義の操作は1つずつ（車庫の空き・車番がかさならないように。DB の更新60）
-  select * into t from mp_types where code = p_type and on_sale;
+  select * into t from mp_types where code = p_type and on_sale and _mp_type_vis(series, u);   -- 管理者だけの系列（DB の更新107）
   if not found then raise exception 'その形式は注文できません'; end if;
   if pa.gv and _mp_role_kind(t.role) <> 'rail' then raise exception '国が持てるのは、鉄道の車両だけです'; end if;   -- 国の鉄道（DB の更新101）
   if p_n < 1 or p_n > 20 then raise exception '一度に1〜20両です'; end if;
@@ -20530,8 +20549,8 @@ begin
                'n', (select count(*) from mp_cars c where c.depot = d.id), 'plows', d.plows, 'zone', _mp_snowzone_at(floor(d.x / 100.0)::int, floor(d.y / 100.0)::int), 'pub', d.own_u is null and d.own_c is null and not pa.gv) order by d.own_u is null and d.own_c is null, d.id), '[]'::jsonb)
              from mp_depots d where d.size not like 'R%' and ((d.own_u is not distinct from pa.pu and d.own_c is not distinct from pa.pc)   -- 留置線は のぞく（DB の更新105）
                                  or (d.kind = 'air' and d.bld is not null and _mp_gov_term(d.bld)))),   -- 国の空港の駐機場（みんなで使う。t54q）
-    'types', (select coalesce(jsonb_agg(to_jsonb(t) order by t.ord), '[]'::jsonb) from mp_types t where t.on_sale),
-    'series', (select coalesce(jsonb_agg(to_jsonb(s) order by s.ord), '[]'::jsonb) from mp_series s),
+    'types', (select coalesce(jsonb_agg(to_jsonb(t) order by t.ord), '[]'::jsonb) from mp_types t where t.on_sale and _mp_type_vis(t.series, u)),   -- 管理者だけの系列（DB の更新107）
+    'series', (select coalesce(jsonb_agg(to_jsonb(s) order by s.ord), '[]'::jsonb) from mp_series s where not s.adm or _is_admin(u)),
     'fsets', _mp_fset_json(u),   -- 編成のプリセット（DB の更新72）
     'lsplit', true);   -- 機関車と客車を別に注文する（DB の更新78）
 end $$;
@@ -22808,12 +22827,14 @@ begin
                  'wk', case when fi.wu is not null then jsonb_build_array(case when fi.wn then null else extract(epoch from fi.wf) end, extract(epoch from fi.wu)) end, 'wkk', fi.wkk,   -- 編成の工事中（DB の更新60）
                  'sub', (select jsonb_agg(jsonb_build_array(s.day, extract(epoch from s.t0)::bigint, sf.name) order by s.t0) from mp_subst s join mp_forms sf on sf.id = s.sub
                           where s.train = t.id and s.t1 > now() - interval '1 day')   -- 予備編成の代走（DB の更新80）：［運行日, 発車, 予備編成］
-               ) order by t.dir desc, t.dep), '[]'::jsonb)
+               ) || case when fi.fm is not null then jsonb_build_object('fm', fi.fm) else '{}'::jsonb end   -- fm：モデルのある系列の編成の形式（下り方から［形式, 役割, 向き］。DB の更新107）
+               order by t.dir desc, t.dep), '[]'::jsonb)
                from mp_trains t left join lateral (select string_agg(distinct se.name, '+') ser, count(*) n,
                                                           min(c.busy_from) filter (where c.busy_until > now()) wf, max(c.busy_until) filter (where c.busy_until > now()) wu,
                                                           bool_or(c.busy_until > now() and c.busy_from is null) wn,
                                                           (array_agg(c.busy_kind order by c.busy_until desc) filter (where c.busy_until > now()))[1] wkk,
-                                                          bool_or(ty.elec) fel, bit_and(ty.ps::int) filter (where ty.elec) fps
+                                                          bool_or(ty.elec) fel, bit_and(ty.ps::int) filter (where ty.elec) fps,
+                                                          case when bool_or(se.mdl is not null) then jsonb_agg(jsonb_build_array(ty.label, ty.role, ty.face) order by c.pos) end fm   -- 3D のモデル（DB の更新107）
                                                      from mp_cars c join mp_types ty on ty.code = c.type join mp_series se on se.code = ty.series
                                                     where t.form is not null and c.form = t.form) fi on true
               where t.route = r.id));
@@ -26234,7 +26255,7 @@ begin
   -- 国も鉄道の編成を持てる（国庫から買う。DB の更新101）
   if not coalesce(p_dry, false) then perform _mp_lock(pa.pu, pa.pc); end if;   -- 同じ名義の操作は1つずつ（車庫の空き・車番がかさならないように。DB の更新60）
   if nc = 0 then raise exception '形式をえらんでください'; end if;
-  if exists (select 1 from unnest(p_types) x where not exists (select 1 from mp_types y where y.code = x and y.on_sale)) then raise exception 'その形式は注文できません'; end if;
+  if exists (select 1 from unnest(p_types) x where not exists (select 1 from mp_types y where y.code = x and y.on_sale and _mp_type_vis(y.series, u))) then raise exception 'その形式は注文できません'; end if;   -- 管理者だけの系列（DB の更新107）
   if exists (select 1 from unnest(p_types) x join mp_types y on y.code = x where y.role in ('Bus', 'Truck', 'Ship', 'Air')) then raise exception 'バス・トラック・船・飛行機は1台ずつ注文してください'; end if;
   why := _mp_form_rule_s(p_types);   -- 客車だけの編成も注文できる（機関車はあとでつなぐ。DB の更新78）
   if why is not null then raise exception '%', why; end if;
@@ -27153,18 +27174,19 @@ begin
   perform _mp_ok(u);
   select * into st from mp_stations where id = p_sta;
   if not found or st.kind <> 'rail' then raise exception '駅が見つかりません'; end if;
-  return jsonb_build_object('id', st.id, 'name', st.name, 'tracks', st.tracks, 'trk', _mp_sta_trk(st), 'custom', st.trk is not null, 'mine', _mp_mine(u, st.own_u, st.own_c),
+  return jsonb_build_object('id', st.id, 'name', st.name, 'tracks', st.tracks, 'trk', _mp_sta_trk(st), 'custom', st.trk is not null, 'mine', _mp_mine(u, st.own_u, st.own_c), 'pf', st.pf,   -- pf：ホームの形（DB の更新107）
     'routes', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'name', r.name)), '[]'::jsonb) from mp_routes r where st.id = any(r.stops)));
 end $$;
 -- 決める：p_trk は番線の順に [{d: down・up・both, m: main・side}]（null でいつもの決まりに）。この駅を通る系統の時刻を計算しなおす
 create or replace function public.mp_sta_trk_set(p_sta bigint, p_trk jsonb) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); st mp_stations; v jsonb; nv jsonb := '[]'::jsonb; rr bigint;
+declare u uuid := _me(); st mp_stations; v jsonb; nv jsonb := '[]'::jsonb; rr bigint; st2 mp_stations;
 begin
   perform _mp_ok(u);
   select * into st from mp_stations where id = p_sta for update;
   if not found or st.kind <> 'rail' then raise exception '駅が見つかりません'; end if;
   if not _mp_mine(u, st.own_u, st.own_c) then raise exception 'あなたの駅ではありません'; end if;
+  st2 := st; st2.trk := null;
   if p_trk is not null then
     if jsonb_typeof(p_trk) <> 'array' or jsonb_array_length(p_trk) <> greatest(st.tracks, 1) then raise exception '番線の数があっていません'; end if;
     for v in select x from jsonb_array_elements(p_trk) x loop
@@ -27172,13 +27194,59 @@ begin
       nv := nv || jsonb_build_array(jsonb_build_object('d', v ->> 'd', 'm', v ->> 'm'));
     end loop;
     -- 止まる列車のために、下り・上りそれぞれ、ホームのある番線（通過線でない）がいる
-    if not exists (select 1 from jsonb_array_elements(nv) v where v ->> 'd' in ('down', 'both') and v ->> 'm' <> 'pass') then raise exception '下りの列車が止まれる番線（ホームのある番線）がありません'; end if;
-    if not exists (select 1 from jsonb_array_elements(nv) v where v ->> 'd' in ('up', 'both') and v ->> 'm' <> 'pass') then raise exception '上りの列車が止まれる番線（ホームのある番線）がありません'; end if;
+    if not exists (select 1 from jsonb_array_elements(nv) zv where zv ->> 'd' in ('down', 'both') and zv ->> 'm' <> 'pass') then raise exception '下りの列車が止まれる番線（ホームのある番線）がありません'; end if;
+    if not exists (select 1 from jsonb_array_elements(nv) zv where zv ->> 'd' in ('up', 'both') and zv ->> 'm' <> 'pass') then raise exception '上りの列車が止まれる番線（ホームのある番線）がありません'; end if;
+    if st.pf is not null and _mp_pf_err(st.pf, nv, greatest(st.tracks, 1)) is not null then raise exception '%（ホームの形も いっしょに変えてください）', _mp_pf_err(st.pf, nv, greatest(st.tracks, 1)); end if;   -- DB の更新107
   end if;
-  update mp_stations set trk = case when p_trk is null then null else nv end where id = p_sta;
+  update mp_stations set trk = case when p_trk is null then null else nv end,
+         pf = case when p_trk is null and st.pf is not null and _mp_pf_err(st.pf, _mp_sta_trk(st2), greatest(st.tracks, 1)) is not null then null else st.pf end where id = p_sta;   -- いつもの決まりにもどして ホームの形とあわなければ おまかせに（DB の更新107）
   for rr in select r.id from mp_routes r where p_sta = any(r.stops) loop perform _mp_resched(rr); end loop;
   perform _mp_chg('sta', p_sta, 'set', box(point(st.x / 100.0 - 3, st.y / 100.0 - 3), point(st.x / 100.0 + 3, st.y / 100.0 + 3)));
   return jsonb_build_object('ok', true, 'trk', (select _mp_sta_trk(s) from mp_stations s where s.id = p_sta));
+end $$;
+-- ホームの形をしらべる（DB の更新107）：pf と 番線の使いかた trk（番線の数 n）。まちがいの文か null（よい）
+--   ホームのない番線は 通過線だけ。となりが 通過線だけの ホームは つくらない
+create or replace function public._mp_pf_err(p_pf text, p_trk jsonb, p_n int) returns text
+language plpgsql immutable as $$
+declare zg text; zk int;
+begin
+  if p_pf is null then return null; end if;
+  zg := case when left(p_pf, 1) = 'T' then substr(p_pf, 2) else p_pf end;
+  if zg !~ '^[P-]+$' or length(zg) <> p_n + 1 then return 'ホームの形が読めません（番線の数とあっていません）'; end if;
+  if position('P' in zg) = 0 then return 'ホームが1つもありません'; end if;
+  for zk in 1..p_n loop
+    if coalesce(p_trk -> (zk - 1) ->> 'm', 'main') <> 'pass' and substr(zg, zk, 1) <> 'P' and substr(zg, zk + 1, 1) <> 'P' then
+      return format('%s番線にホームがありません（ホームのない番線は 通過線にしてください）', zk);
+    end if;
+  end loop;
+  for zk in 1..p_n + 1 loop
+    if substr(zg, zk, 1) = 'P' and not ((zk > 1 and coalesce(p_trk -> (zk - 2) ->> 'm', 'main') <> 'pass') or (zk <= p_n and coalesce(p_trk -> (zk - 1) ->> 'm', 'main') <> 'pass')) then
+      return 'となりが通過線だけのホームがあります（そのホームは なくしてください）';
+    end if;
+  end loop;
+  return null;
+end $$;
+-- ホームの形を決める（DB の更新107）：p_pf（null は おまかせ）と 番線の使いかた p_trk（null は いまのまま）。この駅を通る系統の時刻を計算しなおす
+create or replace function public.mp_sta_pf_set(p_sta bigint, p_pf text, p_trk jsonb) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); st mp_stations; zt jsonb; ze text;
+begin
+  perform _mp_ok(u);
+  select * into st from mp_stations where id = p_sta for update;
+  if not found or st.kind <> 'rail' then raise exception '駅が見つかりません'; end if;
+  if not _mp_mine(u, st.own_u, st.own_c) then raise exception 'あなたの駅ではありません'; end if;
+  if p_pf is not null and length(p_pf) > 12 then raise exception 'ホームの形が読めません'; end if;
+  if p_trk is not null then
+    update mp_stations set pf = null where id = p_sta;   -- 番線の使いかたは 新しいホームの形で しらべる
+    perform mp_sta_trk_set(p_sta, p_trk);
+    select * into st from mp_stations where id = p_sta;
+  end if;
+  zt := _mp_sta_trk(st);
+  ze := _mp_pf_err(p_pf, zt, greatest(st.tracks, 1));
+  if ze is not null then raise exception '%', ze; end if;
+  update mp_stations set pf = p_pf where id = p_sta;
+  perform _mp_chg('sta', p_sta, 'set', box(point(st.x / 100.0 - 3, st.y / 100.0 - 3), point(st.x / 100.0 + 3, st.y / 100.0 + 3)));
+  return jsonb_build_object('ok', true, 'pf', p_pf, 'trk', zt);
 end $$;
 
 /* ---------- 種別と優先番号（t54f） ---------- */
@@ -34307,7 +34375,7 @@ begin
             'mp_route_del','mp_route_pat','mp_route_save','mp_routes_list','mp_rwy_build','mp_rwy_del','mp_sc_list','mp_sc_set',
             'mp_seg_build','mp_seg_color','mp_seg_del','mp_seg_find','mp_seg_routes','mp_seg_edit','mp_seg_join','mp_seg_opts','mp_seg_speed','mp_seg_split','mp_slot_admin',
             'mp_slot_answer','mp_slot_apply','mp_slot_bid','mp_slot_cancel','mp_slot_get','mp_slot_list','mp_slot_return','mp_spot',
-            'mp_sta_build','mp_sta_edit','mp_sta_resize','mp_sta_trk','mp_sta_trk_set','mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list',
+            'mp_sta_build','mp_sta_edit','mp_sta_resize','mp_sta_trk','mp_sta_trk_set','mp_sta_pf_set','_mp_pf_err','_mp_type_vis','mp_stop_lend','mp_thru_answer','mp_thru_end','mp_thru_list',
             'mp_thru_req','mp_train_autoform','mp_train_autoform_k','mp_train_autoform_g','_mp_leg_pw','_mp_train_lpw','mp_seg_spec','mp_seg_merge','mp_dia_order','mp_dia_order_del','mp_train_bulk','mp_train_pattern','mp_ops_renum_kind','mp_tome_build','_mp_lay_set','_mp_cars_tome_trg','_mp_dep_tome_trg','mp_train_del','mp_train_save','mp_unit_lease','mp_unit_leave','mp_unit_market',
             'mp_unit_mine','mp_unit_own','mp_unit_set','mp_xfer_accept','mp_xfer_close','mp_xfer_list','mp_xfer_offer','mp_unko_list','mp_unko_pick','mp_unko_furi','mp_unko_make','mp_jam_now','mp_jam_list','mp_er_now','mp_er_list','mp_er_bld','mp_lic_find','mp_lic_at','mp_lic_apply','_mp_lic_pfee_of','_mp_lic_pfee','_mp_lic_have','_mp_lic_mfee','mp_lic_mine','mp_lic_cancel','mp_lic_review','mp_lic_decide',
             'mp_sta_melt','mp_seg_snow','mp_dep_plow','mp_snow_mine','mp_seg_height','_mp_taut','_mp_prof_flat','_mp_prof_simp','_mp_hopt','_mp_prof_make2','mp_sta_height','_mp_clr_stop2','_mp_clr_pass2','_mp_leg_sig','mp_seg_sig','_mp_trmul','_mp_leg_quad','_mp_ps_names','_mp_leg_pm','_mp_leg_dz','_mp_ord_trg','_mp_ord_txt','_mp_ord_apply','_mp_gbit','_mp_gauge_names','_mp_gauge_v','_mp_slp_v','_mp_cat_v','_mp_seg_v','_mp_gauge_mul','_mp_slp_bmul','_mp_slp_umul','_mp_slp_rep','_mp_cat_mul','_mp_cat_cmul','_mp_cat_umul','_mp_cat_reach','_mp_nw_cost','_mp_nw_upk','_mp_trk_upk','_mp_slp_name','_mp_cat_name','_mp_runs_cap','_mp_runs_merge','_mp_cars_gauge_chk','_mp_leg_gm','_mp_noise_day','_mp_spec_cost','_mp_seg_difs','_mp_ptime','_mp_legs_near','_mp_track_ng','_mp_track_autoname','mp_track_rename','_mp_race_w','_mp_track_wh','_mp_track_base','_mp_track_check','_mp_track_why','_mp_track_sta','_mp_track_riders','_mp_race_sessions','mp_track_list','mp_track_place','mp_track_find','mp_track_del','mp_track_info','_mp_attr_kinds','_mp_attr_max','_mp_attr_fresh','mp_attr_list','mp_attr_build','mp_attr_del','_sec_lim','_sec_label','_sec_tell','_sec_auto','sec_admin_list','sec_admin_block','sec_admin_unblock','app_ver','_mp_sub_spec','_mp_sub_r','_mp_feed','_mp_leg_fed','_mp_route_feed','_mp_sub_name','_mp_sub_auto','_mp_sub_event','mp_sub_build','mp_sub_set','mp_sub_del','_mp_li_put','_mp_routes_fp',
@@ -34345,7 +34413,7 @@ begin
   for f in select p.oid::regprocedure sig from pg_proc p join pg_namespace n on n.oid = p.pronamespace
             where n.nspname = 'public' and p.proname in ('mp_dia_undo', 'mp_form_set', 'mp_kinds_set', 'mp_op_del', 'mp_op_import', 'mp_op_save',
               'mp_route_pat', 'mp_route_save', 'mp_rwy_build', 'mp_rwy_del', 'mp_seg_build', 'mp_seg_del', 'mp_seg_edit', 'mp_seg_join', 'mp_seg_opts',
-              'mp_sta_resize', 'mp_sta_trk_set', 'mp_thru_end', 'mp_seg_height', 'mp_route_xwait', 'mp_ops_bulk', 'mp_op_backup_restore', 'mp_form_order_many', 'mp_train_autoform', 'mp_train_bulk', 'mp_train_del', 'mp_train_save', 'mp_form_add', 'mp_form_spare', 'mp_car_work', 'mp_car_move') loop
+              'mp_sta_resize', 'mp_sta_trk_set', 'mp_sta_pf_set', 'mp_thru_end', 'mp_seg_height', 'mp_route_xwait', 'mp_ops_bulk', 'mp_op_backup_restore', 'mp_form_order_many', 'mp_train_autoform', 'mp_train_bulk', 'mp_train_del', 'mp_train_save', 'mp_form_add', 'mp_form_spare', 'mp_car_work', 'mp_car_move') loop
     execute format('alter function %s set statement_timeout = %L', f.sig, '20s');
   end loop;
 end $$;

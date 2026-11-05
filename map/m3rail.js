@@ -286,6 +286,7 @@ function trackTex(sp) {
    本線は まっすぐ通す（列車は本線の上）。待避線は 本線の外に（分かれ目で ゆるく よせる）。ホームは 外へ外へ：
    2本なら 島式（あいだ）、1本なら 相対式（外）。本線に ホームがない（通過線）ときは そのとなりの待避線の外 */
 function staLayout(t, C, flip) {
+  if (t.pf) { const L = staLayoutPf(t, C, flip, String(t.pf)); if (L) return L; }   // ホームの形を決めた駅（DB の更新107）
   const sp = C.sp, M = sp.offs.slice().sort((a, b) => b - a), nM = M.length;
   const pl = Math.max(40, t.pl || 120), Lh = pl / 2, tk = Array.isArray(t.tk) ? t.tk : [];
   const mk = tk.filter(x => x && x.m !== 'side'), sk = tk.filter(x => x && x.m === 'side');
@@ -323,9 +324,73 @@ function staLayout(t, C, flip) {
   let Rmax = 0; for (const q of sids) Rmax = Math.max(Rmax, q.R);
   return { pl, Lh, sids, plats, Wl, Wr, Rmax, nM };
 }
+/* ---------- 駅：ホームの形を決めた駅（DB の更新107・t66）----------
+   番線は 駅の向きの左から 1番線・2番線…（2D と同じ）。pf：番線のあいだ（両はしも）ごとに 'P'（ホーム）か '-'（なし）を 番線の数＋1 文字。
+   はじめの 'T' は 頭端式（行き止まり）。線の本線（複線なら 下りは左・上りは右）は 本線・通過線の番線へ（その向きに 通過線があれば 通過線）。
+   ほかの番線は その向きの本線から分かれる。本線の番線が 線の本線とずれるとき（島式など）は 本線も ゆるく ひろげる（mo）。slot：番線ごとの o */
+function staLayoutPf(t, C, flip, pf) {
+  const sp = C.sp, nM = sp.offs.length, tk = Array.isArray(t.tk) ? t.tk : [], n = Math.max(1, t.tr || 1);
+  const term = pf[0] === 'T', g = term ? pf.slice(1) : pf;
+  if (g.length !== n + 1 || tk.length !== n || nM === 4 || /[^P-]/.test(g)) return null;   // あわない・複々線：いままでの形
+  const pl = Math.max(40, t.pl || 120), Lh = pl / 2, Wi = Math.min(10, 6 + pl / 75), Ws = Math.min(6, 3 + pl / 100);
+  // 1. 番線のまん中（駅の左が＋。左のはしから 右へ）
+  const c = new Array(n);
+  c[0] = g[0] === 'P' ? -Ws - PE : -(sp.wt / 2 + 0.3);
+  for (let k = 1; k < n; k++) c[k] = g[k] === 'P' ? c[k - 1] - 2 * PE - Wi : c[k - 1] - sp.sp;
+  // 2. 線の本線 → 番線（下りは左の本線・上りは右の本線）
+  const isM = x => !!x && (x.m === 'main' || x.m === 'pass');
+  const pick = d => { let r = -1; for (let k = 0; k < n; k++) { const x = tk[k]; if (!x || (x.d !== d && x.d !== 'both')) continue; if (x.m === 'pass' && x.d === d) return k; if (r < 0 && isM(x)) r = k; } return r; };
+  let ms;
+  if (nM === 1) { let k = tk.findIndex(x => x && x.m === 'pass'); if (k < 0) k = tk.findIndex(isM); ms = [Math.max(0, k)]; }
+  else { const a = pick('down'), b = pick('up'); if (a < 0 || b < 0 || a >= b) return null; ms = [a, b]; }
+  // 3. よせる：本線の番線のまん中を 線の本線のまん中に
+  const LO = sp.offs.map(v => flip * v).sort((x, y) => y - x);   // 線の本線（駅の左が＋。左から）
+  let sh = 0; ms.forEach((k, j) => { sh += LO[j] - c[k]; }); sh /= ms.length;
+  for (let k = 0; k < n; k++) c[k] += sh;
+  const Rof = d => Math.max(30, Math.min(90, 20 + Math.abs(d) * 5));
+  // 4. 本線：駅の中の o（線の座標）・もとの o・ひろげる長さ
+  const mo = sp.offs.map(v => { const j = LO.indexOf(flip * v), of = flip * c[ms[j]], d = of - v; return { of, om: v, R: Math.abs(d) > 0.05 ? Rof(d) : 0, slot: ms[j] }; });
+  // 5. ほかの番線：その向きの本線から分かれる（両方の向きは 近い本線から）
+  const sids = [];
+  for (let k = 0; k < n; k++) {
+    if (ms.includes(k)) continue;
+    const x = tk[k] || {};
+    const j = nM === 1 ? 0 : x.d === 'down' ? 0 : x.d === 'up' ? 1 : Math.abs(c[k] - c[ms[0]]) <= Math.abs(c[k] - c[ms[1]]) ? 0 : 1;
+    const of = flip * c[k], om = flip * LO[j];
+    sids.push({ of, om, R: Rof(of - om), slot: k });
+  }
+  // 6. ホーム（駅の座標で hi が左のはし・lo が右のはし → 線の座標）
+  const plats = [];
+  const add = (hi, lo, fhi, flo, isl) => plats.push(flip > 0 ? { lo, hi, flo, fhi, isl } : { lo: -hi, hi: -lo, flo: fhi, fhi: flo, isl });
+  if (g[0] === 'P') add(c[0] + PE + Ws, c[0] + PE, false, true, false);
+  for (let k = 1; k < n; k++) if (g[k] === 'P') add(c[k - 1] - PE, c[k] + PE, true, true, true);
+  if (g[n] === 'P') add(c[n - 1] - PE, c[n - 1] - PE - Ws, true, false, false);
+  // 7. はば・分かれ目の長さ
+  let Wl = 0, Wr = 0, Rmax = 0;
+  for (const q of mo.concat(sids)) { Wl = Math.max(Wl, q.of + sp.wt / 2 + 0.3); Wr = Math.max(Wr, -q.of + sp.wt / 2 + 0.3); Rmax = Math.max(Rmax, q.R); }
+  for (const q of mo) { Wl = Math.max(Wl, q.om + sp.wt / 2 + 0.3); Wr = Math.max(Wr, -q.om + sp.wt / 2 + 0.3); }
+  for (const p of plats) { Wl = Math.max(Wl, p.hi + 0.3); Wr = Math.max(Wr, -p.lo + 0.3); }
+  return { pl, Lh, sids, plats, Wl, Wr, Rmax, nM, mo, slot: c.map(v => flip * v), ms, term, pf: true };
+}
+// 本線 j の o（線 C の s）：ホームの形を決めた駅では 駅の中で ひろげる（DB の更新107）
+function mainOff(C, s, j) {
+  const v = C.sp.offs[j];
+  for (const e of C.sta) {
+    const L = e.t._L; if (!L || !L.mo) continue;
+    const a = Math.abs(e.dir * (s - e.sRef) * 50);
+    let q = null; for (const m of L.mo) if (Math.abs(m.om - e.dir * v) < 0.05) q = m;
+    if (!q || !q.R) continue;
+    if (L.stub && Math.sign(e.dir * (s - e.sRef)) === L.stub) return e.dir * q.of;   // 頭端式の行き止まりのがわ
+    if (a >= L.Lh + q.R) continue;
+    return e.dir * (a <= L.Lh ? q.of : q.om + (q.of - q.om) * (1 - smooth((a - L.Lh) / q.R)));
+  }
+  return v;
+}
 // 待避線の o（駅の d（m）のところ。分かれ目より外は null）
-function sidO(q, Lh, dm) {
-  const a = Math.abs(dm); if (a <= Lh) return q.of; if (a >= Lh + q.R) return null;
+function sidO(q, Lh, dm, L) {
+  const a = Math.abs(dm); if (a <= Lh) return q.of;
+  if (L && L.stub && Math.sign(dm) === L.stub) return a <= L.stubL + 1 ? q.of : null;   // 頭端式の行き止まりのがわ
+  if (a >= Lh + q.R) return null;
   return q.om + (q.of - q.om) * (1 - smooth((a - Lh) / q.R));
 }
 // 駅の線を たどる：駅の線の s = at から前後へ（節点で まっすぐ つづく線へ）。{ C, dir, sRef }：d（マス）= dir × (s − sRef)
@@ -356,23 +421,23 @@ function staAt(t, dm, o) {
 /* ---------- いまの線の上の線路・ホーム（線 C の s のところ。o：線の左＋ m） ---------- */
 function tracksAt(C, s) {
   const out = [], sp = C.sp;
-  for (let j = 0; j < sp.offs.length; j++) out.push({ id: j, o: conv(C, s, sp.offs[j]), m: true });
+  for (let j = 0; j < sp.offs.length; j++) out.push({ id: j, o: conv(C, s, C.sta.length ? mainOff(C, s, j) : sp.offs[j]), m: true });
   for (const e of C.sta) {
-    const L = e.t._L, dm = e.dir * (s - e.sRef) * 50; if (Math.abs(dm) > L.Lh + L.Rmax) continue;
-    L.sids.forEach((q, k) => { const o = sidO(q, L.Lh, dm); if (o != null) out.push({ id: 100 + e.t._i * 16 + k, o: e.dir * o, m: false }); });
+    const L = e.t._L, dm = e.dir * (s - e.sRef) * 50; if (Math.abs(dm) > (L.stub && Math.sign(dm) === L.stub ? L.stubL + 1 : L.Lh + L.Rmax)) continue;
+    L.sids.forEach((q, k) => { const o = sidO(q, L.Lh, dm, L); if (o != null) out.push({ id: 100 + e.t._i * 16 + k, o: e.dir * o, m: false }); });
   }
   return out;
 }
 function platsAt(C, s) {
   const out = [];
   for (const e of C.sta) {
-    const L = e.t._L, dm = e.dir * (s - e.sRef) * 50; if (Math.abs(dm) > L.Lh + 1e-3) continue;
+    const L = e.t._L, dm = e.dir * (s - e.sRef) * 50; if (Math.abs(dm) > (L.stub && Math.sign(dm) === L.stub ? Math.max(L.Lh, L.stubL - 0.3) : L.Lh) + 1e-3) continue;
     const cn = L.cn && L.cn.some(r => dm >= r[0] - 1e-3 && dm <= r[1] + 1e-3);
     L.plats.forEach((p, k) => out.push(e.dir > 0 ? { id: 1000 + e.t._i * 16 + k, a: p.lo, b: p.hi, fa: p.flo, fb: p.fhi, isl: p.isl, cn } : { id: 1000 + e.t._i * 16 + k, a: -p.hi, b: -p.lo, fa: p.fhi, fb: p.flo, isl: p.isl, cn }));
   }
   return out;
 }
-const inZone = (C, s) => { for (const e of C.sta) { const L = e.t._L; if (Math.abs(e.dir * (s - e.sRef) * 50) <= L.Lh + L.Rmax) return true; } return false; };
+const inZone = (C, s) => { for (const e of C.sta) { const L = e.t._L, dm = e.dir * (s - e.sRef) * 50; if (Math.abs(dm) <= (L.stub && Math.sign(dm) === L.stub ? L.stubL + 1 : L.Lh + L.Rmax)) return true; } return false; };
 const inXr = (C, s, k) => { for (const r of C.xr) if ((!k || r.k === k) && s >= r.s0 - 1e-6 && s <= r.s1 + 1e-6) return r; return null; };
 
 /* ---------- 道路のさがしもの（線路の近くだけ。1マスの目） ---------- */
@@ -518,6 +583,13 @@ function build(cx) {
     const C = segC(sg), at0 = Math.max(0, Math.min(C.len, t.at || 0)); at(C, at0, TP);
     const flip = TP.tx * Math.cos(t.a || 0) + TP.ty * Math.sin(t.a || 0) >= 0 ? 1 : -1;
     const L = staLayout(t, C, flip); t._L = L; L.flip = flip;
+    if (L.term) {   // 頭端式（DB の更新107）：駅の線のはしが 行き止まり（つづく線がない）で、ホームのはしから 60m までなら そのがわ（stub：線の s の向き ±1）
+      L.stub = 0;
+      for (const e of [1, 0]) {
+        const nd = e ? sg.n1 : sg.n0, dEnd = (e ? C.len - at0 : at0) * 50;
+        if (dEnd <= L.Lh + 60 && !(nd != null && nextSeg(C, e, nd))) { L.stub = e ? 1 : -1; L.stubL = dEnd; break; }
+      }
+    }
     t._cov = staCover(C, at0, (L.Lh + L.Rmax + 30) * U);
     for (const e of t._cov) e.C.sta.push({ t, dir: e.dir, sRef: e.sRef });
     const c0 = codeS(sg, at0); L.under = t.zl === 'U' || c0 === 'T'; L.elev = !L.under && (t.zl === 'E' || c0 === 'V' || c0 === 'B');
@@ -546,7 +618,7 @@ function build(cx) {
   // 5. 線ごとに（近いはんいの点の つづき）
   const pad = 2;
   for (const C of rails) {
-    for (const e of C.sta) { const L = e.t._L, cuts = [-L.Lh, L.Lh]; for (const q of L.sids) for (const f of [0, 0.25, 0.5, 0.75, 1]) cuts.push(-(L.Lh + q.R * f), L.Lh + q.R * f); for (const r of (L.cn || [])) cuts.push(r[0], r[1]); for (const dm of cuts) { const s = e.sRef + e.dir * dm * U; if (s > 0 && s < C.len) C.cuts.push(s); } }
+    for (const e of C.sta) { const L = e.t._L, cuts = [-L.Lh, L.Lh]; for (const q of L.sids.concat(L.mo || [])) if (q.R) for (const f of [0, 0.25, 0.5, 0.75, 1]) cuts.push(-(L.Lh + q.R * f), L.Lh + q.R * f); for (const r of (L.cn || [])) cuts.push(r[0], r[1]); for (const dm of cuts) { const s = e.sRef + e.dir * dm * U; if (s > 0 && s < C.len) C.cuts.push(s); } }
     for (const r of C.xr) for (const s of [r.s0, r.s1]) if (s > 0 && s < C.len) C.cuts.push(s);
     const st = C.sg.pf && C.sg.L && C.sg.st ? C.sg.st : ''; for (let k = 0; k + 1 < st.length; k++) if (st[k] !== st[k + 1] && k + 0.5 < C.len) C.cuts.push(k + 0.5);
     C.cuts.sort((a, b) => a - b);
@@ -1041,6 +1113,19 @@ function staBuild(t) {
   const lod = lodAt(c0.x, c0.y);
   let topH = c0.rt + 8 * U;
   const loc2 = (dm, o, h) => { const S = staAt(t, dm); if (!S) return null; return { x: S.x + S.nx * o * U, y: S.y + S.ny * o * U, h: S.rt + h * U, S }; };
+  if (L.stub && !L.under) {   // 頭端式（DB の更新107）：線路のはし（車止め）の先に、ホームを横につなぐ コンコース（ホームの高さ・屋根つき）
+    const S1 = staAt(t, L.stub * Math.max(L.Lh, L.stubL - 0.3));
+    if (S1) {
+      const tx = S1.tx * L.stub, ty = S1.ty * L.stub, ln = 12, mid = (L.Wl - L.Wr) / 2, hw = (L.Wl + L.Wr) / 2 + 1;
+      const cx = S1.x + tx * (ln / 2) * U + S1.nx * mid * U, cy = S1.y + ty * (ln / 2) * U + S1.ny * mid * U, gz = X.m3Surf(cx, cy);
+      g.box(cx, cy, tx, ty, ln / 2 * U, hw * U, Math.min(S1.rt, gz) - 0.5 * U, S1.rt + PH * U, CL.plat, true);
+      g.box(cx - tx * (ln / 2 - 0.15) * U, cy - ty * (ln / 2 - 0.15) * U, tx, ty, 0.15 * U, hw * U, S1.rt + PH * U, S1.rt + (PH + 0.05) * U, CL.tact);   // 点字ブロック（ホームとの さかい）
+      if (lod >= 1) {
+        g.box(cx, cy, tx, ty, ln / 2 * U, hw * U, S1.rt + (PH + 3.4) * U, S1.rt + (PH + 3.7) * U, CL.roofT, true);
+        for (const a of [-1, 1]) for (const b of [-1, 1]) g.box(cx + tx * a * (ln / 2 - 0.6) * U + S1.nx * b * (hw - 0.6) * U, cy + ty * a * (ln / 2 - 0.6) * U + S1.ny * b * (hw - 0.6) * U, tx, ty, 0.15 * U, 0.15 * U, S1.rt + PH * U, S1.rt + (PH + 3.4) * U, CL.col);
+      }
+    }
+  }
   if (L.under) {   // 地下駅：地上は 出入口（屋根つきの階段の入口）と 換気口
     const ents = [[-L.pl * 0.3, L.Wl + 6], [L.pl * 0.3, -(L.Wr + 6)], [L.pl * 0.38, L.Wl + 6], [-L.pl * 0.38, -(L.Wr + 6)]];
     for (const [dm, o] of ents.slice(0, L.pl >= 160 ? 4 : 2)) {
@@ -1342,12 +1427,23 @@ function flush() {
 }
 
 /* ---------- 列車：レールの上に ---------- */
-// 左右のずれ（マス）：複線・複々線は 内がわの 2本（左を走る）・単線は まん中。s があれば 線のはしの よせ も
-function off(sg, k, s) {
+// 左右のずれ（マス。進む向きの左が＋）：複線・複々線は 内がわの 2本（左を走る）・単線は まん中。s があれば 線のはしの よせ も。
+//   sd：線の s の向きに進むか（1）逆か（−1）。ホームの形を決めた駅（DB の更新107）では 本線が ひろがる。
+//   tr：とまる駅と番線［駅, 番線, 駅, 番線］（前の駅・つぎの駅）があれば、その駅では その番線に入る
+function off(sg, k, s, sd, tr) {
   const C = segC(sg); if (!C.sp) C.sp = spec(sg);
-  if (C.sp.n === 1) return 0;
-  const o = C.sp.sp / 2;
-  return (s != null && (C.cv[0] || C.cv[1]) ? Math.abs(conv(C, s, o)) : o) * U;
+  const n = C.sp.n, d = sd < 0 ? -1 : 1;
+  if (s == null) return n === 1 ? 0 : C.sp.sp / 2 * U;
+  if (tr && C.sta.length) for (const e of C.sta) {
+    const L = e.t._L; if (!L || !L.slot) continue;
+    let no = 0; for (let i = 0; i + 1 < tr.length; i += 2) if (tr[i] === e.t.id) no = tr[i + 1];
+    if (!no) continue;
+    const q = L.sids.find(x => x.slot === no - 1); if (!q) continue;   // 本線の番線は ふつうの本線（ひろげたもの）
+    const dm = e.dir * (s - e.sRef) * 50, o = sidO(q, L.Lh, dm, L);
+    if (o != null) return d * e.dir * o * U;
+  }
+  const j = n === 1 ? 0 : n === 2 ? (d > 0 ? 0 : 1) : (d > 0 ? 1 : 2);
+  return d * conv(C, s, C.sta.length ? mainOff(C, s, j) : C.sp.offs[j]) * U;
 }
 // 走る面の高さ（レールの上）。トンネルの中は見せない
 function runY(sg, s, x, y, k) {

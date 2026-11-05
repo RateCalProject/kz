@@ -1500,29 +1500,44 @@ function staLabel(g, s, z) {
   // 積雪（t108。3時間ごと）：20cm より多くて融雪器がないと赤
   if (s.sn && z >= 2.5) label(g, `⛄${s.sn}cm`, x, y + Wd / 2 + (up ? 9 : 27), { size: 10, bold: true, color: s.sn >= 20 && !s.ml ? '#b3261e' : '#0b4f8a', bg: 'rgba(240,248,255,.92)' });
 }
+// 駅のはば（px）：ホームの形を決めた駅は ホームと番線の数から（DB の更新107）
+const staPg = (s, z) => s.k === 'rail' && s.pf && z >= 6 ? pfGaps(s.pf, Math.max(1, s.tr)) : null;
+function staUt(pg, n) { let u = n; if (pg) for (let k = 0; k <= n; k++) if (pg[k] === 'P') u += k > 0 && k < n ? 1 : 0.7; return u; }
+function staWd(s, z) { const n = Math.max(1, s.tr), pg = staPg(s, z); return pg ? Math.max(5, (0.13 * staUt(pg, n) + 0.18) * z) : Math.max(5, (0.22 * n + 0.18) * z); }
 function drawStation(g, s, z) {
   const x = sx(s.fx), y = sy(s.fy);
   if (x < -80 || y < -40 || x > S.W + 80 || y > S.H + 40) return;
-  const L = Math.max(10, s.pl / 50 * z), Wd = Math.max(5, (0.22 * Math.max(1, s.tr) + 0.18) * z);
+  const L = Math.max(10, s.pl / 50 * z), n = Math.max(1, s.tr), pg = staPg(s, z), Ut = staUt(pg, n), Wd = staWd(s, z);
+  // ホームの形（DB の更新107）：上（駅の向きの左）から ホーム・番線のならび。ホームは白・番線は灰色
+  const lane = [];   // 番線ごとの［上のはし, はば］
   g.save(); g.translate(x, y); g.rotate(s.a);
   if (s.zl === 'E') { g.fillStyle = 'rgba(0,0,0,.22)'; g.fillRect(-L / 2 - 3, -Wd / 2 - 3, L + 6, Wd + 6); }   // 高架駅のかげ（t108）
   if (s.zl === 'U') { g.globalAlpha = 0.6; g.setLineDash([5, 3]); }   // 地下駅：うすく・点線
   g.fillStyle = '#ffffff'; g.strokeStyle = s.mine ? '#1f5fbf' : '#333'; g.lineWidth = 1.6;
   g.fillRect(-L / 2, -Wd / 2, L, Wd);
-  if (s.tk && s.tr > 1) { g.fillStyle = '#c9ccd0'; s.tk.forEach((t, k) => { if (t && t.m === 'pass') g.fillRect(-L / 2, -Wd / 2 + Wd * k / s.tr, L, Wd / s.tr); }); }   // 通過線（ホームなし。t62）
+  if (pg) {
+    const u = Wd / Ut; let yy = -Wd / 2;
+    for (let k = 0; k <= n; k++) {
+      if (pg[k] === 'P') yy += u * (k > 0 && k < n ? 1 : 0.7);
+      if (k < n) { lane.push([yy, u]); g.fillStyle = '#c9ccd0'; g.fillRect(-L / 2, yy, L, u); if (z >= 12) { g.fillStyle = '#9aa0a6'; g.fillRect(-L / 2, yy + u * 0.32, L, Math.max(1, u * 0.08)); g.fillRect(-L / 2, yy + u * 0.6, L, Math.max(1, u * 0.08)); } yy += u; }
+    }
+  } else {
+    for (let k = 0; k < n; k++) lane.push([-Wd / 2 + Wd * k / n, Wd / n]);
+    if (s.tk && n > 1) { g.fillStyle = '#c9ccd0'; s.tk.forEach((t, k) => { if (t && t.m === 'pass') g.fillRect(-L / 2, -Wd / 2 + Wd * k / n, L, Wd / n); }); }   // 通過線（ホームなし。t62）
+  }
   g.strokeRect(-L / 2, -Wd / 2, L, Wd);
-  if (z >= 12) { g.strokeStyle = '#999'; g.lineWidth = 1; for (let k = 1; k < s.tr; k++) { const yy = -Wd / 2 + Wd * k / s.tr; g.beginPath(); g.moveTo(-L / 2, yy); g.lineTo(L / 2, yy); g.stroke(); } }
+  if (!pg && z >= 12) { g.strokeStyle = '#999'; g.lineWidth = 1; for (let k = 1; k < n; k++) { const yy = -Wd / 2 + Wd * k / n; g.beginPath(); g.moveTo(-L / 2, yy); g.lineTo(L / 2, yy); g.stroke(); } }
   g.setLineDash([]); g.globalAlpha = 1;
   g.restore();
   // 番線の番号（ホームの中。近づいたとき）：1番線は駅の向きの左がわ（上）から順に
-  const lh = Wd / Math.max(1, s.tr);
+  const lh = Math.min(...lane.map(q => q[1]));
   if (z >= 16 && lh >= 6.5) {
     const ca = Math.cos(s.a), sa = Math.sin(s.a), fs = Math.round(Math.min(13, Math.max(8, lh * 0.75)));
     g.font = `bold ${fs}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = s.mine ? '#1f5fbf' : '#444';
-    for (let k = 0; k < Math.max(1, s.tr); k++) {
-      const ly = -Wd / 2 + lh * (k + 0.5);
+    lane.forEach((q, k) => {
+      const ly = q[0] + q[1] / 2;
       for (const lx of (L > 70 ? [-L / 2 + fs * 0.9, L / 2 - fs * 0.9] : [0])) g.fillText(String(k + 1), x + lx * ca - ly * sa, y + lx * sa + ly * ca + 0.5);
-    }
+    });
   }
 }
 // 車庫の大きさ：[長さ, はば, 線からのあき, 留置線の数]（マス）。'T400x6' は線路をなぞったもの（400m・6本）
@@ -1808,7 +1823,7 @@ function prepRun(D) {
     const sc = t.sched; if (t.bad || !Array.isArray(sc) || sc.length < 2) continue;
     const t0 = sc[0][2], t1 = sc[sc.length - 1][1]; if (t0 == null || t1 == null) continue;
     R.tr.push({ id: t.id, dir: t.dir, num: t.num, kind: t.kind, day: t.day, fn: Math.max(1, t.fn || 1), s: sc, t0, t1, idx: null,
-                fname: t.fname || '', fser: t.fser || '', onum: t.onum || '', form: t.form == null ? null : t.form,
+                fname: t.fname || '', fser: t.fser || '', onum: t.onum || '', form: t.form == null ? null : t.form, fm: Array.isArray(t.fm) ? t.fm : null,   // fm：モデルのある系列の編成の形式（下り方から。DB の更新107）
                 lay: Array.isArray(t.lay) ? t.lay : null, lz: Array.isArray(t.lay) && t.lay[6] != null ? t.lay[6] : null,   // 折り返しを待つ（DB の更新105）
                 wk: Array.isArray(t.wk) ? t.wk : null, wkk: t.wkk || '',   // wk：編成の工事中［はじめ（null は前から）, おわり］（1970年からの秒。DB の更新60）
                 sub: Array.isArray(t.sub) ? t.sub : null,   // sub：予備編成の代走［運行日, 発車（1970年からの秒）, 予備編成］（DB の更新80）
@@ -1980,7 +1995,7 @@ function runRef(H, d) {
   while (hi - lo > 1) { const m = (lo + hi) >> 1; if (c[m] <= d) lo = m; else hi = m; }
   const r = H.refs[lo]; if (!r) return null;
   const t = clamp((d - c[lo]) / ((c[hi] - c[lo]) || 1), 0, 1);
-  return [r[0], r[1] + (r[2] - r[1]) * t];
+  return [r[0], r[1] + (r[2] - r[1]) * t, r[2] < r[1] ? -1 : 1];   // 3つめ：線の s の向きに進むか（1）逆か（−1）
 }
 // 線の d0〜d1 の折れ線
 function runSub(H, d0, d1) {
@@ -3660,7 +3675,7 @@ function nearSta(x, y, rpx, pred) {
     const dx = x - s.fx, dy = y - s.fy; let d;
     if (s.k === 'rail') {
       if (z < Z_FAR) continue;   // とても遠いときは駅を出していない（t108）
-      const L = Math.max(10, s.pl / 50 * z), Wd = Math.max(5, (0.22 * Math.max(1, s.tr) + 0.18) * z);   // drawStation と同じ（px）
+      const L = Math.max(10, s.pl / 50 * z), Wd = staWd(s, z);   // drawStation と同じ（px）
       const ca = Math.cos(s.a), sa = Math.sin(s.a), u = (dx * ca + dy * sa) * z, v = (-dx * sa + dy * ca) * z;
       d = Math.hypot(Math.max(0, Math.abs(u) - L / 2), Math.max(0, Math.abs(v) - Wd / 2));
       if (d > tol) {
@@ -4313,7 +4328,7 @@ function showSta(s) {
   sheet(`<h4>${s.k === 'rail' ? '🚉 ' : air ? '✈ ' : port ? '⚓ ' : '🚏 '}<span>${esc(s.n)}</span>${s.k === 'rail' ? '<span>駅</span>' : gov ? '<span>（国の空港）</span>' : air ? '<span>（空港）</span>' : port ? '<span>（港）</span>' : ''}</h4><p class="small muted" data-addr translate="no" style="margin:0"></p>
     <div class="mp-kv"><b>持ち主</b><span><span>${s.o === 'gov' ? '国' : esc(S.vis.names[s.o] || '')}</span>${s.mine && s.o !== 'gov' ? '<small>（あなた）</small>' : ''}</span>
       ${wxRow(s.fx, s.fy)}${snowStaRow(s)}
-      ${s.k === 'rail' ? `<b>ホーム</b><span>${s.pl} m・${s.tr}番線まで</span>` : ''}
+      ${s.k === 'rail' ? `<b>ホーム</b><span>${s.pl} m・${s.tr}番線まで${pfName(s.pf, s.tr) ? `<br><span>${esc(pfName(s.pf, s.tr))}</span>` : ''}</span>` : ''}
       ${s.k === 'rail' && S.hgtOK ? `<b>高さ</b><span>${STA_LV[s.zl || 'G']}</span>` : ''}
       ${s.k === 'rail' && S.supOK ? `<b>補給</b><span>${s.wt || s.cl ? `<span>${[s.wt ? '💧 給水' : '', s.cl ? '⛏ 給炭' : ''].filter(Boolean).join('・')}</span><small class="muted">（蒸気機関車）</small>` : '<span class="muted">給水・給炭の設備はありません</span>'}</span>` : ''}
       ${s.k === 'rail' && s.tk ? `<b>発着番線</b><span>${s.tk.map((t, i) => `<span>${esc(trkL(t, i))}</span>`).join('<br>')}</span>` : ''}
@@ -4328,7 +4343,7 @@ function showSta(s) {
     ${gov ? `<div class="mp-row"><button class="btn main" data-slot>🛫 発着口・入札</button>${pdep ? '<button class="btn" data-cars>飛行機を見る・注文する</button>' : ''}<button class="btn" data-newr>＋ 空路</button>${adm ? '<button class="btn" data-ren>名前を変える</button><button class="btn" data-lend>使用料</button>' : ''}</div>
       <p class="muted small"><span>国の空港です。だれでも駐機場に飛行機を置いて（≡ →「車両と編成」）、空路に使えます。空路に入れると、1路線・1日の使用料を国にはらいます（使いはじめたときの値段のまま）。</span><span>この空港を出る便は、1時間に、持っている発着口の数まで（発着口の権利は入札で買います）</span></p>`
     : s.mine && port ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button><button class="btn" data-lend>貸し出し</button>${pdep ? (air ? '<button class="btn" data-cars>飛行機を見る</button>' : '<button class="btn" data-cars>船を見る</button>') : ''}${air ? '<button class="btn" data-newr>＋ 空路</button>' : '<button class="btn" data-newr>＋ 航路</button>'}</div>
-      <p class="muted small">${air ? '空港は、空港の建物をこわすとなくなります' : '港は、フェリーターミナルの建物をこわすとなくなります'}</p>` : s.mine ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button>${s.k === 'bus' ? '<button class="btn" data-lend>貸し出し</button>' : '<button class="btn" data-plat>ホーム・番線</button><button class="btn" data-trk>発着番線</button>' + (S.hgt2 ? '<button class="btn" data-sth>⛰ 駅の高さ</button>' : '') + (tomeOn() ? '<button class="btn" data-tome>🅿 留置線をつくる</button>' : '')}${s.k === 'rail' && S.snowOK && (s.ml || snowZoneAt(s.fx, s.fy) > 0) ? `<button class="btn" data-melt>${s.ml ? '融雪器をはずす' : '❄ 融雪器をつける'}</button>` : ''}${s.k === 'rail' && S.supOK ? `<button class="btn" data-sup="water">${s.wt ? '給水設備をはずす' : '💧 給水設備をつくる'}</button><button class="btn" data-sup="coal">${s.cl ? '給炭設備をはずす' : '⛏ 給炭設備をつくる'}</button>` : ''}<button class="btn" data-del>こわす</button></div>` : ''}
+      <p class="muted small">${air ? '空港は、空港の建物をこわすとなくなります' : '港は、フェリーターミナルの建物をこわすとなくなります'}</p>` : s.mine ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button>${s.k === 'bus' ? '<button class="btn" data-lend>貸し出し</button>' : '<button class="btn" data-plat>ホーム・番線</button><button class="btn" data-trk>' + (pfOn() ? '発着番線・ホームの形' : '発着番線') + '</button>' + (S.hgt2 ? '<button class="btn" data-sth>⛰ 駅の高さ</button>' : '') + (tomeOn() ? '<button class="btn" data-tome>🅿 留置線をつくる</button>' : '')}${s.k === 'rail' && S.snowOK && (s.ml || snowZoneAt(s.fx, s.fy) > 0) ? `<button class="btn" data-melt>${s.ml ? '融雪器をはずす' : '❄ 融雪器をつける'}</button>` : ''}${s.k === 'rail' && S.supOK ? `<button class="btn" data-sup="water">${s.wt ? '給水設備をはずす' : '💧 給水設備をつくる'}</button><button class="btn" data-sup="coal">${s.cl ? '給炭設備をはずす' : '⛏ 給炭設備をつくる'}</button>` : ''}<button class="btn" data-del>こわす</button></div>` : ''}
     ${S.admin && (s.rt || []).length ? '<div class="mp-row"><button class="btn" data-unkomk>🚦 乱れを起こす（管理者）</button></div>' : ''}`, sh => {
     const cs = sh.querySelector('[data-cars]'); if (cs) cs.onclick = () => openCars(pdep.id);
     const um = sh.querySelector('[data-unkomk]'); if (um) um.onclick = () => unkoMake(s);   // t108
@@ -4446,9 +4461,36 @@ function staResize(s) {
   S.onSheetClose = () => { S.drawTool = null; S.dirty = true; };
   draw();
 }
-// 駅の発着番線を決める：番線ごとに 下り・上り・両方／本線・待避線（待避線があると、優先番号の低い列車がそこで待避する）
+/* ---------- ホームの形（DB の更新107）：pf は 番線のあいだ（両はしも）ごとに P（ホーム）・-（なし）。はじめの T は頭端式。番線は 駅の向きの左から ---------- */
+const pfOn = () => { lookOn(); return (S.dbv || 0) >= 107; };
+function pfGaps(pf, n) { if (!pf) return null; const g = pf[0] === 'T' ? pf.slice(1) : pf; return g.length === n + 1 && /^[P-]+$/.test(g) ? g : null; }
+// 名前：相対式 2面2線 など（決めていなければ null）
+function pfName(pf, n) {
+  const g = pfGaps(pf, n); if (!g) return null;
+  let isl = 0, side = 0; for (let k = 0; k <= n; k++) if (g[k] === 'P') { if (k > 0 && k < n) isl++; else side++; }
+  return T((pf[0] === 'T' ? '頭端式' : isl && side ? '島式＋相対式' : isl ? '島式' : '相対式') + `（${isl + side}面${n}線）`);
+}
+// 決まった形（番線 n）：{ g（あいだの P・-）, trk }。下りは左がわ・上りは右がわ（まん中は両方）。ホームのない番線は通過線。
+//   その向きで まん中に近い ホームの番線が本線、ほかは待避線
+function pfPreset(kind, n) {
+  const g = new Array(n + 1).fill('-');
+  if (kind === 'opp') { g[0] = 'P'; if (n > 1) g[n] = 'P'; }
+  else if (kind === 'isl') { for (let k = 1; k < n; k += 2) g[k] = 'P'; if (n % 2) g[n] = 'P'; }
+  else { g[0] = 'P'; for (let k = 2; k < n; k += 2) g[k] = 'P'; if (n % 2 === 0) g[n] = 'P'; }
+  const trk = [];
+  for (let k = 0; k < n; k++) trk.push({ d: n === 1 || 2 * k === n - 1 ? 'both' : 2 * k < n - 1 ? 'down' : 'up', m: g[k] === 'P' || g[k + 1] === 'P' ? 'side' : 'pass' });
+  for (const dd of ['down', 'up', 'both']) {
+    let best = -1, bd = 1e9;
+    trk.forEach((t, k) => { if (t.d === dd && t.m !== 'pass' && Math.abs(k - (n - 1) / 2) < bd) { bd = Math.abs(k - (n - 1) / 2); best = k; } });
+    if (best >= 0 && (dd !== 'both' || n === 1)) trk[best].m = 'main';
+  }
+  return { g: g.join(''), trk };
+}
+// 駅の発着番線を決める：番線ごとに 下り・上り・両方／本線・待避線（待避線があると、優先番号の低い列車がそこで待避する）。
+//   DB の更新107 から：ホームの形も（上が 駅の向きの左。ホームを押すと つける・はずす）
 async function trkEdit(s) {
   const d = await api('mp_sta_trk', { p_sta: s.id }); if (!d) return;
+  if (pfOn()) return pfEdit(s, d);
   const cur = d.trk.map(t => ({ ...t }));
   const m = modal(['発着番線', ''], null);
   const draw = () => m.set('発着番線', `<p class="small" style="margin:0"><b>${esc(d.name)}</b>（<span>${d.tracks}番線まで</span>）</p>
@@ -4461,6 +4503,43 @@ async function trkEdit(s) {
     b.querySelectorAll('[data-tm]').forEach(x => x.onclick = () => { const [i, k] = x.dataset.tm.split(':'); cur[Number(i)].m = k; draw(); });
     b.querySelector('[data-ok]').onclick = async () => { const r = await api('mp_sta_trk_set', { p_sta: s.id, p_trk: cur }, '決めました'); if (r) { s.tk = r.trk; m.close(); showSta(s); } };
     b.querySelector('[data-def]').onclick = async () => { const r = await api('mp_sta_trk_set', { p_sta: s.id, p_trk: null }, 'もどしました'); if (r) { s.tk = r.trk; m.close(); showSta(s); } };
+  });
+  draw();
+}
+function pfEdit(s, d) {
+  const n = Math.max(1, d.tracks), cur = d.trk.map(t => ({ ...t }));
+  let g = pfGaps(d.pf, n), term = !!(d.pf && d.pf[0] === 'T');   // g：null は おまかせ
+  const m = modal(['発着番線・ホームの形', ''], null);
+  const fix = () => { if (!g) return; cur.forEach((t, k) => { if (g[k] !== 'P' && g[k + 1] !== 'P') t.m = 'pass'; }); };   // ホームのない番線は 通過線
+  const gapRow = k => {
+    const on = g && g[k] === 'P', isl = k > 0 && k < n;
+    return `<button class="mp-pfg${on ? ' on' : ''}" data-pg="${k}" ${g ? '' : 'disabled'} style="display:block;width:100%;margin:3px 0;padding:${on ? 6 : 2}px 8px;border-radius:6px;border:1px ${on ? 'solid #9aa3ad' : 'dashed #c7ccd2'};background:${on ? '#eef0f2' : 'transparent'};color:${on ? '#333' : '#9aa0a6'};font-size:12px;text-align:center">${on ? `<span>${isl ? '島式のホーム' : '片側のホーム'}</span>` : g ? '<span>＋ ホーム</span>' : ''}</button>`;
+  };
+  const trkRow = (t, i) => `<div class="mp-row small" style="align-items:center;margin:0;padding:4px 6px;border-left:4px solid ${t.m === 'pass' ? '#c7ccd2' : '#6b7480'}"><b style="min-width:4.5em">${i + 1}番線</b>
+        <span class="mp-seg">${['down', 'up', 'both'].map(k => `<button data-td="${i}:${k}" class="${t.d === k ? 'on' : ''}">${TRK_D[k]}</button>`).join('')}</span>
+        <span class="mp-seg">${['main', 'side', 'pass'].map(k => `<button data-tm="${i}:${k}" class="${t.m === k ? 'on' : ''}">${TRK_M[k]}</button>`).join('')}</span></div>`;
+  const draw = () => m.set('発着番線・ホームの形', `<p class="small" style="margin:0"><b>${esc(d.name)}</b>（<span>${n}番線まで</span>）</p>
+      <p class="small" style="margin:6px 0 2px"><b>ホームの形</b>：<span>${g ? esc(pfName((term ? 'T' : '') + g, n)) : 'おまかせ'}</span></p>
+      <div class="mp-row small" style="flex-wrap:wrap;gap:4px"><span class="mp-seg"><button data-pp="auto" class="${g ? '' : 'on'}">おまかせ</button><button data-pp="opp">相対式</button><button data-pp="isl">島式</button>${n >= 2 ? '<button data-pp="mix">島式＋相対式</button>' : ''}</span>
+        <button class="btn${term ? ' main' : ''}" data-pt ${g ? '' : 'disabled'} style="padding:4px 10px">${term ? '✓ ' : ''}<span>頭端式</span></button></div>
+      <p class="muted small" style="margin:2px 0 4px">${g ? '<span>上が 駅の向きの左がわです（地図の 1番線のがわ）。ホームを押すと、つける・はずす</span>' : '<span>おまかせ：番線の使いかたから、ホームの場所を決めます</span>'}</p>
+      <div style="border:1px solid #e1e4e8;border-radius:8px;padding:4px 6px">${cur.map((t, i) => gapRow(i) + trkRow(t, i)).join('') + gapRow(n)}</div>
+      <div class="mp-row"><button class="btn main" data-ok>決める</button><button class="btn" data-def>いつもの決まりにもどす</button></div>
+      <p class="muted small"><span>通過線はホームのない番線です。止まる列車は使わず、通過する列車が、止まっている列車を追いこせます（その向きに番線が2つ以上あると、待避できる駅になります）。</span><br><span>頭端式は、線路の行き止まりの駅で使います（線路のはしに 車止め・ホームを横につなぐ）。</span><br><span>列車は、ふだんはその向きの本線に止まります（採時駅で番線を決めた列車は、その番線）。3Dでは、列車は その番線に入ります</span></p>`, b => {
+    b.querySelectorAll('[data-td]').forEach(x => x.onclick = () => { const [i, k] = x.dataset.td.split(':'); cur[Number(i)].d = k; draw(); });
+    b.querySelectorAll('[data-tm]').forEach(x => x.onclick = () => { const [i, k] = x.dataset.tm.split(':'); cur[Number(i)].m = k; draw(); });
+    b.querySelectorAll('[data-pg]').forEach(x => x.onclick = () => { if (!g) return; const k = Number(x.dataset.pg); g = g.slice(0, k) + (g[k] === 'P' ? '-' : 'P') + g.slice(k + 1); fix(); draw(); });
+    b.querySelectorAll('[data-pp]').forEach(x => x.onclick = () => {
+      if (x.dataset.pp === 'auto') { g = null; term = false; draw(); return; }
+      const P = pfPreset(x.dataset.pp, n); g = P.g; P.trk.forEach((t, k) => { cur[k].d = t.d; cur[k].m = t.m; }); draw();
+    });
+    b.querySelector('[data-pt]').onclick = () => { if (g) { term = !term; draw(); } };
+    const done = r => { s.tk = r.trk; s.pf = r.pf || null; m.close(); refreshBox(s.fx - 6, s.fy - 6, s.fx + 6, s.fy + 6); showSta(s); };
+    b.querySelector('[data-ok]').onclick = async () => { const r = await api('mp_sta_pf_set', { p_sta: s.id, p_pf: g ? (term ? 'T' : '') + g : null, p_trk: cur }, '決めました'); if (r) done(r); };
+    b.querySelector('[data-def]').onclick = async () => {
+      const r = await api('mp_sta_pf_set', { p_sta: s.id, p_pf: null, p_trk: null }); if (!r) return;
+      const r2 = await api('mp_sta_trk_set', { p_sta: s.id, p_trk: null }, 'もどしました'); if (r2) done({ trk: r2.trk, pf: null });
+    };
   });
   draw();
 }
@@ -5915,6 +5994,7 @@ function openHelp() {
     <p><b>停車駅のパターン</b>：系統の画面の「停車駅のパターン」で、種別ごとに止まる駅を決めておけます（例：快速はこの駅だけ）。端の駅も通過にでき、止まる最初の駅が始発、最後の駅が終着になります（列車ごとの「止まる駅」も同じ）。列車をつくるとき・まとめてつくるとき・種別を変えたときに、そのパターンになります。「この種別の列車にも当てはめる」で、いまある列車もまとめて変えられます。</p>
     <p><b>1時間の型（パターンダイヤ）</b>：系統の画面の「⏱ 1時間の型」で、毎時 同じ分に出る列車の型（行ごとに 種別・下り／上り／両方・発車の分・走る区間）をつくり、何時から何時まで くりかえして、1日のダイヤを組めます。停車駅は 種別の停車駅のパターンどおりです。その時間帯の列車を消して つくりなおすこともでき、「↶ 取り消す」で もどせます。型は系統に のこります。ダイヤグラムの線は 種別ごとの色で、種別で しぼりこめます。</p>
     <p><b>留置線と折り返し</b>：編成が終着駅に着いて、同じ駅から つぎの列車で出るまで、その駅の番線を1本つかいます。待つ編成と止まる列車で 番線が足りなくなると注意が出ます。駅の画面の「🅿 留置線をつくる」で、駅の近くの線路をなぞって 留置線をつくると、8分以上 待つ編成は 着いて3分で留置線へ入り、番線をあけて待ちます。ダイヤグラムでは 終着駅の横に 待つあいだの点線（留置線は灰色の破線）が出ます。</p>
+    <p><b>ホームの形</b>：駅の画面の「発着番線・ホームの形」で、相対式・島式・島式＋相対式・頭端式（行き止まりの駅）をえらべます。番線のあいだの ホームを押して、自分で つける・はずすこともできます（頭端式は ほかの形と いっしょに使えます）。上が 駅の向きの左がわ（地図の 1番線のがわ）です。ホームのない番線は 通過線になります。3Dでは その形のとおりに ホームと線路をならべ、列車は 決まった番線に入ります。</p>
     <p><b>電化と区間で しぼりこむ</b>：ダイヤグラム・時刻表・列車の一覧は、編成の電化（直流・交流・交直流・非電化）と、走る区間（始発駅 → 終着駅）でも しぼりこめます。「運用を自動で組む」の編成も 電化で しぼりこめます。</p>
     <p><b>あてる先ごとの運用</b>：「運用を自動で組む」の「あてる先ごとに」で、あてる先（種別・区間・向き・時間帯・走る線の電化で決める 列車のまとまり）を いくつもつくり、それぞれに使う編成をえらんで わりあてます。列車は 上から順に 最初にあてはまる あてる先に入ります（どれにも入らない列車は いまのまま）。</p>
     <p><b>種別ごとの運用</b>：「運用を自動で組む」の「種別ごと」で、種別ごとに使う編成をえらべます。系統の画面の「運用番号を種別ごとに」で、運用番号を 種別ごとに まとめられます（例：快速は 101・102…）。運用の画面では、種別で しぼりこめます。</p>
