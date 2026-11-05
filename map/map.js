@@ -1878,6 +1878,94 @@ function runHop(R, a, b, it) {
   const h = { pts, cum, len: cum[cum.length - 1], exact, refs: refs.length === pts.length - 1 ? refs : null };
   R.hop.set(key, h); return h;
 }
+/* ---------- 列車は ホームの まん中に（t66）：止まっているときは 列車のまん中が 駅の点（ホームのまん中）。走るときも 頭は 駅の点より 列車の長さの半分 先 ---------- */
+// 線 H の d0〜d1 の部分 { pts, refs }（はしの点は おぎなう。refs は 3D の高さ）
+function runCut(H, d0, d1) {
+  d0 = clamp(d0, 0, H.len); d1 = clamp(d1, d0, H.len);
+  const c = H.cum, P = H.pts, F = H.refs, pts = [], refs = [];
+  const seg = d => { let lo = 0, hi = c.length - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (c[m] <= d) lo = m; else hi = m; } return lo; };
+  const tt = (k, d) => clamp((d - c[k]) / ((c[k + 1] - c[k]) || 1), 0, 1);
+  const ip = (k, t) => { const a = P[k], b = P[k + 1]; return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; };
+  const rs = (k, t0, t1) => { const r = F && F[k]; return r ? [r[0], r[1] + (r[2] - r[1]) * t0, r[1] + (r[2] - r[1]) * t1] : null; };
+  const k0 = seg(d0), k1 = seg(d1), t0 = tt(k0, d0), t1 = tt(k1, d1);
+  pts.push(ip(k0, t0));
+  if (k0 === k1) { pts.push(ip(k1, t1)); refs.push(rs(k0, t0, t1)); }
+  else {
+    pts.push(P[k0 + 1]); refs.push(rs(k0, t0, 1));
+    for (let k = k0 + 1; k < k1; k++) { pts.push(P[k + 1]); refs.push(rs(k, 0, 1)); }
+    pts.push(ip(k1, t1)); refs.push(rs(k1, 0, t1));
+  }
+  return { pts, refs };
+}
+// いくつかの線をつなぐ（つなぎ目の同じ点は1つに）。mark：その番目の線の はじめの点の位置を H.o に
+function runJoin(parts, mark) {
+  const pts = [], refs = []; let mi = 0;
+  parts.forEach((q, j) => {
+    if (j === mark) mi = Math.max(0, pts.length - 1);
+    for (let k = 0; k < q.pts.length; k++) {
+      const v = q.pts[k], l = pts[pts.length - 1];
+      if (!l || Math.hypot(v[0] - l[0], v[1] - l[1]) > 1e-4) { if (l) refs.push(k > 0 && q.refs ? q.refs[k - 1] || null : null); pts.push([v[0], v[1]]); }
+    }
+  });
+  if (pts.length < 2) return null;
+  const cum = [0]; for (let k = 1; k < pts.length; k++) cum.push(cum[k - 1] + Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]));
+  return { pts, cum, len: cum[cum.length - 1], refs, o: cum[Math.min(mi, cum.length - 1)] };
+}
+// 線 part の うしろ（end）か 前に、長さ L だけ のばす：はしの線（DB の線）が わかれば その線にそって、なければ まっすぐ
+function runExt(part, L, end, it) {
+  const p = part.pts, n = p.length, r = part.refs ? part.refs[end ? n - 2 : 0] : null, sg = r && r[2] !== r[1] && it && it.segs ? it.segs.get(r[0]) : null;
+  const out = { pts: [], refs: [] }; let got = 0;
+  if (sg) {
+    const dir = Math.sign(r[2] - r[1]), s0 = end ? r[2] : r[1], s1 = end ? s0 + dir * L : s0 - dir * L;
+    let q = subPtsS(sg, Math.max(0, Math.min(s0, s1)), Math.max(s0, s1));
+    if ((s1 > s0) !== end) q = q.reverse();   // end：s0 → s1 の順。前：s1 → s0 の順（つなぎ目が うしろ）
+    if (q.length >= 2) {
+      for (let k = 0; k < q.length; k++) { out.pts.push([q[k][0], q[k][1]]); if (k) out.refs.push([sg.id, q[k - 1][2], q[k][2]]); }
+      got = Math.abs(q[q.length - 1][2] - q[0][2]);
+    }
+  }
+  if (got < L - 1e-3) {   // 線のはしの先：まっすぐ（高さは 線のはしの高さのまま）
+    const R2 = L - got;
+    if (end) {
+      const b = out.pts.length ? out.pts[out.pts.length - 1] : p[n - 1], a = out.pts.length >= 2 ? out.pts[out.pts.length - 2] : p[n - 2];
+      const dl = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, rl = out.refs.length ? out.refs[out.refs.length - 1] : r;
+      if (!out.pts.length) out.pts.push(b);
+      out.pts.push([b[0] + (b[0] - a[0]) / dl * R2, b[1] + (b[1] - a[1]) / dl * R2]); out.refs.push(rl ? [rl[0], rl[2], rl[2]] : null);
+    } else {
+      const a = out.pts.length ? out.pts[0] : p[0], b = out.pts.length >= 2 ? out.pts[1] : p[1];
+      const dl = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, rf = out.refs.length ? out.refs[0] : r;
+      if (!out.pts.length) out.pts.push(a);
+      out.pts.unshift([a[0] - (b[0] - a[0]) / dl * R2, a[1] - (b[1] - a[1]) / dl * R2]); out.refs.unshift(rf ? [rf[0], rf[1], rf[1]] : null);
+    }
+  }
+  return out;
+}
+// 列車（鉄道）の線：とまる駅 i から j（i か i+1）まで ＋ 前後に 列車の長さの半分と すこし（となりの駅への線。なければ その先へ のばす）。
+//   { H, o（駅 i の点の位置）, L（i → j の長さ）, h（列車の長さの半分） } か null（いままでの やりかたに）
+function runSpan(R, tn, i, j, it) {
+  const ix = tn.idx, n = R.st.length, sd = tn.dir === -1 ? -1 : 1, h = runCarL(R.k) * tn.fn / 2, P = Math.ceil(h + 0.3);
+  if (ix[i] < 0 || ix[j] < 0) return null;
+  let a = i > 0 ? ix[i - 1] : ix[i] - sd, c = j + 1 < ix.length ? ix[j + 1] : ix[j] + sd;
+  if (a < 0 || a >= n || a === ix[i]) a = -1;
+  if (c < 0 || c >= n || c === ix[j]) c = -1;
+  const key = 'S' + a + '>' + ix[i] + '>' + ix[j] + '>' + c + ':' + P, z = R.hop.get(key);
+  if (z && z.exact) return { H: z, o: z.o, L: z.L, h };
+  const M = j > i ? runHop(R, ix[i], ix[j], it) : null; if (j > i && !M) return null;
+  const A = a >= 0 ? runHop(R, a, ix[i], it) : null, B = c >= 0 ? runHop(R, ix[j], c, it) : null;
+  const pre = A ? runCut(A, A.len - P, A.len) : null, mid = M ? { pts: M.pts, refs: M.refs } : null, post = B ? runCut(B, 0, P) : null;
+  const first = pre || mid || post, last = post || mid || pre; if (!first) return null;
+  const preL = pre ? Math.min(P, A.len) : 0, postL = post ? Math.min(P, B.len) : 0, parts = [];
+  if (preL < P - 1e-3) parts.push(runExt(first, P - preL, false, it));
+  if (pre) parts.push(pre);
+  const mark = parts.length;
+  if (mid) parts.push(mid);
+  if (post) parts.push(post);
+  if (postL < P - 1e-3) parts.push(runExt(last, P - postL, true, it));
+  const J = runJoin(parts, mark); if (!J) return null;
+  J.L = M ? M.len : 0; J.exact = (!A || A.exact) && (!M || M.exact) && (!B || B.exact);
+  R.hop.set(key, J);
+  return { H: J, o: J.o, L: J.L, h };
+}
 // 線の上の d（はじめからのマス）の点と向き
 function runPt(H, d) {
   d = clamp(d, 0, H.len); const c = H.cum; let lo = 0, hi = c.length - 1;
@@ -1933,20 +2021,31 @@ function runPos(R, tn, tm, it) {
   if (tt == null) return null;
   if (!tn.idx) tn.idx = runIdx(R, tn);
   const sc = tn.s; let H = null, d = 0, at = -1, nx = -1;
+  const ctr = R.k === 'rail';   // 鉄道：ホームの まん中に（t66。頭は 駅の点より 列車の長さの半分 先）
   for (let i = 0; i < sc.length; i++) {
     const ar = sc[i][1], dp = sc[i][2];
-    if (ar != null && dp != null && tt >= ar && tt <= dp) {   // 駅にとまっている：来た線の終わり（頭が駅）
+    if (ar != null && dp != null && tt >= ar && tt <= dp) {   // 駅にとまっている：来た線の終わり（頭が駅。鉄道は 列車のまん中が駅）
       at = i;
-      if (i > 0) { H = runHop(R, tn.idx[i - 1], tn.idx[i], it); if (H) d = H.len; }
+      const Q = ctr ? runSpan(R, tn, i, i, it) : null;
+      if (Q) { H = Q.H; d = Q.o + Q.h; }
+      else if (i > 0) { H = runHop(R, tn.idx[i - 1], tn.idx[i], it); if (H) d = H.len; }
       else if (i + 1 < sc.length) { H = runHop(R, tn.idx[0], tn.idx[1], it); if (H) d = Math.min(H.len, 0.4 * tn.fn); }
       break;
     }
     if (i + 1 < sc.length && dp != null && sc[i + 1][1] != null && tt >= dp && tt <= sc[i + 1][1]) {
-      nx = i + 1; H = runHop(R, tn.idx[i], tn.idx[i + 1], it); if (!H) break;
+      nx = i + 1;
       const f = (tt - dp) / Math.max(1, sc[i + 1][1] - dp), g = R.k === 'air' || R.k === 'ship' ? f : f * f * (3 - 2 * f);   // 電車・バスは、はじめとおわりがゆっくり
+      const Q = ctr ? runSpan(R, tn, i, i + 1, it) : null;
+      if (Q) { H = Q.H; d = Q.o + g * Q.L + Q.h; break; }
+      H = runHop(R, tn.idx[i], tn.idx[i + 1], it); if (!H) break;
       d = g * H.len; break;
     }
-    if (i + 1 === sc.length && ar != null && tt >= ar) { at = i; if (i > 0) { H = runHop(R, tn.idx[i - 1], tn.idx[i], it); if (H) d = H.len; } }
+    if (i + 1 === sc.length && ar != null && tt >= ar) {
+      at = i;
+      const Q = ctr ? runSpan(R, tn, i, i, it) : null;
+      if (Q) { H = Q.H; d = Q.o + Q.h; }
+      else if (i > 0) { H = runHop(R, tn.idx[i - 1], tn.idx[i], it); if (H) d = H.len; }
+    }
   }
   if (!H) return null;
   const p = runPt(H, d);
