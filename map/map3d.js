@@ -1292,7 +1292,7 @@ function m3Target(x, y) { M3.tx = x; M3.ty = y; }
 function m3Resize() { if (!M3.on) return; M3.r.setPixelRatio(m3PR()); M3.r.setSize(S.W, S.H, false); M3.cam.aspect = S.W / Math.max(1, S.H); M3.cam.updateProjectionMatrix(); }
 
 /* ---------- 線路・地形のファイル（t64c）：3D をひらいたときに読む（ないときは 前のまま） ---------- */
-const M3_MODS = ['m3rail', 'm3road'];   // m3terra（川岸・砂浜）は できあがってから足す
+const M3_MODS = ['m3rail', 'm3terra', 'm3road'];
 let m3ModsP = null;
 function m3Mods() {
   if (m3ModsP) return m3ModsP;
