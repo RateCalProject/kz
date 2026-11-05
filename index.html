@@ -5190,7 +5190,7 @@ function stCmpDraw() {
    役所 → ヘルプ（t62）：遊び方・やり方（help/help.json。README からつくる）。さがせる（題・中身・ことば。ひらがな・カタカナ・全角半角は同じに）
    役所 → 意見箱（t62）：運営への問い合わせ（support_open）に「【意見箱】」の件名で送る
    ================================================================= */
-const HELP_V = '6949f6e7';
+const HELP_V = 'ece5b859';
 const HP = { d: null, cat: 'start', q: '' };
 const hpNorm = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
 async function helpLoad() {
@@ -5917,7 +5917,7 @@ const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
 // 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
-const MAPV = '159';
+const MAPV = '160';
 const STAGE = 'Pre';   // 正式公開の前（Pre）。名前のよこと、バージョンの表記に出す。正式公開のときは '' にする
 document.querySelectorAll('.kz-stage').forEach(e => { e.textContent = STAGE; e.hidden = !STAGE; });
 const DBV = 106;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）
