@@ -5,13 +5,17 @@
 (function () {
 'use strict';
 // map.js の中のもの（window.MapInt）を使う
-let MQ, q, LITE, liteNeed, EDEC, B64I, S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runIsSel, runName, runDest, showTrain, runFollow, pfZ, PAL;
-function m3Init() { ({ MQ, q, LITE, liteNeed, EDEC, B64I, S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runIsSel, runName, runDest, showTrain, runFollow, pfZ } = window.MapInt); PAL = window.MapPal; }
+let MQ, q, LITE, liteNeed, EDEC, B64I, S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runIsSel, runName, runDest, showTrain, runFollow, pfZ, runRef, PAL;
+function m3Init() { ({ MQ, q, LITE, liteNeed, EDEC, B64I, S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runIsSel, runName, runDest, showTrain, runFollow, pfZ, runRef } = window.MapInt); PAL = window.MapPal; if (!runRef) runRef = () => null; }
 const M3 = { on: false, loading: false };
 const M3_LIB = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
 const M3_FH = 3.4;          // 1階の高さ（m）
 const M3_U = 1 / 50;        // 1m → マス
 const M3_VEX = 1.15;        // 地形の高さを少しだけ大きく（見やすく）
+const M3_LIFT = 0.02;       // 道路・線路の帯は、地面から 1m 上
+// 標高は とびとびの段（100m まで 4m・500m まで 25m・その上 150m ごと）。段の半分（m）：ならした地形も、もとの段の中に（t64）
+//   500m より上（山）は 段が大きく、段の中にとめると 段々が出るので、とめない（ならしたまま）
+const m3Half = e => e <= 100 ? 2 : e <= 500 ? 12.5 : Infinity;
 
 function m3Lib() {
   if (window.THREE) return Promise.resolve(window.THREE);
@@ -92,7 +96,7 @@ async function m3Open() {
   const sun = new T3.DirectionalLight('#fff6e8', 0.55); sun.position.set(-0.35, 1.2, 0.55); sc.add(sun);   // 南西の高いところから（北を見るとき、手前の壁が明るい）
   const sea = new T3.Mesh(new T3.PlaneGeometry(20000, 20000), new T3.MeshLambertMaterial({ color: '#4680ba' })); sea.rotation.x = -Math.PI / 2; sea.position.y = -0.4; sc.add(sea);   // チャンクのない深い海（チャンクの海は高さ 0）
   const grpT = new T3.Group(), grpB = new T3.Group(), grpR = new T3.Group(), grpL = new T3.Group(); sc.add(grpT, grpB, grpR, grpL);   // grpL：遠くの建物（t63）
-  Object.assign(M3, { on: true, T: T3, r, sc, cam, sea, grpT, grpB, grpR, grpL, lm: new Map(), cv, cm: new Map(), bKey: '', rKey: '', tex: null,
+  Object.assign(M3, { on: true, T: T3, r, sc, cam, sea, grpT, grpB, grpR, grpL, lm: new Map(), cv, cm: new Map(), bKey: '', rKey: '', tex: null, tg: 0, tgN: 0,
     tx: S.cam.x, ty: S.cam.y, d: Math.max(10, Math.min(700, (S.H / S.cam.z) * 0.95)), yaw: 0, pitch: 0.92, gy: 0, dirty: true });
   M3.tex = m3WinTex(T3);
   S.v3 = M3; S.wrap.classList.add('mp-3d');
@@ -128,10 +132,9 @@ function m3WinTex(T3) {
 }
 
 /* ---------- カメラ・まわりのデータ ---------- */
-function m3Ground(x, y) { const t = tileAt(Math.floor(x), Math.floor(y)); if (!t) return 0; return (t.t === 'D' || t.t === 'S') ? 0 : Math.max(0, t.e) * M3_U * M3_VEX; }
 function m3Cam() {
   const { cam } = M3, c = Math.cos(M3.pitch), s = Math.sin(M3.pitch);
-  const gy = m3Ground(M3.tx, M3.ty); M3.gy += (gy - M3.gy) * 0.35;
+  const gy = m3Surf(M3.tx, M3.ty); M3.gy += (gy - M3.gy) * 0.35;
   cam.position.set(M3.tx + Math.sin(M3.yaw) * c * M3.d, M3.gy + s * M3.d, M3.ty + Math.cos(M3.yaw) * c * M3.d);
   cam.lookAt(M3.tx, M3.gy, M3.ty);
   const R = M3.R || 700;
@@ -167,7 +170,7 @@ function m3Frame() {
   m3Cam();
   M3.r.render(M3.sc, M3.cam);
   m3Labels();   // 建物の名前（t61）
-  if (Math.abs(m3Ground(M3.tx, M3.ty) - M3.gy) > 0.002) M3.dirty = true;
+  if (Math.abs(m3Surf(M3.tx, M3.ty) - M3.gy) > 0.002) M3.dirty = true;
 }
 // 3D のときのチャンクの片づけ（遠いものから。2D の trimChunks は 2D の見えかたで決めるので使わない）
 function trimChunks3(v) {
@@ -180,16 +183,20 @@ function trimChunks3(v) {
 function m3Terrain(rc) {
   const v = rc.big, T3 = M3.T, cx0 = Math.floor(v.x0 / CS), cy0 = Math.floor(v.y0 / CS), cx1 = Math.floor(v.x1 / CS), cy1 = Math.floor(v.y1 / CS);
   const keep = new Set(), todo = [];
+  // 海ぞいのチャンク（近いところ）は、半マスごとの網（t64）：陸を水ぎわまで平らに、がけは水のがわに（水ぎわの建物が うかないように）
+  //   はんいは 建物を出すところ（近いとき）まで。画質で上限
+  const lv = Math.max(0, Math.min(3, Number(MQ.d3) || 0)), HR = M3.d < 150 ? Math.min([64, 100, 140, 180][lv], Math.max(64, rc.RB + 48)) : 0;
   for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
     const k = ckey(cx, cy), c = S.chunks.get(k), lo = LO.m.get(k);
     const dist = Math.hypot(cx * CS + 32 - M3.tx, cy * CS + 32 - M3.ty);
     let mode, st;
-    if (c && !c.sea && (dist <= rc.RF + 48 || !lo || lo.sea)) { mode = 'f'; st = dist < Math.max(160, M3.d * 1.4) ? 1 : dist < Math.max(360, M3.d * 3) ? 2 : dist < 700 ? 4 : 8; }
+    if (c && !c.sea && (dist <= rc.RF + 48 || !lo || lo.sea)) { mode = 'f'; st = dist < Math.max(160, M3.d * 1.4) ? 1 : dist < Math.max(360, M3.d * 3) ? 2 : dist < 700 ? 4 : 8; if (st === 1 && dist < HR && m3Coast(c, cx, cy)) st = 0.5; }
     else if (lo && !lo.sea) { mode = 'l'; st = 4; }   // 遠くは あらい地形（t63）
     else continue;
     if (c) c.used = now(); if (lo) lo.used = now(); keep.add(k);
-    const nb = (mode === 'f' ? [[1, 0], [0, 1], [1, 1]] : [[1, 0], [0, 1], [1, 1], [-1, 0], [0, -1], [-1, -1], [1, -1], [-1, 1]])
-      .map(([dx, dy]) => S.chunks.get(ckey(cx + dx, cy + dy)) || (mode === 'l' && LO.m.get(ckey(cx + dx, cy + dy))) ? 'y' : 'n').join('');   // となりがあるか（へりをつなぐため）
+    // となりがあるか（へりをつなぐため。くわしい地形は、ならすときに まわり 8 つ を使うので 8 つとも。t64）
+    const nb = [[1, 0], [0, 1], [1, 1], [-1, 0], [0, -1], [-1, -1], [1, -1], [-1, 1]]
+      .map(([dx, dy]) => S.chunks.get(ckey(cx + dx, cy + dy)) || (mode === 'l' && LO.m.get(ckey(cx + dx, cy + dy))) ? 'y' : 'n').join('');
     const old = M3.cm.get(k);
     if (old && old.st === st && old.nb === nb && old.mode === mode) continue;
     todo.push({ k, c, cx, cy, st, nb, mode, dist });
@@ -201,33 +208,92 @@ function m3Terrain(rc) {
     if (n >= 2 && performance.now() - t0 > bud) break;
     const old = M3.cm.get(t.k);
     if (old) { M3.grpT.remove(old.mesh); old.mesh.geometry.dispose(); }
-    const mesh = t.mode === 'f' ? m3ChunkMesh(T3, t.c, t.cx, t.cy, t.st) : m3LoMesh(T3, t.cx, t.cy); M3.grpT.add(mesh); M3.cm.set(t.k, { mesh, st: t.st, nb: t.nb, mode: t.mode }); n++;
+    const mesh = t.mode === 'f' ? m3ChunkMesh(T3, t.c, t.cx, t.cy, t.st) : m3LoMesh(T3, t.cx, t.cy); M3.grpT.add(mesh);
+    // H：網の点の高さ（建物・道路・列車を、この網の上に。m3Surf）。gen：作った順の番号（上に のせるものを作りなおす合図）
+    M3.cm.set(t.k, { mesh, st: t.st, nb: t.nb, mode: t.mode, H: mesh.userData.H, gen: ++M3.tg }); n++;
+    const nr = rc.near; if (t.cx * CS <= nr.x1 + 1 && t.cx * CS + CS >= nr.x0 - 1 && t.cy * CS <= nr.y1 + 1 && t.cy * CS + CS >= nr.y0 - 1) M3.tgN++;
   }
   if (n < todo.length) M3.dirty = true;
   for (const [k, o] of M3.cm) if (!keep.has(k)) { M3.grpT.remove(o.mesh); o.mesh.geometry.dispose(); M3.cm.delete(k); }
 }
 const M3_TMAT = { m: null };
+// 海ぞいか（陸のタイルの となりに 海 D・S がある）。チャンクに おぼえる（となりのチャンクを読んだら はかりなおす）（t64）
+const m3W = ch => ch === 'D' || ch === 'S';
+function m3Coast(c, cx, cy) {
+  const nk = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => S.chunks.has(ckey(cx + dx, cy + dy)) ? 'y' : 'n').join('');
+  if (c.coastK === nk) return c.coast;
+  const T = c.t; let r = false;
+  out: for (let y = 0; y < CS; y++) for (let x = 0; x < CS; x++) {
+    const k = y * CS + x; if (m3W(T[k])) continue;
+    if ((x > 0 && m3W(T[k - 1])) || (x < CS - 1 && m3W(T[k + 1])) || (y > 0 && m3W(T[k - CS])) || (y < CS - 1 && m3W(T[k + CS]))) { r = true; break out; }
+    if (x === 0 || y === 0 || x === CS - 1 || y === CS - 1) for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const t = tileAt(cx * CS + x + dx, cy * CS + y + dy); if (t && m3W(t.t)) { r = true; break out; } }
+  }
+  c.coastK = nk; c.coast = r; return r;
+}
 function m3ChunkMesh(T3, c, cx, cy, st) {
-  const n = CS / st + 1, pos = new Float32Array(n * n * 3), col = new Float32Array(n * n * 3), idx = [];
+  const n = Math.round(CS / st) + 1, pos = new Float32Array(n * n * 3), col = new Float32Array(n * n * 3), idx = [], HH = new Float32Array(n * n);
   const at = (x, y) => { const t = tileAt(x, y); return t && !(t.t === 'D' && t.e === -190 && !S.chunks.get(ckey(Math.floor(x / CS), Math.floor(y / CS)))) ? t : tileAt(Math.min(x, cx * CS + CS - 1), Math.min(y, cy * CS + CS - 1)); };
   // 標高はとびとびの段（高いところは 150m ごと）なので、まわりとならして段々にならないように（2回ならす）
-  const R = 3, M = 2 * R + 2, G = CS + 2 * M + 1, x00 = cx * CS - M, y00 = cy * CS - M;
-  let E = new Float32Array(G * G);
-  for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) { const t = tileAt(x00 + i, y00 + j); E[j * G + i] = !t || t.t === 'D' || t.t === 'S' ? 0 : Math.max(0, t.e); }
+  const R = 3, M = 2 * R + 2, G = CS + 2 * M + 1, x00 = cx * CS - M, y00 = cy * CS - M, X0 = cx * CS, Y0 = cy * CS;
+  let E = new Float32Array(G * G); const E0 = new Float32Array(G * G);
+  for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) {
+    // まだ読んでいない となりは、このチャンクのへりの高さで（0m にすると、へりが へこむ。t64）
+    const t = tileAt(x00 + i, y00 + j) || tileAt(Math.max(X0, Math.min(X0 + CS - 1, x00 + i)), Math.max(Y0, Math.min(Y0 + CS - 1, y00 + j)));
+    E[j * G + i] = E0[j * G + i] = !t || t.t === 'D' || t.t === 'S' ? 0 : Math.max(0, t.e);
+  }
   const box = (A, H) => { const B = new Float32Array(G * G); for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) { let s2 = 0, m = 0; for (let k = -R; k <= R; k++) { const ii = H ? i + k : i, jj = H ? j : j + k; if (ii < 0 || jj < 0 || ii >= G || jj >= G) continue; s2 += A[jj * G + ii]; m++; } B[j * G + i] = s2 / m; } return B; };
   for (let p = 0; p < 2; p++) E = box(box(E, true), false);
-  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+  // ならしても、もとの段の中（段の高さ ± 段の半分）から出さない（t64）：坂の町・岬で、地形が建物や道路から はなれないように
+  for (let k = 0; k < G * G; k++) { const e0 = E0[k], hs = m3Half(e0); E[k] = Math.max(e0 - hs, Math.min(e0 + hs, E[k])); }
+  let AV = null;   // 半マスの網：ふつうの網なら この高さ（へりの すそ）
+  if (st >= 1) for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
     const x = cx * CS + Math.min(i * st, CS), y = cy * CS + Math.min(j * st, CS), t = at(x, y) || { t: 'D', e: 0, z: '-' };
     const water = t.t === 'D' || t.t === 'S', h = water ? 0 : Math.max(0.02, E[(y - y00) * G + (x - x00)]) * M3_U * M3_VEX;
-    const o = (j * n + i) * 3; pos[o] = x + 0.5; pos[o + 1] = h; pos[o + 2] = y + 0.5;
+    const o = (j * n + i) * 3; pos[o] = x + 0.5; pos[o + 1] = h; pos[o + 2] = y + 0.5; HH[j * n + i] = h;
     const cc = PAL.tileColor(t.t, t.e, t.z || '-', 0);
     col[o] = cc[0] / 255; col[o + 1] = cc[1] / 255; col[o + 2] = cc[2] / 255;
+  } else {
+    // 半マスの網（海ぞい。t64）：タイルのまん中と、タイルのさかい（へり・かど）に点。さかいの点は、となりあうタイルの平均。
+    //   陸と水のさかいは 陸の高さ（陸は水ぎわまで平ら。がけ・浜は 水のタイルの がわに）。
+    //   チャンクのへりは、となりが ふつうの網だと 高さがちがうことがあるので、へりに すそ（下へのかべ）をつけて すきまを かくす
+    const m = CS + 1, TH = new Float32Array(m * m), TW = new Uint8Array(m * m), TC = new Float32Array(m * m * 3); AV = new Float32Array(n * n);
+    for (let b = 0; b < m; b++) for (let a = 0; a < m; a++) {
+      const x = cx * CS + a, y = cy * CS + b, t = at(x, y) || { t: 'D', e: 0, z: '-' }, w = t.t === 'D' || t.t === 'S', cc = PAL.tileColor(t.t, t.e, t.z || '-', 0), k = b * m + a;
+      TW[k] = w ? 1 : 0; TH[k] = w ? 0 : Math.max(0.02, E[(y - y00) * G + (x - x00)]) * M3_U * M3_VEX; TC[k * 3] = cc[0]; TC[k * 3 + 1] = cc[1]; TC[k * 3 + 2] = cc[2];
+    }
+    const cliff = 6 * M3_U * M3_VEX;
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+      const as = i & 1 ? [(i - 1) / 2, (i + 1) / 2] : [i / 2], bs = j & 1 ? [(j - 1) / 2, (j + 1) / 2] : [j / 2];
+      let ha = 0, hl = 0, nl = 0, r = 0, g = 0, bb = 0, rl = 0, gl = 0, bl = 0, nn = 0;
+      for (const b of bs) for (const a of as) { const k = b * m + a; ha += TH[k]; r += TC[k * 3]; g += TC[k * 3 + 1]; bb += TC[k * 3 + 2]; nn++; if (!TW[k]) { hl += TH[k]; rl += TC[k * 3]; gl += TC[k * 3 + 1]; bl += TC[k * 3 + 2]; nl++; } }
+      const mix = nl > 0 && nl < nn, h = mix ? hl / nl : ha / nn, cl = mix && h > cliff;   // 高い陸と水のさかい（がけ）は 陸の色
+      AV[j * n + i] = ha / nn;   // ふつうの網なら この高さ（へりの すそ）
+      const o = (j * n + i) * 3; pos[o] = cx * CS + 0.5 + i / 2; pos[o + 1] = h; pos[o + 2] = cy * CS + 0.5 + j / 2; HH[j * n + i] = h;
+      col[o] = (cl ? rl / nl : r / nn) / 255; col[o + 1] = (cl ? gl / nl : g / nn) / 255; col[o + 2] = (cl ? bl / nl : bb / nn) / 255;
+    }
   }
   for (let j = 0; j < n - 1; j++) for (let i = 0; i < n - 1; i++) { const a = j * n + i, b = a + 1, d = a + n, e = d + 1; idx.push(a, d, b, b, d, e); }
+  let P = pos, Cc = col; const src = [];
+  if (st < 1) {
+    // へりの すそ（半マスの網）：ふつうの網と高さがちがう へりだけ（陸と水のさかい）。へりの点から、ふつうの網の高さより少し下まで（表と裏の両方の向き）
+    const rows = [[...Array(n).keys()], [...Array(n).keys()].map(i => (n - 1) * n + i), [...Array(n).keys()].map(j => j * n), [...Array(n).keys()].map(j => j * n + n - 1)];
+    const ex = [], tri = [];
+    for (const list of rows) for (let k = 0; k < list.length - 1; k++) {
+      const a = list[k], b2 = list[k + 1];
+      if (Math.abs(pos[a * 3 + 1] - AV[a]) < 1e-4 && Math.abs(pos[b2 * 3 + 1] - AV[b2]) < 1e-4) continue;
+      const c2 = n * n + src.length, d = c2 + 1; src.push(a, b2); tri.push(a, c2, b2, b2, c2, d, a, b2, c2, b2, d, c2);
+    }
+    if (src.length) {
+      P = new Float32Array((n * n + src.length) * 3); P.set(pos); Cc = new Float32Array((n * n + src.length) * 3); Cc.set(col);
+      src.forEach((v, q) => { const o = (n * n + q) * 3; P[o] = pos[v * 3]; P[o + 1] = Math.min(pos[v * 3 + 1], AV[v]) - 0.02; P[o + 2] = pos[v * 3 + 2]; Cc[o] = col[v * 3]; Cc[o + 1] = col[v * 3 + 1]; Cc[o + 2] = col[v * 3 + 2]; });
+      for (const v of tri) idx.push(v);
+    }
+  }
   const g = new T3.BufferGeometry();
-  g.setAttribute('position', new T3.BufferAttribute(pos, 3)); g.setAttribute('color', new T3.BufferAttribute(col, 3)); g.setIndex(idx); g.computeVertexNormals();
+  g.setAttribute('position', new T3.BufferAttribute(P, 3)); g.setAttribute('color', new T3.BufferAttribute(Cc, 3)); g.setIndex(idx); g.computeVertexNormals();
+  if (src.length) { const N = g.attributes.normal.array; src.forEach((v, q) => { const o = (n * n + q) * 3; N[o] = N[v * 3]; N[o + 1] = N[v * 3 + 1]; N[o + 2] = N[v * 3 + 2]; }); }   // すその光は、上の点と同じに
   if (!M3_TMAT.m) { M3_TMAT.m = new T3.MeshLambertMaterial({ vertexColors: true }); M3_TMAT.m.keep = true; }
-  return new T3.Mesh(g, M3_TMAT.m);
+  const mesh = new T3.Mesh(g, M3_TMAT.m); mesh.userData.H = HH; return mesh;
 }
 
 /* ---------- 遠くの地形（あらい版。t63・DB の更新47）：チャンクを 16×16 に（4マスごとのまん中）。サーバーには あらい版だけをたのむ ---------- */
@@ -272,6 +338,23 @@ function loAt(gx, gy) {
 const loH = t => (t.t === 'D' || t.t === 'S') ? 0 : Math.max(0.02, t.e) * M3_U * M3_VEX;
 // 地面の高さ（くわしいチャンクがなければ あらい版）
 function m3H(x, y) { const t = tileAt(Math.floor(x), Math.floor(y)); if (t) return (t.t === 'D' || t.t === 'S') ? 0 : Math.max(0, t.e) * M3_U * M3_VEX; const l = loAt(Math.floor(x / 4), Math.floor(y / 4)); return l ? loH(l) : 0; }
+// 描いている地形の面の高さ（3D の座標。t64）：地形の網と同じ三角で。建物・道路・線路・駅・列車は、みんな これの上に
+//   網は、チャンクの (x + 0.5, y + 0.5) から st マスごとの点。四角を (左上・左下・右上) と (右上・左下・右下) の三角に。網がまだないところは タイルの高さ
+function m3Surf(x, y) {
+  const cx = Math.floor((x - 0.5) / CS), cy = Math.floor((y - 0.5) / CS), o = M3.cm && M3.cm.get(ckey(cx, cy));
+  if (!o || !o.H) return m3H(x, y);
+  const st = o.st, n = o.mode === 'l' ? 17 : CS / st + 1, u = (x - 0.5 - cx * CS) / st, v = (y - 0.5 - cy * CS) / st;
+  const i = Math.max(0, Math.min(n - 2, Math.floor(u))), j = Math.max(0, Math.min(n - 2, Math.floor(v))), fu = u - i, fv = v - j, H = o.H;
+  const a = H[j * n + i], b = H[j * n + i + 1], d = H[(j + 1) * n + i], e = H[(j + 1) * n + i + 1];
+  return fu + fv <= 1 ? a + (b - a) * fu + (d - a) * fv : e + (d - e) * (1 - fu) + (b - e) * (1 - fv);
+}
+// 線 sg の s（マス）のところ (x, y) の、帯のまん中の高さ（lift なし）と つくり（G 地面・V 高架・B 橋・T トンネル）。駅・列車（t64）
+function m3OnLine(sg, s, x, y) {
+  const g = m3Surf(x, y);
+  if (!sg || !sg.pf || !sg.L) return { y: g, c: 'G', g };
+  const st = sg.st || '', c = st[Math.min(st.length - 1, Math.max(0, Math.round(s)))] || 'G', z = pfZ(sg.pf, s) * M3_U * M3_VEX;
+  return { y: c === 'V' || c === 'B' ? z : Math.max(z, g), c, g };
+}
 function m3LoMesh(T3, cx, cy) {
   const n = 17, pos = [], col = [], idx = [];
   for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
@@ -281,6 +364,7 @@ function m3LoMesh(T3, cx, cy) {
     pos.push(cx * CS + i * 4 + 0.5, h, cy * CS + j * 4 + 0.5); col.push(r / 255, g / 255, b / 255);
   }
   for (let j = 0; j < n - 1; j++) for (let i = 0; i < n - 1; i++) { const a = j * n + i, b2 = a + 1, d = a + n, e = d + 1; idx.push(a, d, b2, b2, d, e); }
+  const HH = new Float32Array(n * n); for (let k = 0; k < n * n; k++) HH[k] = pos[k * 3 + 1];   // 網の点の高さ（m3Surf）
   // へりのすそ（となりとの すきまを かくす）
   const edge = (list) => { const base = pos.length / 3; for (const v of list) { pos.push(pos[v * 3], pos[v * 3 + 1] - 0.6, pos[v * 3 + 2]); col.push(col[v * 3], col[v * 3 + 1], col[v * 3 + 2]); }
     for (let k = 0; k < list.length - 1; k++) { const a = list[k], b2 = list[k + 1], c2 = base + k, d = base + k + 1; idx.push(a, c2, b2, b2, c2, d, a, b2, c2, b2, d, c2); } };
@@ -288,7 +372,7 @@ function m3LoMesh(T3, cx, cy) {
   const geo = new T3.BufferGeometry();
   geo.setAttribute('position', new T3.Float32BufferAttribute(pos, 3)); geo.setAttribute('color', new T3.Float32BufferAttribute(col, 3)); geo.setIndex(idx); geo.computeVertexNormals();
   if (!M3_TMAT.m) { M3_TMAT.m = new T3.MeshLambertMaterial({ vertexColors: true }); M3_TMAT.m.keep = true; }
-  return new T3.Mesh(geo, M3_TMAT.m);
+  const mesh = new T3.Mesh(geo, M3_TMAT.m); mesh.userData.H = HH; return mesh;
 }
 /* ---------- 遠くの建物（かんたんな形。t63）：ます目（192 マス）ごとに1つの形。遠いほど低い建物は出さない・数の上限 ---------- */
 const M3_LMAT = { m: null };
@@ -306,7 +390,8 @@ function m3Lite(rc, nearOn) {
     keep.add(key);
     const minF = dist > 560 ? 6 : dist > 380 ? 4 : dist > 240 ? 2 : 1;
     const hits = nearOn && !(mx + L / 2 < nr.x0 || mx - L / 2 > nr.x1 || my + L / 2 < nr.y0 || my - L / 2 > nr.y1);
-    const gk = (S.chunks.get(ckey(Math.floor(mx / CS), Math.floor(my / CS))) || LO.m.get(ckey(Math.floor(mx / CS), Math.floor(my / CS)))) ? 'g' : '-';   // 地面の高さがわかるか
+    // 下の地形の網（作りなおしたら、建物も のせなおす。t64）
+    let gk = 0; for (let b = Math.floor(j * L / CS); b <= Math.floor(((j + 1) * L - 1) / CS); b++) for (let a = Math.floor(i * L / CS); a <= Math.floor(((i + 1) * L - 1) / CS); a++) { const o = M3.cm.get(ckey(a, b)); if (o) gk += o.gen; }
     const sig = c.v + ':' + minF + ':' + (hits ? nk : '-') + ':' + gk;
     const o = M3.lm.get(key); if (o && o.sig === sig) continue;
     todo.push({ key, c, minF, hits, sig, dist });
@@ -331,7 +416,9 @@ function m3LiteMesh(T3, items, minF, excl, cap) {
   const quad = (p, nx, ny, nz, c) => { const b0 = pos.length / 3; for (const q2 of p) { pos.push(q2[0], q2[1], q2[2]); nrm.push(nx, ny, nz); col.push(c[0], c[1], c[2]); } idx.push(b0, b0 + 1, b0 + 2, b0, b0 + 2, b0 + 3); };
   for (const b of bs) {
     const id = Math.round(b.x0 * 5) * 7919 + Math.round(b.y0 * 5), st = m3Style(b.kind, { id, floors: b.f });
-    const g0 = m3H((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2) - 0.01, y1 = g0 + (b.f * M3_FH + 0.8) * M3_U, x0 = b.x0, x1 = b.x1, z0 = b.y0, z1 = b.y1;
+    // 地形の面の上に（t64）：床は いちばん高いところ、壁は いちばん低いところまで（坂で うまらない・うかない）
+    const hs = [m3Surf(b.x0, b.y0), m3Surf(b.x1, b.y0), m3Surf(b.x0, b.y1), m3Surf(b.x1, b.y1), m3Surf((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2)];
+    const g0 = Math.min(...hs) - 0.012, y1 = Math.max(...hs) + (b.f * M3_FH + 0.8) * M3_U, x0 = b.x0, x1 = b.x1, z0 = b.y0, z1 = b.y1;
     const wc = m3Hex(st.wc, st.jit), rcl = m3Hex(st.rc, st.jit);
     quad([[x0, g0, z1], [x1, g0, z1], [x1, y1, z1], [x0, y1, z1]], 0, 0, 1, wc);
     quad([[x1, g0, z1], [x1, g0, z0], [x1, y1, z0], [x1, y1, z1]], 1, 0, 0, wc);
@@ -354,7 +441,8 @@ function m3Blds(v) {
   const rws = [...(it.rwys ? it.rwys.values() : [])].filter(r => r.bb && r.bb[2] >= v.x0 && r.bb[0] <= v.x1 && r.bb[3] >= v.y0 && r.bb[1] <= v.y1);
   const sts = [...it.stas.values()].filter(t => t.fx >= v.x0 - 2 && t.fx <= v.x1 + 2 && t.fy >= v.y0 - 2 && t.fy <= v.y1 + 2);   // 駅（t62）
   const key = bs.length + ':' + bs.reduce((a, b) => (a + b.id * 31 + b.floors) % 1e9, 0) + '|' + segs.length + ':' + segs.reduce((a, s) => (a + s.id * 17 + (s.pf ? Math.round(s.pf.reduce((u, w) => u + w, 0)) : 0)) % 1e9, 0) + '|' + M3.cm.size
-            + '|' + rws.length + ':' + rws.reduce((a, r) => (a + r.id * 13) % 1e9, 0) + '|' + sts.length + ':' + sts.reduce((a, t) => (a + t.id * 7 + (t.pl || 0) * 3 + (t.tr || 0)) % 1e9, 0);
+            + '|' + rws.length + ':' + rws.reduce((a, r) => (a + r.id * 13) % 1e9, 0) + '|' + sts.length + ':' + sts.reduce((a, t) => (a + t.id * 7 + (t.pl || 0) * 3 + (t.tr || 0)) % 1e9, 0)
+            + '|' + M3.tgN;   // 近くの地形の網を作りなおしたら、のせなおす（t64）
   if (key === M3.bKey) return;
   M3.bKey = key;
   m3Clear(M3.grpB); m3Clear(M3.grpR);
@@ -364,10 +452,10 @@ function m3Blds(v) {
   const W = { glass: [], grid: [], house: [], none: [] }, RF = [];
   const push = (arr, x, y, z, nx, ny, nz, c, u, w) => arr.push(x, y, z, nx, ny, nz, c[0], c[1], c[2], u, w);
   const hex = (h, f) => { const n = parseInt(h.slice(1), 16); return [((n >> 16) & 255) / 255 * f, ((n >> 8) & 255) / 255 * f, (n & 255) / 255 * f]; };
+  const FND = [0.64, 0.63, 0.60];   // 土台（坂の低いがわ。コンクリート）
   for (const b of bs) {
     const st = m3Style(b.kind, b), f = Math.max(0, b.floors);
-    const g0 = m3Ground(b.cx, b.cy) - 0.01, hgt = f > 0 ? (f * M3_FH + 0.8) * M3_U : 0.25 * M3_U;
-    if (b.name) M3.labs.push({ x: b.cx, y: b.cy, h: g0 + hgt + 2 * M3_U, n: b.name, f });
+    const hgt = f > 0 ? (f * M3_FH + 0.8) * M3_U : 0.25 * M3_U;
     const wc = hex(st.wc, st.jit), rcol = hex(f > 0 ? st.rc : (bcol(b.kind)[0] || '#bbb'), st.jit), wa = W[st.win] || W.none;
     // 長方形にまとめる
     const rows = new Map();
@@ -377,13 +465,32 @@ function m3Blds(v) {
     runs.sort((a, c) => a[0] - c[0] || a[1] - c[1] || a[2] - c[2]);
     const rects = [];
     for (const r of runs) { const last = rects[rects.length - 1]; if (last && last[0] === r[0] && last[2] === r[1] && last[3] + 1 === r[2]) last[3] = r[2]; else rects.push([r[0], r[2], r[1], r[2]]); }
+    if (!rects.length) continue;
+    // 床の高さ（t64）：建物の下の地形の面の いちばん高いところ（坂でも 建物が地面に うまらない）。
+    //   長方形ごとに いちばん低いところ（gl）も。そこまでは 土台（窓のないコンクリートの壁）
+    let g0 = -Infinity; const gl = [];
     for (const [X0, Y0, X1, Y1] of rects) {
-      const x0 = X0 / 5, z0 = Y0 / 5, x1 = (X1 + 1) / 5, z1 = (Y1 + 1) / 5, y0 = g0, y1 = g0 + hgt, fu = M3_FH * M3_U;
-      // 壁（窓の模様：横 3.2m・たて1階ごと）
+      const x0 = X0 / 5, z0 = Y0 / 5, x1 = (X1 + 1) / 5, z1 = (Y1 + 1) / 5, ni = Math.max(1, Math.ceil((x1 - x0) / 0.5)), nj = Math.max(1, Math.ceil((z1 - z0) / 0.5));
+      let lo = Infinity;
+      for (let j = 0; j <= nj; j++) for (let i = 0; i <= ni; i++) { const h = m3Surf(x0 + (x1 - x0) * i / ni, z0 + (z1 - z0) * j / nj); if (h > g0) g0 = h; if (h < lo) lo = h; }
+      gl.push(lo);
+    }
+    if (b.name) M3.labs.push({ x: b.cx, y: b.cy, h: g0 + hgt + 2 * M3_U, n: b.name, f });
+    for (let ri = 0; ri < rects.length; ri++) {
+      const [X0, Y0, X1, Y1] = rects[ri];
+      const x0 = X0 / 5, z0 = Y0 / 5, x1 = (X1 + 1) / 5, z1 = (Y1 + 1) / 5, y0 = g0, y1 = g0 + hgt, fu = M3_FH * M3_U, yb = gl[ri] - 0.012;
+      const fnd = f === 0 || g0 - gl[ri] > 0.006;   // 坂（床と いちばん低いところが 30cm 以上ちがう）：土台をつける。平らなら 壁を 少し下まで のばすだけ（階のない区画は いつも まわりを）
+      // 壁（窓の模様：横 3.2m・たて1階ごと。窓の高さは床から）
+      const yw = fnd ? y0 : yb, vw = (yw - y0) / fu;
       const wall = (ax, az, bx, bz, nx, nz) => { const L = Math.hypot(bx - ax, bz - az) / (3.2 * M3_U), H = (y1 - y0) / fu;
-        push(wa, ax, y0, az, nx, 0, nz, wc, 0, 0); push(wa, bx, y0, bz, nx, 0, nz, wc, L, 0); push(wa, bx, y1, bz, nx, 0, nz, wc, L, H);
-        push(wa, ax, y0, az, nx, 0, nz, wc, 0, 0); push(wa, bx, y1, bz, nx, 0, nz, wc, L, H); push(wa, ax, y1, az, nx, 0, nz, wc, 0, H); };
+        push(wa, ax, yw, az, nx, 0, nz, wc, 0, vw); push(wa, bx, yw, bz, nx, 0, nz, wc, L, vw); push(wa, bx, y1, bz, nx, 0, nz, wc, L, H);
+        push(wa, ax, yw, az, nx, 0, nz, wc, 0, vw); push(wa, bx, y1, bz, nx, 0, nz, wc, L, H); push(wa, ax, y1, az, nx, 0, nz, wc, 0, H); };
       if (f > 0) { wall(x0, z1, x1, z1, 0, 1); wall(x1, z1, x1, z0, 1, 0); wall(x1, z0, x0, z0, 0, -1); wall(x0, z0, x0, z1, -1, 0); }
+      // 土台（t64）：床から地面まで（窓のないコンクリートの壁）。階のない区画（駐車場・広場など）は、そのまわり
+      if (fnd) { const ya = f > 0 ? y0 : y1, fc = f > 0 ? FND : rcol.map(v => v * 0.82);
+        const plain = (ax, az, bx, bz, nx, nz) => { push(W.none, ax, yb, az, nx, 0, nz, fc, 0, 0); push(W.none, bx, yb, bz, nx, 0, nz, fc, 0, 0); push(W.none, bx, ya, bz, nx, 0, nz, fc, 0, 0);
+          push(W.none, ax, yb, az, nx, 0, nz, fc, 0, 0); push(W.none, bx, ya, bz, nx, 0, nz, fc, 0, 0); push(W.none, ax, ya, az, nx, 0, nz, fc, 0, 0); };
+        plain(x0, z1, x1, z1, 0, 1); plain(x1, z1, x1, z0, 1, 0); plain(x1, z0, x0, z0, 0, -1); plain(x0, z0, x0, z1, -1, 0); }
       // 屋根
       const top = (ax, ay, az, bx, by, bz, cx2, cy2, cz2, nx, ny, nz) => { push(RF, ax, ay, az, nx, ny, nz, rcol, 0, 0); push(RF, bx, by, bz, nx, ny, nz, rcol, 0, 0); push(RF, cx2, cy2, cz2, nx, ny, nz, rcol, 0, 0); };
       const roof = f > 0 ? st.roof : 'flat', w = x1 - x0, d = z1 - z0;
@@ -442,17 +549,23 @@ function m3Blds(v) {
     };
     const BED = [0.50, 0.47, 0.44], PLAT = [0.84, 0.84, 0.81], EDGE = [0.93, 0.80, 0.25], ROOF = [0.42, 0.52, 0.60], HALL = [0.94, 0.93, 0.89], HALLR = [0.62, 0.66, 0.70], BUS = [0.26, 0.45, 0.78];
     for (const t of sts) {
-      let g0 = m3Ground(t.fx, t.fy);
+      let g0 = m3Surf(t.fx, t.fy);
       if (t.k === 'rail' && t.zl === 'U') {   // 地下駅（t108）：地上は出入口だけ
-        obox(t.fx, t.fy, t.a || 0, 0.16, 0.1, g0, g0 + 3 * M3_U, HALL);
+        obox(t.fx, t.fy, t.a || 0, 0.16, 0.1, g0 - 0.012, g0 + 3 * M3_U, HALL);
         obox(t.fx, t.fy, t.a || 0, 0.18, 0.12, g0 + 3 * M3_U, g0 + 3.4 * M3_U, HALLR);
         M3.labs.push({ x: t.fx, y: t.fy, h: g0 + 8 * M3_U, n: t.n, f: 99, st: 'rail' });
         continue;
       }
-      if (t.k === 'rail' && t.zl === 'E') { const sg = it.segs.get(t.seg); if (sg && sg.pf) g0 = Math.max(g0, pfZ(sg.pf, t.at) * M3_U * M3_VEX); }   // 高架駅（t108）
+      // 駅の高さは、その駅の線路の高さ（t64。高架駅は高架の上・地面の駅は 線路の帯と同じ）
+      let elev = t.k === 'rail' && t.zl === 'E';
+      const sg = t.k === 'rail' && t.seg != null ? it.segs.get(t.seg) : null;
+      if (sg) { const th = m3OnLine(sg, t.at || 0, t.fx, t.fy); if (th.c === 'V' || th.c === 'B') elev = true; g0 = elev ? Math.max(g0, th.y) : th.y; }
       if (t.k === 'rail') {
         const L = Math.max(0.4, (t.pl || 120) / 50), Wd = 0.22 * Math.max(1, t.tr || 1) + 0.18, pw = 0.11, a = t.a || 0, c = Math.cos(a), sn = Math.sin(a);
-        obox(t.fx, t.fy, a, L + 0.06, Wd, g0 - 0.2 * M3_U, g0 + 0.15 * M3_U, BED);   // 線路の敷地
+        // 線路の敷地：地面の駅は、坂の低いところも 地面まで うめる（ホームが うかないように）
+        let gm = g0 - 0.2 * M3_U;
+        if (!elev) for (const [u, w] of [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5], [0, 0], [-0.25, 0], [0.25, 0], [-0.5, 0], [0.5, 0]]) gm = Math.min(gm, m3Surf(t.fx + c * u * L - sn * w * Wd, t.fy + sn * u * L + c * w * Wd) - 0.012);
+        obox(t.fx, t.fy, a, L + 0.06, Wd, gm, g0 + 0.15 * M3_U, BED);
         for (const sd of [-1, 1]) {   // ホーム（駅の両はし）と、その上の屋根
           const w = sd * (Wd / 2 - pw / 2), cx = t.fx - sn * w, cz = t.fy + c * w;
           obox(cx, cz, a, L, pw, g0, g0 + 1.1 * M3_U, PLAT);
@@ -471,40 +584,62 @@ function m3Blds(v) {
   }
   for (const k of Object.keys(W)) mkMesh(W[k], M3.tex[k], M3.grpB);
   mkMesh(RF, null, M3.grpB);
-  // 道路・線路：地面の少し上に帯で（道のはば・地面の高さにそって）
+  // 道路・線路：地面の少し上に帯で（道のはば・地形の面にそって。t64）
+  //   地面（G）・縦断のない線：帯の左右のはしも 地形の面にそって（坂を横ぎっても うまらない）。縦断があれば その高さより下にしない（盛土は すそを地面まで）
+  //   高架・橋（V・B）：縦断の高さに。1.5マスごとに はしら。トンネル（T）：描かない
+  //   地形の折れ目で うまったり うきあがったりしないように、まん中が ずれたら 半分に（3回まで）
   const RD = [];
-  // 帯（a→b・はば wdt マス・地面から lift だけ上）
-  const strip = (ax, ay, bx, by, wdt, col, lift) => {
-    const L = Math.hypot(bx - ax, by - ay); if (L < 1e-6) return;
-    const m = Math.max(1, Math.ceil(L / 1)), nx = -(by - ay) / L * wdt / 2, ny = (bx - ax) / L * wdt / 2;
-    for (let q = 0; q < m; q++) {
-      const t0 = q / m, t1 = (q + 1) / m, x0 = ax + (bx - ax) * t0, y0 = ay + (by - ay) * t0, x1 = ax + (bx - ax) * t1, y1 = ay + (by - ay) * t1;
-      const h0 = m3Ground(x0, y0) + lift, h1 = m3Ground(x1, y1) + lift;
-      RD.push(x0 + nx, h0, y0 + ny, x1 + nx, h1, y1 + ny, x1 - nx, h1, y1 - ny, x0 + nx, h0, y0 + ny, x1 - nx, h1, y1 - ny, x0 - nx, h0, y0 - ny);
-      for (let k = 0; k < 6; k++) RD.push(...col);
+  const PIER = [0.56, 0.56, 0.57], EMB = [0.50, 0.47, 0.42];
+  const quadV = (a, b, c, d, col) => { RD.push(...a, ...b, ...c, ...a, ...c, ...d); for (let k = 0; k < 6; k++) RD.push(...col); };   // 四角ごとに 位置18・色18
+  // 点 (x, y)（線の上の s）の帯の高さ：[左, 右, 左の地面, 右の地面, まん中の地面]（c：その区間の つくり）
+  const hAt = (sg, x, y, s, nx, ny, lift, c) => {
+    const gL = m3Surf(x + nx, y + ny), gR = m3Surf(x - nx, y - ny), gC = m3Surf(x, y);
+    if (!sg || !sg.pf || !sg.L) return [gL + lift, gR + lift, gL, gR, gC];
+    const z = pfZ(sg.pf, s) * M3_U * M3_VEX;
+    if (c === 'V' || c === 'B') return [z + lift, z + lift, gL, gR, gC];
+    return [Math.max(z, gL) + lift, Math.max(z, gR) + lift, gL, gR, gC];
+  };
+  // 帯の1区間：はじめ (x0, y0)・おわり (x1, y1)。左右へのずれは はじめ (nx0, ny0)・おわり (nx1, ny1)（つぎめで となりと そろえる）
+  const piece = (sg, x0, y0, s0, nx0, ny0, x1, y1, s1, nx1, ny1, lift, c, col, A, B, dep) => {
+    if (dep < 3 && c !== 'V' && c !== 'B' && Math.hypot(x1 - x0, y1 - y0) > 0.12) {
+      const xm = (x0 + x1) / 2, ym = (y0 + y1) / 2, sm = (s0 + s1) / 2, nxm = (nx0 + nx1) / 2, nym = (ny0 + ny1) / 2, Mh = hAt(sg, xm, ym, sm, nxm, nym, lift, c);
+      if (Math.abs(Mh[0] - (A[0] + B[0]) / 2) > 0.006 || Math.abs(Mh[1] - (A[1] + B[1]) / 2) > 0.006) {
+        piece(sg, x0, y0, s0, nx0, ny0, xm, ym, sm, nxm, nym, lift, c, col, A, Mh, dep + 1); piece(sg, xm, ym, sm, nxm, nym, x1, y1, s1, nx1, ny1, lift, c, col, Mh, B, dep + 1); return;
+      }
+    }
+    quadV([x0 + nx0, A[0], y0 + ny0], [x1 + nx1, B[0], y1 + ny1], [x1 - nx1, B[1], y1 - ny1], [x0 - nx0, A[1], y0 - ny0], col);
+    // 盛土（地面の区間で、帯が地面より 1m 以上 上）：両はしから地面まで
+    if (c !== 'V' && c !== 'B') {
+      if (A[0] - lift - A[2] > 0.02 || B[0] - lift - B[2] > 0.02) quadV([x0 + nx0, A[2] - 0.006, y0 + ny0], [x1 + nx1, B[2] - 0.006, y1 + ny1], [x1 + nx1, B[0], y1 + ny1], [x0 + nx0, A[0], y0 + ny0], EMB);
+      if (A[1] - lift - A[3] > 0.02 || B[1] - lift - B[3] > 0.02) quadV([x0 - nx0, A[3] - 0.006, y0 - ny0], [x1 - nx1, B[3] - 0.006, y1 - ny1], [x1 - nx1, B[1], y1 - ny1], [x0 - nx0, A[1], y0 - ny0], EMB);
     }
   };
-  // 高さ（t108）：縦断のある線は、その高さに（地面のところは地面より下にしない。トンネル・地下は出さない）。高架・橋には 1.5マスごとに はしら
-  const PIER = [0.56, 0.56, 0.57];
-  const quadV = (a, b, c, d, col) => { RD.push(...a, ...b, ...c, ...a, ...c, ...d); for (let k = 0; k < 6; k++) RD.push(...col); };
-  const stripH = (s, wdt, col, lift) => {
-    const P = s.P, n = s.np, L = s.L, st = s.st || '', pw = Math.max(0.03, wdt * 0.22); let nextPier = 0;
+  // 線 sg（なければ 点の列 P だけ）を、はば wdt の帯に
+  const band = (sg, P, n, wdt, col, lift) => {
+    const pw = Math.max(0.03, wdt * 0.22), st = sg && sg.pf && sg.L ? (sg.st || '') : ''; let nextPier = 0, acc = 0;
+    // 点ごとの左右へのずれ：前後の区間の向きの まん中（つぎめに すきまが出ないように。t64）。するどい曲がりは 2倍まで
+    const NX = new Float32Array(n), NY = new Float32Array(n), dir = k => { const dx = P[2 * k + 2] - P[2 * k], dy = P[2 * k + 3] - P[2 * k + 1], L = Math.hypot(dx, dy); return L < 1e-6 ? null : [-dy / L, dx / L]; };
+    for (let i = 0; i < n; i++) {
+      const a = i > 0 ? dir(i - 1) : null, b = i < n - 1 ? dir(i) : null, u = a && b ? [a[0] + b[0], a[1] + b[1]] : (a || b); if (!u) continue;
+      const L = Math.hypot(u[0], u[1]); if (L < 1e-6) { const v = b || a; NX[i] = v[0] * wdt / 2; NY[i] = v[1] * wdt / 2; continue; }
+      const ux = u[0] / L, uy = u[1] / L, v = b || a, cs = Math.max(0.5, ux * v[0] + uy * v[1]);
+      NX[i] = ux / cs * wdt / 2; NY[i] = uy / cs * wdt / 2;
+    }
     for (let i = 0; i < n - 1; i++) {
       const ax = P[2 * i], ay = P[2 * i + 1], bx = P[2 * i + 2], by = P[2 * i + 3], D = Math.hypot(bx - ax, by - ay); if (D < 1e-6) continue;
-      const m = Math.max(1, Math.ceil(D)), nx = -(by - ay) / D * wdt / 2, ny = (bx - ax) / D * wdt / 2;
+      const L0 = sg && sg.L ? sg.L[i] : acc; acc += D;
+      const m = Math.max(1, Math.ceil(D));
       for (let q = 0; q < m; q++) {
-        const t0 = q / m, t1 = (q + 1) / m, s0 = L[i] + D * t0, s1 = L[i] + D * t1, c = st[Math.min(st.length - 1, Math.max(0, Math.round((s0 + s1) / 2)))] || 'G';
+        const t0 = q / m, t1 = (q + 1) / m, s0 = L0 + D * t0, s1 = L0 + D * t1, c = st[Math.min(st.length - 1, Math.max(0, Math.round((s0 + s1) / 2)))] || 'G';
         if (c === 'T') continue;
-        const x0 = ax + (bx - ax) * t0, y0 = ay + (by - ay) * t0, x1 = ax + (bx - ax) * t1, y1 = ay + (by - ay) * t1, g0 = m3Ground(x0, y0), g1 = m3Ground(x1, y1);
-        let h0 = pfZ(s.pf, s0) * M3_U * M3_VEX, h1 = pfZ(s.pf, s1) * M3_U * M3_VEX;
-        if (c === 'G') { h0 = Math.max(h0, g0); h1 = Math.max(h1, g1); }
-        h0 += lift; h1 += lift;
-        RD.push(x0 + nx, h0, y0 + ny, x1 + nx, h1, y1 + ny, x1 - nx, h1, y1 - ny, x0 + nx, h0, y0 + ny, x1 - nx, h1, y1 - ny, x0 - nx, h0, y0 - ny);
-        for (let k = 0; k < 6; k++) RD.push(...col);
-        if ((c === 'V' || c === 'B') && s0 >= nextPier && h0 - lift > g0 + 2 * M3_U) {   // はしら（十字の板）
-          const top = h0 - lift;
-          quadV([x0 - pw, g0, y0], [x0 + pw, g0, y0], [x0 + pw, top, y0], [x0 - pw, top, y0], PIER);
-          quadV([x0, g0, y0 - pw], [x0, g0, y0 + pw], [x0, top, y0 + pw], [x0, top, y0 - pw], PIER);
+        const x0 = ax + (bx - ax) * t0, y0 = ay + (by - ay) * t0, x1 = ax + (bx - ax) * t1, y1 = ay + (by - ay) * t1;
+        const nx0 = NX[i] + (NX[i + 1] - NX[i]) * t0, ny0 = NY[i] + (NY[i + 1] - NY[i]) * t0, nx1 = NX[i] + (NX[i + 1] - NX[i]) * t1, ny1 = NY[i] + (NY[i + 1] - NY[i]) * t1;
+        const A = hAt(sg, x0, y0, s0, nx0, ny0, lift, c), B = hAt(sg, x1, y1, s1, nx1, ny1, lift, c);
+        piece(sg, x0, y0, s0, nx0, ny0, x1, y1, s1, nx1, ny1, lift, c, col, A, B, 0);
+        if ((c === 'V' || c === 'B') && s0 >= nextPier && A[0] - lift > A[4] + 2 * M3_U) {   // はしら（十字の板）
+          const top = A[0] - lift, g = A[4];
+          quadV([x0 - pw, g, y0], [x0 + pw, g, y0], [x0 + pw, top, y0], [x0 - pw, top, y0], PIER);
+          quadV([x0, g, y0 - pw], [x0, g, y0 + pw], [x0, top, y0 + pw], [x0, top, y0 - pw], PIER);
           nextPier = s0 + 1.5;
         }
       }
@@ -512,15 +647,13 @@ function m3Blds(v) {
   };
   for (const s of segs) {
     const isRail = s.k === 'rail', wdt = Math.max(isRail ? 0.18 : 0.14, s.w || 0.2), col = isRail ? [0.42, 0.38, 0.35] : (s.c === 'exp' ? [0.62, 0.66, 0.72] : [0.72, 0.72, 0.70]);
-    const P = s.P, n = s.np;
-    if (s.pf && s.L) { stripH(s, wdt, col, 0.05 * M3_U * 20); continue; }
-    for (let i = 0; i < n - 1; i++) strip(P[i * 2], P[i * 2 + 1], P[i * 2 + 2], P[i * 2 + 3], wdt, col, 0.05 * M3_U * 20);
+    band(s, s.P, s.np, wdt, col, M3_LIFT);
   }
   // 滑走路（t61）：黒っぽい帯（はば r.w マス）と、白い中心線
   for (const r of rws) {
     const [ax, ay, bx, by] = r.P;
-    strip(ax, ay, bx, by, r.w || 1.2, [0.30, 0.31, 0.33], 0.07 * M3_U * 20);
-    strip(ax + r.ux * 0.6, ay + r.uy * 0.6, bx - r.ux * 0.6, by - r.uy * 0.6, 0.04, [0.95, 0.95, 0.93], 0.09 * M3_U * 20);
+    band(null, [ax, ay, bx, by], 2, r.w || 1.2, [0.30, 0.31, 0.33], 0.07 * M3_U * 20);
+    band(null, [ax + r.ux * 0.6, ay + r.uy * 0.6, bx - r.ux * 0.6, by - r.uy * 0.6], 2, 0.04, [0.95, 0.95, 0.93], 0.09 * M3_U * 20);
   }
   if (RD.length) {   // 四角ごとに 位置18・色18 の順
     const P = [], C = [];
@@ -536,7 +669,7 @@ function m3Runs(v) {
   const T3 = M3.T;
   M3.runHit = []; M3.selLab = null;
   if (!S.layer.run) { if (M3.run) M3.run.visible = false; if (M3.mark) M3.mark.visible = false; return; }
-  const list = runList(visibleItems(), v);
+  const it = visibleItems(), list = runList(it, v);
   let n = 0; for (const o of list) n += o.R.k === 'rail' ? o.T.fn : 1;
   if (!M3.run || M3.runCap < n) {
     if (M3.run) { M3.sc.remove(M3.run); M3.run.geometry.dispose(); M3.run.material.dispose(); }
@@ -552,12 +685,19 @@ function m3Runs(v) {
     // 大きさは決まった大きさ（t62：遠くから見ても大きくしない）。見やすいように、はばと高さは本物より少し大きめ
     const hh = (k === 'rail' ? 4.6 : k === 'bus' ? 3.6 : k === 'ship' ? 9 : 5) * M3_U, ww = (k === 'rail' ? 5.5 : k === 'bus' ? 4 : k === 'ship' ? 16 : 30) * M3_U;
     const cl = o.car, gap = k === 'rail' ? cl * 0.05 : 0;
-    const off = k === 'rail' || k === 'bus' ? ww / 2 + 0.8 * M3_U : 0;   // 進む向きの左
+    const off0 = k === 'rail' || k === 'bus' ? ww / 2 + 0.8 * M3_U : 0;   // 進む向きの左
     col.set(o.R.c || '#d23');
     for (let c = 0; c < cars; c++) {
-      const p = runPt(o.H, o.d - (c + 0.5) * cl), px = p[0] + Math.sin(p[2]) * off, pz = p[1] - Math.cos(p[2]) * off;
-      let y = k === 'ship' ? 0.05 * M3_U : m3Ground(px, pz) + 0.3 * M3_U;
+      const dc = o.d - (c + 0.5) * cl, p = runPt(o.H, dc);
+      // 高さ（t64）：走っている線の高さ（高架は高架の上・地面は帯の上）。トンネル・地下は見せない。単線の鉄道は まん中を
+      const ref = k === 'rail' || k === 'bus' ? runRef(o.H, dc) : null, sg = ref ? it.segs.get(ref[0]) : null;
+      const off = sg && k === 'rail' && !sg.dbl && !sg.q ? 0 : off0, px = p[0] + Math.sin(p[2]) * off, pz = p[1] - Math.cos(p[2]) * off;
+      let y, hide = false;
+      if (k === 'ship') y = 0.05 * M3_U;
+      else if (sg) { const th = m3OnLine(sg, ref[1], p[0], p[1]); hide = th.c === 'T'; y = (th.c === 'V' || th.c === 'B' ? th.y : Math.max(th.y, m3Surf(px, pz))) + M3_LIFT + 0.1 * M3_U; }
+      else y = m3Surf(px, pz) + M3_LIFT + 0.1 * M3_U;
       if (k === 'air') { const f = o.H.len > 0 ? o.d / o.H.len : 0; y = Math.max(y, Math.min(1, 6 * f, 6 * (1 - f)) * 900 * M3_U); }   // 飛行機：まん中は 900m の高さ
+      if (hide) { if (c === 0 && sel) selP = [px, m3Surf(px, pz) + hh, pz, ww]; continue; }   // トンネルの中：えらんだ列車は しるしだけ（地上に）
       pos.set(px, y + hh / 2, pz); q.setFromAxisAngle(up, -p[2]); sc.set(cl - gap, hh, ww);
       m.compose(pos, q, sc); M3.run.setMatrixAt(i, m); M3.run.setColorAt(i, col); i++;
       M3.runHit.push({ o, x: px, y: y + hh / 2, z: pz });
@@ -689,5 +829,6 @@ function m3Zoom(f) { M3.d = Math.max(4, Math.min(900, M3.d / f)); }
 function m3Target(x, y) { M3.tx = x; M3.ty = y; }
 function m3Resize() { if (!M3.on) return; M3.r.setPixelRatio(m3PR()); M3.r.setSize(S.W, S.H, false); M3.cam.aspect = S.W / Math.max(1, S.H); M3.cam.updateProjectionMatrix(); }
 
+M3.surf = m3Surf;   // 地形の面の高さ（たしかめる用。t64）
 Object.assign(window, { m3Open, m3Close, m3Frame, m3Zoom, m3Target, m3Resize, m3State: M3 });
 })();

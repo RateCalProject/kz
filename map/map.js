@@ -1583,6 +1583,20 @@ function subPts(s, s0, s1) {
   }
   return out;
 }
+// subPts と同じ点に、線の上の s（マス）をつけて：[[x, y, s], …]（3D の列車の高さ。t64）
+function subPtsS(s, s0, s1) {
+  const P = s.P, out = []; let acc = 0;
+  for (let i = 0; i + 1 < s.np; i++) {
+    const ax = P[2 * i], ay = P[2 * i + 1], bx = P[2 * i + 2], by = P[2 * i + 3], d = Math.hypot(bx - ax, by - ay);
+    if (acc + d >= s0 && acc <= s1) {
+      const t0 = clamp((s0 - acc) / (d || 1), 0, 1), t1 = clamp((s1 - acc) / (d || 1), 0, 1);
+      if (!out.length) out.push([ax + (bx - ax) * t0, ay + (by - ay) * t0, acc + d * t0]);
+      out.push([ax + (bx - ax) * t1, ay + (by - ay) * t1, acc + d * t1]);
+    }
+    acc += d;
+  }
+  return out;
+}
 // 文字（白いふちどり・ほかの文字と重ならないように）
 let LBL = [];
 function label(g, text, x, y, o) {
@@ -1814,34 +1828,50 @@ function runIdx(R, tn) {
 function runLeg(R, i, it) {
   const c = R.lp[i]; if (c && (c.exact || now() - c.at < 3000)) return c;
   const L = R.legs[i], A = R.st[i], B = R.st[i + 1]; if (!L || !A || !B) return null;
-  let pts = null, exact = true;
+  let pts = null, refs = null, exact = true;
   if (L.w && L.w.length >= 4) { pts = []; for (let k = 0; k + 1 < L.w.length; k += 2) pts.push([L.w[k] / 100, L.w[k + 1] / 100]); }
   else if (L.g && L.g.length) {
-    pts = [];
+    // refs（t64・3D の高さ）：点 k → k+1 が、どの線の s から s まで か［線の id, s, s］。線と線のすきまは null
+    pts = []; refs = []; let pend = null;
     for (const [sid, s0, s1] of L.g) {
       const sg = it.segs.get(sid); if (!sg) { pts = null; break; }
-      let q = subPts(sg, Math.min(s0, s1), Math.max(s0, s1)); if (s0 > s1) q = q.reverse();
-      for (const v of q) { const l = pts[pts.length - 1]; if (!l || Math.hypot(v[0] - l[0], v[1] - l[1]) > 1e-4) pts.push(v); }
+      let q = subPtsS(sg, Math.min(s0, s1), Math.max(s0, s1)); if (s0 > s1) q = q.reverse();
+      for (const v of q) {
+        const l = pts[pts.length - 1];
+        if (!l || Math.hypot(v[0] - l[0], v[1] - l[1]) > 1e-4) { if (l) refs.push(pend && pend[0] === sid ? [sid, pend[1], v[2]] : null); pts.push([v[0], v[1]]); }
+        pend = [sid, v[2]];
+      }
     }
     if (pts && pts.length < 2) pts = null;
   }
   if (!pts) { pts = [[A.x, A.y], [B.x, B.y]]; exact = false; }
+  if (!refs || refs.length !== pts.length - 1) refs = null;
   const cum = [0]; for (let k = 1; k < pts.length; k++) cum.push(cum[k - 1] + Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]));
-  return (R.lp[i] = { pts, cum, len: cum[cum.length - 1], exact, at: now() });
+  return (R.lp[i] = { pts, cum, len: cum[cum.length - 1], exact, at: now(), refs });
 }
 // 駅 a → b（系統の何番目か）の線。帰りは逆向き
 function runHop(R, a, b, it) {
   if (a < 0 || b < 0) return null;
   const key = a + '>' + b, c = R.hop.get(key);
   if (c && c.exact) return c;
-  const lo = Math.min(a, b), hi = Math.max(a, b), parts = [];
+  const lo = Math.min(a, b), hi = Math.max(a, b), parts = [], prf = [];
   let exact = true;
-  for (let i = lo; i < hi; i++) { const L = runLeg(R, i, it); if (!L) return null; if (!L.exact) exact = false; parts.push(L.pts); }
-  if (a > b) { parts.reverse(); for (let i = 0; i < parts.length; i++) parts[i] = parts[i].slice().reverse(); }
-  const pts = []; for (const q of parts) for (const v of q) { const l = pts[pts.length - 1]; if (!l || Math.hypot(v[0] - l[0], v[1] - l[1]) > 1e-4) pts.push(v); }
+  for (let i = lo; i < hi; i++) { const L = runLeg(R, i, it); if (!L) return null; if (!L.exact) exact = false; parts.push(L.pts); prf.push(L.refs || null); }
+  if (a > b) {
+    parts.reverse(); prf.reverse();
+    for (let i = 0; i < parts.length; i++) { parts[i] = parts[i].slice().reverse(); if (prf[i]) prf[i] = prf[i].slice().reverse().map(r => r && [r[0], r[2], r[1]]); }
+  }
+  const pts = [], refs = [];
+  for (let j = 0; j < parts.length; j++) {
+    const q = parts[j], rf = prf[j];
+    for (let k = 0; k < q.length; k++) {
+      const v = q[k], l = pts[pts.length - 1];
+      if (!l || Math.hypot(v[0] - l[0], v[1] - l[1]) > 1e-4) { if (l) refs.push(k > 0 && rf ? rf[k - 1] : null); pts.push(v); }
+    }
+  }
   if (pts.length < 2) return null;
   const cum = [0]; for (let k = 1; k < pts.length; k++) cum.push(cum[k - 1] + Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]));
-  const h = { pts, cum, len: cum[cum.length - 1], exact };
+  const h = { pts, cum, len: cum[cum.length - 1], exact, refs: refs.length === pts.length - 1 ? refs : null };
   R.hop.set(key, h); return h;
 }
 // 線の上の d（はじめからのマス）の点と向き
@@ -1850,6 +1880,15 @@ function runPt(H, d) {
   while (hi - lo > 1) { const m = (lo + hi) >> 1; if (c[m] <= d) lo = m; else hi = m; }
   const a = H.pts[lo], b = H.pts[hi] || a, L = (c[hi] - c[lo]) || 1, t = (d - c[lo]) / L;
   return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, Math.atan2(b[1] - a[1], b[0] - a[0])];
+}
+// 線の上の d のところが、DB の線の どこか：[線の id, s（マス）] か null（線の形がわからないところ）。3D の高さ（t64）
+function runRef(H, d) {
+  if (!H || !H.refs) return null;
+  d = clamp(d, 0, H.len); const c = H.cum; let lo = 0, hi = c.length - 1;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (c[m] <= d) lo = m; else hi = m; }
+  const r = H.refs[lo]; if (!r) return null;
+  const t = clamp((d - c[lo]) / ((c[hi] - c[lo]) || 1), 0, 1);
+  return [r[0], r[1] + (r[2] - r[1]) * t];
 }
 // 線の d0〜d1 の折れ線
 function runSub(H, d0, d1) {
@@ -9194,7 +9233,7 @@ function showCert(r) {
         <table style="border-collapse:collapse;flex:1;font-size:13px">${row('氏名', `<b translate="no">${esc(r.name)}</b>`)}${row('住所', `<span translate="no">${esc(j.addr)}</span>`)}${row('登録番号', esc(j.seal_no || ''))}</table></div>${foot}`);
   modal([r.kind === 'cert' ? '住民票の写し' : '印鑑登録証明書', html], null, 'mp-wide');
 }
-window.MapInt = { MQ, q, LITE, liteNeed, EDEC, B64I, bldShift, S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runOff, runIsSel, runName, runDest, showTrain, showSta, runFollow, pfZ };   // 3D（map3d.js）が使う
+window.MapInt = { MQ, q, LITE, liteNeed, EDEC, B64I, bldShift, S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runOff, runIsSel, runName, runDest, showTrain, showSta, runFollow, pfZ, runRef };   // 3D（map3d.js）が使う
 window.MapApp = { open, pause, state: S, spline, setCam, jamList: () => openJamList(), erList: () => openErList(), jamAt: L => layAt('jam', L, 3), erAt: L => layAt('er', L, 2.5), landReqs: () => openLandReqs(), xfers: () => openXfers(), cars: () => openCars(), goto: (x, y) => homeGo(x, y), thru: () => openThru(), bld: id => openBld(id), sc: () => openSC(),
   slots: L => (L && L.st ? openSlots(Number(L.st)) : openSlotList()), unko: L => openUnko(L && L.id ? Number(L.id) : 0), bldAt: L => { if (L && L.cx != null) homeGo(Number(L.cx), Number(L.cy)); }, lic: L => { if (L && /申請があります/.test(L.body || '')) LIC.tab = 'rev'; openLic(); }, snow: () => openSnow(), find: () => openFind(), jm: id => openJuumin(id), wxMap: () => wxMapOn() };
 })();
