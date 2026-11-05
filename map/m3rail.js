@@ -517,6 +517,8 @@ function onRail(C0, x, y, pad) {
 /* ---------- 線路と道路の交わり：踏切（地面どうし）・駅の中（道路のファイルが 上か下へ）・高い盛土の下（短い橋） ---------- */
 function crossings(rails, sts) {
   const XS = [], seen = new Set(), { map, roads, key } = RIDX;
+  RNODE = new Map();   // 道の交点 → [{ s, e }]（交差点をこえる 跨線橋。t67）
+  for (const s of (X.segs || [])) { if (s.k !== 'road' || !(s.np >= 2)) continue; for (const e of [0, 1]) { const nid = e ? s.n1 : s.n0; if (nid == null) continue; let a = RNODE.get(nid); if (!a) RNODE.set(nid, a = []); a.push({ s, e }); } }
   const inSta = (x, y) => { for (const t of sts) { if (t.k !== 'rail') continue; const a = t.a || 0, c = Math.cos(a), s = Math.sin(a), dx = x - t.fx, dy = y - t.fy, L = (t.pl || 120) / 50, Wd = 0.22 * Math.max(1, t.tr || 1) + 0.18;
     if (Math.abs(dx * c + dy * s) <= L / 2 && Math.abs(-dx * s + dy * c) <= Wd / 2) return t; } return null; };
   for (const C of rails) {
@@ -553,24 +555,56 @@ function crossings(rails, sts) {
     const st = inSta(h.x, h.y); if (st) { h.k = 'sta'; h.t = st; out.push(h); continue; }
     const dz = rtS(h.C, h.s) - (X.m3Surf(h.x, h.y) + LIFT);
     if (dz > 2.5 * U * VEX) { h.k = 'over'; out.push(h); continue; }
-    // 踏切にしない（t66）：斜めの交わり（45° より浅い）・都心（商業地）の 大きな道 → 道路を 跨線橋に（道路のファイルが 上へ）
+    // 踏切にしない（t66）：斜めの交わり（45° より浅い）→ 道路を 跨線橋に（道路のファイルが 上へ）
+    //   都心（商業地 c・d。t67）：道は ぜんぶ 跨線橋に（坂は 交差点から 15m で はじめる）。坂が入らない 短い道だけ 踏切のまま
     const tl = X.tileAt(Math.floor(h.x), Math.floor(h.y)), zc = (tl && tl.z) || '';
-    const big = h.cls === 'nat' || h.cls === 'pref' || (h.cls === 'city' && h.hw >= 6);
-    h.k = (h.sn < 0.7 || (big && (zc === 'c' || zc === 'd'))) && rampOK(h.rs, h.rsv, h.rsv) ? 'ovp' : 'level'; out.push(h);
+    h.cbd = zc === 'c' || zc === 'd';
+    h.k = (h.sn < 0.7 && rampOK(h.rs, h.rsv, h.rsv)) || (h.cbd && rampOK(h.rs, h.rsv, h.rsv, true)) ? 'ovp' : 'level';
+    if (h.k === 'level' && h.cbd) { const ps = passOver(h.rs, h.rsv, h.rsv); if (ps) { h.k = 'ovp'; h.pass = ps; } }   // 交差点をこえる 跨線橋（都心。t67）
+    out.push(h);
   }
   // 同じ線路と道路が 2マス以内で なんども交わる（重なるように走る）：みな 跨線橋に
   for (const h of out) if (h.k === 'level' && out.some(o => o !== h && o.C === h.C && o.rs === h.rs && Math.abs(o.s - h.s) < 2 && (o.k === 'level' || o.k === 'ovp'))) {
     const mates = out.filter(o => o.C === h.C && o.rs === h.rs && Math.abs(o.s - h.s) < 2 && (o.k === 'level' || o.k === 'ovp'));
-    if (rampOK(h.rs, Math.min(...mates.map(o => o.rsv)), Math.max(...mates.map(o => o.rsv)))) for (const o of mates) o.k = 'ovp';
+    if (rampOK(h.rs, Math.min(...mates.map(o => o.rsv)), Math.max(...mates.map(o => o.rsv)), mates.every(o => o.cbd))) for (const o of mates) o.k = 'ovp';
   }
   // 交わらないが 線路と重なって走る道（線路にそって、帯が かさなる）：その あいだを 跨線橋に（t66）
   for (const o of overlaps(rails, sts, inSta)) out.push(o);
   return out;
 }
+// 道の線の長さ（マス）・交点から 線の中への向き（0.25マス先まで）
+function segLen(s) { const P = s.P; let len = 0; for (let i = 0; i + 1 < s.np; i++) len += Math.hypot(P[2 * i + 2] - P[2 * i], P[2 * i + 3] - P[2 * i + 1]); return len; }
+function outDir(s, e) {
+  const P = s.P, n = s.np, i0 = e ? n - 1 : 0, st = e ? -1 : 1, x0 = P[2 * i0], y0 = P[2 * i0 + 1];
+  let k = i0 + st, dx = 0, dy = 0;
+  while (k >= 0 && k < n) { dx = P[2 * k] - x0; dy = P[2 * k + 1] - y0; if (Math.hypot(dx, dy) >= 0.25) break; k += st; }
+  const L = Math.hypot(dx, dy) || 1; return [dx / L, dy / L];
+}
+// 交差点をこえる 跨線橋（都心。t67）：坂が入らない側（交差点まで 1.5マスより短い）は、交差点をこえて まっすぐ（30° まで）つづく道（1.6マス以上）に 坂を入れる。
+//   跨線橋が 交差点の上を わたり、線路ぞいの道は 下をくぐる。どちらの側も 坂が入れば [{ e（rs のはし 0・1）, s（つづく道の id）, pe（その道の 交差点がわのはし）}]、だめなら null
+let RNODE = new Map();
+function passOver(rs, a, b) {
+  const len = segLen(rs), out = [];
+  for (const [e, d] of [[0, a], [1, len - b]]) {
+    if (d >= 1.5) continue;
+    const nid = e ? rs.n1 : rs.n0, arms = nid == null ? null : RNODE.get(nid); if (!arms || arms.length < 3) return null;   // 交差点でない（行き止まり・つぎめ）
+    const d0 = outDir(rs, e); let best = null;
+    for (const o of arms) {
+      if (o.s === rs || o.s.c === 'exp' || o.s.pf || o.s.id === rs.id || segLen(o.s) < 1.6) continue;
+      const d1 = outDir(o.s, o.e), dot = d0[0] * d1[0] + d0[1] * d1[1];
+      if (dot < -0.87 && (!best || dot < best.dot)) best = { s: o.s.id, pe: o.e, dot };
+    }
+    if (!best) return null;
+    out.push({ e, s: best.s, pe: best.pe });
+  }
+  return out.length ? out : null;
+}
 // 跨線橋の坂が入るか（t66）：道の線の a〜b（はしからのマス）が 跨線橋。両がわに 2マス（坂と はしの あき）
-function rampOK(rs, a, b) {
+//   cbd（都心。t67）：両がわに 1.5マス（交差点から 0.3マスで 坂を はじめる → 坂は 1.2マス）
+function rampOK(rs, a, b, cbd) {
   const P = rs.P; let len = 0; for (let i = 0; i + 1 < rs.np; i++) len += Math.hypot(P[2 * i + 2] - P[2 * i], P[2 * i + 3] - P[2 * i + 1]);
-  return a >= 2 && len - b >= 2;   // はしが交差点なら 0.8マスは 地面のまま → 坂は 1.2マス（15%）より長く
+  const m = cbd ? 1.5 : 2;
+  return a >= m && len - b >= m;   // はしが交差点なら 0.8マス（都心は 0.3マス）は 地面のまま → 坂は 1.2マス（15%）より長く
 }
 // 線路と重なって走る道（t66）：地面の線路の帯（線路のはしから 1m）と 道の帯が かさなり、ほぼ平行で、交わらないところ。
 //   道ごと・線ごとに［x, y（線路の上）, s］のならび → 跨線橋の しらべ（k：ovp か 駅の中は sta）
@@ -604,9 +638,10 @@ function overlaps(rails, sts, inSta) {
   }
   for (const g of got.values()) {
     if (g.pts.length < 2) continue;   // 1点だけ：はしが ふれるだけ
-    if (!rampOK(g.rs, Math.min(...g.pts.map(p => p[3])), Math.max(...g.pts.map(p => p[3])))) continue;   // 坂が入らない（短い道）：そのまま
+    const tl = X.tileAt(Math.floor(g.pts[0][0]), Math.floor(g.pts[0][1])), cbd = !!(tl && (tl.z === 'c' || tl.z === 'd'));   // 都心（t67）
+    if (!rampOK(g.rs, Math.min(...g.pts.map(p => p[3])), Math.max(...g.pts.map(p => p[3])), cbd)) continue;   // 坂が入らない（短い道）：そのまま
     for (const [x, y, sR] of g.pts.filter((p, i) => i % 3 === 0 || i === g.pts.length - 1)) {
-      const st = inSta(x, y), h = { C: g.C, s: sR, x, y, rs: g.rs, rx: 0, ry: 0, rsv: 0, hw: roadW(g.rs) / 2, cls: g.rs.c || 'city', sn: 0.25, k: st ? 'sta' : 'ovp', ovl: true };
+      const st = inSta(x, y), h = { C: g.C, s: sR, x, y, rs: g.rs, rx: 0, ry: 0, rsv: 0, hw: roadW(g.rs) / 2, cls: g.rs.c || 'city', sn: 0.25, k: st ? 'sta' : 'ovp', ovl: true, cbd };
       if (st) h.t = st;
       at(g.C, sR, TP); h.tx = TP.tx; h.ty = TP.ty; h.rx = TP.tx; h.ry = TP.ty;
       out.push(h);
@@ -669,7 +704,7 @@ function build(cx) {
   }
   // 道路のファイル（あとで作る）に わたす：踏切（地面どうし）と 立体交差にしてほしい交わり（駅の中・高速道路）
   R.xings = G.xs.map(h => ({ x: h.x, y: h.y, seg: h.C.sg.id, s: h.s, road: h.rs.id, rx: h.rx, ry: h.ry, hw: h.hw, h: rtS(h.C, h.s) }));
-  R.grade = XS.filter(h => h.k === 'sta' || h.k === 'exp' || h.k === 'ovp').map(h => ({ x: h.x, y: h.y, seg: h.C.sg.id, s: h.s, road: h.rs.id, k: h.k, h: rtS(h.C, h.s) }));
+  R.grade = XS.filter(h => h.k === 'sta' || h.k === 'exp' || h.k === 'ovp').map(h => ({ x: h.x, y: h.y, seg: h.C.sg.id, s: h.s, road: h.rs.id, k: h.k, h: rtS(h.C, h.s), cbd: !!h.cbd, pass: h.pass || null }));
   // 4. 駅：道路をよけて 駅舎・屋根の場所。車庫
   for (const t of rsts) staPlan(t, XS);
   depPrep(cx.it && cx.it.deps ? [...cx.it.deps.values()] : [], v);

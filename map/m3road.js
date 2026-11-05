@@ -503,9 +503,11 @@ function ordinary(G, segs, F) {
   const CL = new Map();
   for (const [nid, a] of jn) { const r = find(nid); let c = CL.get(r); if (!c) CL.set(r, c = { nodes: [], ends: [] }); c.nodes.push(a[0]); for (const o of a) if (!inner.has(o.s)) c.ends.push(o); }
   const isJ = nid => par.has(nid);
-  // つぎめ（2本）：となりの線と横向きを そろえる
-  for (const [nid, a] of ends) {
-    if (a.length !== 2 || isJ(nid) || a[0].c !== 'G' || a[1].c !== 'G') continue;
+  // つぎめ（2本）：となりの線と横向きを そろえる。交差点の上を わたる 跨線橋（t67：上の 2本）も
+  for (const [nid, a0] of ends) {
+    let a = a0;
+    if (a.length >= 3 && !isJ(nid)) { const up = a.filter(o => o.c === 'V'); if (up.length === 2 && up[0].d[0] * up[1].d[0] + up[0].d[1] * up[1].d[1] < -0.8) a = up; }
+    if (a.length !== 2 || isJ(nid) || a[0].c !== a[1].c || (a[0].c !== 'G' && a0.length < 3)) continue;
     const tA = [-a[0].d[0], -a[0].d[1]], tB = a[1].d, rA = [-tA[1], tA[0]], rB = [-tB[1], tB[0]], m = [rA[0] + rB[0], rA[1] + rB[1]], L = hyp(m[0], m[1]);
     if (L > 1e-6) {
       const ux = m[0] / L, uy = m[1] / L, cs = Math.max(0.5, ux * rA[0] + uy * rA[1]), M = [ux / cs, uy / cs];
@@ -1463,10 +1465,12 @@ function humps(ords, adj) {
   for (const r of R) { const P = [r.x - r.c * r.hl, r.y - r.s * r.hl, r.x + r.c * r.hl, r.y + r.s * r.hl]; OBS.add(P, 2, r.hw, 'st' + r.t.id); }
   // 線路のファイルの しらべ：道の id → [レールの上の高さ（いちばん高い）, 交わる点…]
   const want = new Map();
-  if (GR) for (const g of GR) if (g.k === 'sta' || g.k === 'ovp') { let w = want.get(g.road);   // ovp（t66）：斜め・都心の大きな道・線路と重なる道も 跨線橋に
-     if (!w) want.set(g.road, w = { h: -Infinity, pts: [] }); w.h = Math.max(w.h, g.h); w.pts.push([g.x, g.y]); }
+  if (GR) for (const g of GR) if (g.k === 'sta' || g.k === 'ovp') { let w = want.get(g.road);   // ovp（t66）：斜め・都心の道（t67）・線路と重なる道も 跨線橋に
+     if (!w) want.set(g.road, w = { h: -Infinity, pts: [], cbd: false, pass: [] }); w.h = Math.max(w.h, g.h); w.pts.push([g.x, g.y]); if (g.k === 'ovp' && g.cbd) w.cbd = true;
+     if (g.pass) for (const p of g.pass) if (!w.pass.some(q => q.e === p.e)) w.pass.push(p); }   // 交差点をこえる 跨線橋（都心。t67）
   if (!R.length && !want.size) return;
   const deg = nid => nid == null ? 0 : (adj.get(nid) || []).length;
+  const later = [];   // 交差点の むこうの道の 坂（t67）：あとで（その道に 自分の跨線橋が あれば 高いほう）
   for (const s of ords) {
     if (s.vir || s.pf || !s.bb) continue;
     const w = want.get(s.id); if (GR && !w) continue;   // しらべがあれば それだけ（駅舎は 道をよけて置かれている）
@@ -1494,14 +1498,29 @@ function humps(ords, adj) {
     if (w) { top = Math.max(w.h + 8.3 * U, gmax + 8.5 * U); HUMPC.set(s.id, top - gmax); }
     else top = gmax + (HUMPC.get(s.id) || (RL ? 9.3 : hall ? 13.5 : 9.3) * U);
     const Hc = (top - gmax) / U;
-    // 坂の長さ（7%）：はしの交差点から 0.8 マスは 地面のまま
-    const m0 = deg(s.n0) >= 3 ? 0.8 : 0.25, m1 = deg(s.n1) >= 3 ? 0.8 : 0.25, wantL = Hc / 0.07 * U;
-    const L0 = clamp(a - m0, 0.4, wantL), L1 = clamp(len - m1 - b, 0.4, wantL), s0 = a - L0, s1 = b + L1;
+    // 坂の長さ（7%）：はしの交差点から 0.8 マス（都心の跨線橋は 0.3 マス。t67）は 地面のまま
+    const mx = w && w.cbd ? 0.3 : 0.8, m0 = deg(s.n0) >= 3 ? mx : 0.25, m1 = deg(s.n1) >= 3 ? mx : 0.25, wantL = Hc / 0.07 * U;
+    let L0 = clamp(a - m0, 0.4, wantL), L1 = clamp(len - m1 - b, 0.4, wantL), s0 = a - L0, s1 = b + L1;
+    // 交差点をこえる 跨線橋（t67）：その側は 交差点まで 上のまま（坂は つづく道に）
+    const pass = w && w.pass ? w.pass : [];
+    for (const p of pass) {
+      if (p.e === 0) { a = 0; L0 = 1; s0 = -1; } else { b = len; L1 = 1; s1 = len + 1; }
+      const B = X.it && X.it.segs ? X.it.segs.get(p.s) : null; if (!B || B.pf || !(B.np >= 2)) continue;
+      const qB = qOf(B), lenB = qB.len, far = p.pe ? B.n0 : B.n1, mB = deg(far) >= 3 ? mx : 0.25, LB = clamp(lenB - mB, 0.4, wantL), pB = [0, 0, 0, 0];
+      const gB = sv => { ptAt(B.P, qB.L, B.np, sv, pB); return m3Surf(pB[0], pB[1]); };
+      const zB = sv => { const d = p.pe ? lenB - sv : sv; return d >= LB ? null : d <= 0 ? top : lerp(top, gB(sv), sst(d / LB)); };
+      later.push({ B, zB, gB });
+    }
     const g = sv => { ptAt(s.P, q.L, s.np, sv, pt); return m3Surf(pt[0], pt[1]); };
     const zf = sv => sv <= s0 || sv >= s1 ? null : sv < a ? lerp(g(sv), top, sst((sv - s0) / L0)) : sv > b ? lerp(top, g(sv), sst((sv - b) / L1)) : top;
     const cf = sv => { const z = zf(sv); return z != null && z - g(sv) > 4.5 * U ? 'V' : 'G'; };
     HUMP.set(s.id, { zf, cf });
     PROF.set(s.id, { zf });
+  }
+  for (const { B, zB, gB } of later) {   // 交差点の むこうの道（t67）
+    const old = HUMP.get(B.id), zf = old ? sv => { const p = old.zf(sv), q2 = zB(sv); return p == null ? q2 : q2 == null ? p : Math.max(p, q2); } : zB;
+    const cf = sv => { const z = zf(sv); return z != null && z - gB(sv) > 4.5 * U ? 'V' : 'G'; };
+    HUMP.set(B.id, { zf, cf }); PROF.set(B.id, { zf });
   }
 }
 // 高速と線路の交わり：高架の桁の下を レールの上から 6.5m あける（足りなければ そこを高く。高架の線路の上も こえる）
