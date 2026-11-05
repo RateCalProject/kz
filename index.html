@@ -1293,7 +1293,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=b298e3cb","zh-TW":"zh-TW.js?v=df453ee1","zh-CN":"zh-CN.js?v=cd81879d","ko":"ko.js?v=7b215688","ko-Hani":"ko-Hani.js?v=155f5e56"};
+  window.AX_LANGS = {"en":"en.js?v=85dc93bf","zh-TW":"zh-TW.js?v=0836c71b","zh-CN":"zh-CN.js?v=6f576279","ko":"ko.js?v=40cfb302","ko-Hani":"ko-Hani.js?v=dec15333"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -5917,7 +5917,7 @@ const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
 // 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
-const MAPV = '169';
+const MAPV = '170';
 const STAGE = 'Pre';   // 正式公開の前（Pre）。名前のよこと、バージョンの表記に出す。正式公開のときは '' にする
 document.querySelectorAll('.kz-stage').forEach(e => { e.textContent = STAGE; e.hidden = !STAGE; });
 const DBV = 110;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）

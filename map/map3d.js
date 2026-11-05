@@ -1486,7 +1486,7 @@ function m3Runs(v) {
   // えらんだ列車のしるし（黄色の、下向きの三角）と名前
   if (!M3.mark) { M3.mark = new T3.Mesh(new T3.ConeGeometry(0.5, 1, 4), new T3.MeshBasicMaterial({ color: '#ffc400' })); M3.mark.rotation.x = Math.PI; M3.sc.add(M3.mark); }
   if (selP) {
-    const z = Math.max(selP[3] * 1.3, 16 * ppx); M3.mark.scale.set(z, z * 1.4, z); M3.mark.position.set(selP[0], selP[1] + z * 1.3, selP[2]); M3.mark.visible = true;
+    const z = Math.max(selP[3] * 1.3, 16 * ppx); M3.mark.scale.set(z, z * 1.4, z); M3.mark.position.set(selP[0], selP[1] + z * 1.3, selP[2]); M3.mark.visible = !S.v3photo;   // フォトモードでは しるしを出さない
     const sl = list.find(o => runIsSel(o)); if (sl) M3.selLab = { x: selP[0], y: selP[2], h: selP[1] + z * 2.2, n: runName(sl.T) + ' → ' + runDest(sl.R, sl.T) };
   } else M3.mark.visible = false;
 }
@@ -1531,6 +1531,7 @@ function m3RunCars(o, md, it, sel) {
 }
 // 3D をタップ：いちばん近い列車・バス（画面で 26px まで）の情報
 function m3Tap(cx, cy) {
+  if (S.v3photo) return;   // フォトモード（t67）：タップしても なにも出さない
   if (S.v3edit) return m3EditTap(cx, cy);   // 小物を置く（t65）
   if (!S.layer.run || !M3.runHit || !M3.runHit.length) return;
   const r = M3.cv.getBoundingClientRect(), X = cx - r.left, Y = cy - r.top, v = new M3.T.Vector3();
@@ -1567,7 +1568,7 @@ function m3Labels() {
   const g = S.ctxr; if (!g) return;
   g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, S.cvr.width, S.cvr.height);
   const labs = M3.labs || [];
-  if (!labs.length && !M3.selLab) return;
+  if (S.v3photo || (!labs.length && !M3.selLab)) return;   // フォトモード（t67）：名前は 出さない
   g.setTransform(S.dpr, 0, 0, S.dpr, 0, 0);
   const v = new M3.T.Vector3(), cam = M3.cam, cx = cam.position.x, cz = cam.position.z, used = [];
   const at = l => { v.set(l.x, l.h, l.y).project(cam); if (v.z > 1 || v.z < -1 || v.x < -1.05 || v.x > 1.05 || v.y < -1.05 || v.y > 1.05) return null; return [(v.x + 1) / 2 * S.W, (1 - v.y) / 2 * S.H - 3]; };

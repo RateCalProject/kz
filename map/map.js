@@ -3229,6 +3229,10 @@ function wxMapOn() {
 const CSS = `
 .mp-wrap{position:relative;height:calc(100dvh - 210px);min-height:440px;border-radius:12px;overflow:hidden;background:#4680ba;touch-action:none;user-select:none;-webkit-user-select:none}
 .mp-wrap.mp-full{position:fixed;inset:0;height:auto;border-radius:0;z-index:25}
+.mp-wrap.mp-photo>*:not(.mp-cv3):not(.mp-photox){display:none!important}
+.mp-photox{position:absolute;right:10px;top:calc(10px + env(safe-area-inset-top));z-index:30;width:42px;height:42px;padding:0;border-radius:21px;border:1px solid rgba(255,255,255,.7);background:rgba(20,24,30,.45);color:#fff;font-size:18px;font-weight:700;transition:opacity .5s}
+.mp-photox.mp-dim{opacity:0}
+.mp-photox[hidden]{display:none}
 .mp-cv{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab}
 .mp-cvr{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none}
 .mp-cfg[hidden]{display:none}
@@ -3402,7 +3406,7 @@ function build(root) {
     <canvas class="mp-cv"></canvas><canvas class="mp-cvr"></canvas>
     <div class="mp-top">
       <div class="mp-topb"><select class="mp-as" title="だれの名前で"></select>
-      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-lay="track" title="非電化はオレンジ・単線はむらさきの点線">非電化・単線</button><button data-lay="run" title="列車・バスの走行位置">🚃 走行</button><button data-lay="wxmap" title="天気図（等圧線・高気圧と低気圧・雨と雪・気温）">🌤 天気図</button><button data-lay="jam" title="道路の混みぐあい（オレンジ 混雑・赤 渋滞・黒 通行止め）" hidden>🚗 渋滞</button><button data-lay="er" title="救急車（いま出ているもの）" hidden>🚑 救急</button><button data-lay="snowz" title="雪の地域（雪国・豪雪地帯・特別豪雪地帯。雪の対策の補助金）">❄ 雪の地域</button><button data-lay="elev" title="高低差（標高を色で。北西から光を当てた陰つき）">⛰ 高低差</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button><button data-v3 title="ななめから立体に見る">🗻 3D</button><button data-v3x hidden title="横に回す向きを反対にする（2本指でひねる・右ドラッグ）">⇄ 左右反転</button><button data-v3e hidden title="自分の土地に 自販機・ベンチ・植木などを置く">🧰 小物</button><button data-v3u hidden title="地面と建物をすかして、トンネル・地下駅・地下街を見る">⛏ 地下</button></div>
+      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-lay="track" title="非電化はオレンジ・単線はむらさきの点線">非電化・単線</button><button data-lay="run" title="列車・バスの走行位置">🚃 走行</button><button data-lay="wxmap" title="天気図（等圧線・高気圧と低気圧・雨と雪・気温）">🌤 天気図</button><button data-lay="jam" title="道路の混みぐあい（オレンジ 混雑・赤 渋滞・黒 通行止め）" hidden>🚗 渋滞</button><button data-lay="er" title="救急車（いま出ているもの）" hidden>🚑 救急</button><button data-lay="snowz" title="雪の地域（雪国・豪雪地帯・特別豪雪地帯。雪の対策の補助金）">❄ 雪の地域</button><button data-lay="elev" title="高低差（標高を色で。北西から光を当てた陰つき）">⛰ 高低差</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button><button data-v3 title="ななめから立体に見る">🗻 3D</button><button data-v3x hidden title="横に回す向きを反対にする（2本指でひねる・右ドラッグ）">⇄ 左右反転</button><button data-v3e hidden title="自分の土地に 自販機・ベンチ・植木などを置く">🧰 小物</button><button data-v3u hidden title="地面と建物をすかして、トンネル・地下駅・地下街を見る">⛏ 地下</button><button data-v3p hidden title="名前・ボタンを ぜんぶ消して 3D の写真を撮る（✕ で もどる）">📷 フォト</button></div>
       <span class="mp-addr" translate="no" hidden></span>
     </div>
     <div class="mp-zoom"><button data-find title="さがす">🔍</button><button data-full title="大きく">⤢</button><button data-zin>＋</button><button data-zout>－</button><button data-home title="瑠璃市役所">⌂</button><button data-opt title="地図の設定">⚙</button></div>
@@ -3429,6 +3433,7 @@ function build(root) {
     <div class="mp-hint" hidden></div>
     <div class="mp-eleg" hidden></div>
     <button class="mp-wx" hidden title="天気"></button>
+    <button class="mp-photox" hidden title="フォトモードを おわる">✕</button>
     <div class="mp-wxbar" hidden>
       <div class="mp-wxr"><b data-wxtime></b><span class="mp-seg"><button data-wxm="rain">雨・雪</button><button data-wxm="temp">気温</button></span><button class="mp-wxpl" data-wxplay title="うごかす（1時間ずつ）">▶</button></div>
       <div class="mp-wxr mp-wxo">${WX_OFFS.map(h => `<button data-wxo="${h}">${h ? `${h}時間後` : 'いま'}</button>`).join('')}</div>
@@ -3491,7 +3496,22 @@ function build(root) {
     const v3u = S.wrap.querySelector('[data-v3u]');   // 地下ビュー（DB の更新109）：地面と建物をすかして、トンネル・地下駅・地下街を見る
     const u3 = on => { S.v3u = !!on; v3u.classList.toggle('on', S.v3u); if (window.m3Ug) window.m3Ug(S.v3u); if (S.v3u) { hint('地下：地面と建物をすかして、トンネル・地下駅・地下街を見ます（もう一度おすと もどります）'); setTimeout(() => hint(''), 4000); } };
     v3u.onclick = () => u3(!S.v3u);
-    v3.onclick = async () => { if (S.v3) { u3(false); m3Close(); } else await m3Open(); v3.classList.toggle('on', !!S.v3); b25.hidden = !!S.v3; v3x.hidden = !S.v3; v3e.hidden = !S.v3 || !lookOn(); v3u.hidden = !S.v3; if (!S.v3) e3(false); optSync(); }; }
+    // フォトモード（t67）：3D の名前・ボタン・天気などを ぜんぶ消して 写真を撮る。画面いっぱいに。右上の ✕ は 2.5秒で消えて、さわると また出る（1回目は 出すだけ）
+    const v3p = S.wrap.querySelector('[data-v3p]'), px = S.wrap.querySelector('.mp-photox');
+    let pFull = false, pT = 0;
+    const pDim = () => { clearTimeout(pT); px.classList.remove('mp-dim'); pT = setTimeout(() => px.classList.add('mp-dim'), 2500); };
+    const p3 = on => {
+      if (!!on === !!S.v3photo) return;
+      S.v3photo = !!on;
+      if (S.v3photo) { pFull = S.wrap.classList.contains('mp-full'); S.wrap.classList.add('mp-full', 'mp-photo'); px.hidden = false; pDim(); }
+      else { S.wrap.classList.remove('mp-photo'); if (!pFull) S.wrap.classList.remove('mp-full'); px.hidden = true; px.classList.remove('mp-dim'); clearTimeout(pT); }
+      resize(); S.dirty = true; if (S.v3) S.v3.dirty = true;
+    };
+    S.photoOff = () => p3(false);
+    v3p.onclick = () => p3(true);
+    S.wrap.addEventListener('pointerdown', () => { if (!S.v3photo) return; px._dim = px.classList.contains('mp-dim'); pDim(); }, true);
+    px.onclick = ev => { ev.stopPropagation(); if (px._dim) { px._dim = false; return; } p3(false); };
+    v3.onclick = async () => { if (S.v3) { u3(false); p3(false); m3Close(); } else await m3Open(); v3.classList.toggle('on', !!S.v3); b25.hidden = !!S.v3; v3x.hidden = !S.v3; v3e.hidden = !S.v3 || !lookOn(); v3u.hidden = !S.v3; v3p.hidden = !S.v3; if (!S.v3) e3(false); optSync(); }; }
   S.wrap.querySelector('[data-full]').onclick = () => { S.wrap.classList.toggle('mp-full'); resize(); };
   S.wrap.querySelector('[data-find]').onclick = () => openFind();   // さがす（t59）
   S.wrap.querySelector('.mp-wx').onclick = () => { const [x, y] = wxCenter(); openWx(x, y); };   // 天気（t62）
@@ -8553,7 +8573,7 @@ async function open(root) {
   clearInterval(S.pollT); S.pollT = setInterval(poll, 15000);
 }
 function resume() { if (!S.wrap) return; S.open = true; S.dirty = true; resize(); requestAnimationFrame(frame); clearInterval(S.pollT); S.pollT = setInterval(poll, 15000); }
-function pause() { if (!S.open) return; S.open = false; clearInterval(S.pollT); if (S.wrap) S.wrap.classList.remove('mp-full'); }
+function pause() { if (!S.open) return; S.open = false; clearInterval(S.pollT); if (S.photoOff) S.photoOff(); if (S.wrap) S.wrap.classList.remove('mp-full'); }
 
 /* ---------- 建物（t50）：プリセット・形・階数・部屋（入居募集・テナント募集・自分で使う） ---------- */
 // 色：[屋根, 南の壁, 東の壁]
