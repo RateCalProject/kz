@@ -20521,6 +20521,7 @@ begin
     mk := _mp_maker_order(p_maker, pa.pu, pa.pc, array_fill(p_type, array[p_n]), p_dry);
     cost := (mk ->> 'cost')::bigint; hrs := (mk ->> 'hours')::int;
   end if;
+  if _is_admin(u) then hrs := 0; end if;   -- 管理者の車両は すぐ納車（DB の更新110）
   if p_dry then
     return jsonb_build_object('cost', cost, 'nums', (select jsonb_agg(_mp_carnum(t, t.num_from + s + i)) from generate_series(0, p_n - 1) i), 'hours', hrs, 'upkeep', t.upkeep * p_n,
                               'maker', mk ->> 'maker', 'self', mk -> 'self', 'steel', mk -> 'steel');
@@ -26509,6 +26510,7 @@ begin
     mk := _mp_maker_order(p_maker, pa.pu, pa.pc, p_types, p_dry);
     cost := (mk ->> 'cost')::bigint; hrs := (mk ->> 'hours')::int;
   end if;
+  if _is_admin(u) then hrs := 0; end if;   -- 管理者の車両は すぐ納車（DB の更新110）
   if p_dry then return jsonb_build_object('cost', cost, 'nums', to_jsonb(nums), 'hours', hrs, 'upkeep', up, 'n', nc, 'maker', mk ->> 'maker', 'self', mk -> 'self', 'steel', mk -> 'steel'); end if;
   if p_maker is null then perform _mp_pay(pa.pu, pa.pc, pa.gv, cost, 'car', format('編成「%s」（%s両）を注文', nm, nc)); end if;
   insert into mp_forms(name, own_u, own_c, depot) values (nm, pa.pu, pa.pc, p_depot) returning id into fid;

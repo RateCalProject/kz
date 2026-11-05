@@ -6383,7 +6383,7 @@ async function openCars(depFocus) {
         const t = q('[data-lsel]').value, n = Math.round(Number(hw(q('[data-ln]').value)) || 1);
         if (n < 1 || n > 20) return toast('両数は1〜20です');
         const r = await api('mp_car_order', { p_type: t, p_n: n, p_depot: st.dep, p_as: S.as, p_dry: true, p_maker: maker() }); if (!r) return;
-        if (!confirm(T(`${r.nums.join('・')}\n${fmt(r.cost)} X（維持費 1日 ${fmt(r.upkeep)} X）。${r.hours}時間で納車。とどいたら入れ替え枠に入ります`) + mkLine(r))) return;
+        if (!confirm(T(`${r.nums.join('・')}\n${fmt(r.cost)} X（維持費 1日 ${fmt(r.upkeep)} X）。${r.hours ? r.hours + '時間で納車' : 'すぐ納車'}。とどいたら入れ替え枠に入ります`) + mkLine(r))) return;
         if (await api('mp_car_order', { p_type: t, p_n: n, p_depot: st.dep, p_as: S.as, p_dry: false, p_maker: maker() }, '注文しました')) load();
       };
       b.querySelectorAll('[data-att]').forEach(x => x.onclick = () => { const id = Number(x.dataset.att); st.att = st.att === id ? null : id; st.attL = null; draw(); });
@@ -6465,14 +6465,14 @@ async function openCars(depFocus) {
         if (sets < 1 || sets > 20) return toast('本数は1〜20です');
         if (sets > 1) {
           const r = await api('mp_form_order_many', { p_types: st.seq, p_name: no, p_sets: sets, p_depot: st.dep, p_as: S.as, p_dry: true, p_maker: maker() }); if (!r) return;
-          if (!confirm(T(`${r.n}両編成を ${sets}本（${r.n_all}両）：${r.names.join('・')}\n${fmt(r.cost_all)} X（維持費 1日 ${fmt(r.upkeep_all)} X）。${r.hours}時間で納車`) + mkLine(r)
+          if (!confirm(T(`${r.n}両編成を ${sets}本（${r.n_all}両）：${r.names.join('・')}\n${fmt(r.cost_all)} X（維持費 1日 ${fmt(r.upkeep_all)} X）。${r.hours ? r.hours + '時間で納車' : 'すぐ納車'}`) + mkLine(r)
                        + (maker() ? '\n' + T('工場では1本ずつ順につくるので、あとの編成ほど納車がおそくなることがあります') : ''))) return;
           const x = await api('mp_form_order_many', { p_types: st.seq, p_name: no, p_sets: sets, p_depot: st.dep, p_as: S.as, p_dry: false, p_maker: maker() });
           if (x) { toast(T(`${x.sets}本を注文しました（${x.names[0]}〜${x.names[x.names.length - 1]}）`)); st.seq = []; st.fno = ''; load(); }
           return;
         }
         const r = await api('mp_form_order', { p_types: st.seq, p_name: no, p_depot: st.dep, p_as: S.as, p_dry: true, p_maker: maker() }); if (!r) return;
-        if (!confirm(T(`編成「${no}」${r.n}両：${r.nums.join('・')}\n${fmt(r.cost)} X（維持費 1日 ${fmt(r.upkeep)} X）。${r.hours}時間で納車`) + mkLine(r))) return;
+        if (!confirm(T(`編成「${no}」${r.n}両：${r.nums.join('・')}\n${fmt(r.cost)} X（維持費 1日 ${fmt(r.upkeep)} X）。${r.hours ? r.hours + '時間で納車' : 'すぐ納車'}`) + mkLine(r))) return;
         if (await api('mp_form_order', { p_types: st.seq, p_name: no, p_depot: st.dep, p_as: S.as, p_dry: false, p_maker: maker() }, '注文しました')) { st.seq = []; st.fno = ''; load(); }
       };
       b.querySelectorAll('[data-give]').forEach(x => x.onclick = () => giveForm(d.forms.find(f => f.id === Number(x.dataset.give)), load));
@@ -6482,7 +6482,7 @@ async function openCars(depFocus) {
       q('[data-order]').onclick = async () => {
         const t = q('[data-type]').value, n = Number(q('[data-n]').value) || 1;
         const r = await api('mp_car_order', { p_type: t, p_n: n, p_depot: st.dep, p_as: S.as, p_dry: true, p_maker: maker() }); if (!r) return;
-        if (!confirm(T(`${r.nums.join('・')}\n${fmt(r.cost)} X（維持費 1日 ${fmt(r.upkeep)} X）。${r.hours}時間で納車`) + mkLine(r))) return;
+        if (!confirm(T(`${r.nums.join('・')}\n${fmt(r.cost)} X（維持費 1日 ${fmt(r.upkeep)} X）。${r.hours ? r.hours + '時間で納車' : 'すぐ納車'}`) + mkLine(r))) return;
         if (await api('mp_car_order', { p_type: t, p_n: n, p_depot: st.dep, p_as: S.as, p_dry: false, p_maker: maker() }, '注文しました')) load();
       };
     });

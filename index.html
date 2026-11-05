@@ -5917,10 +5917,10 @@ const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
 // 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
-const MAPV = '167';
+const MAPV = '168';
 const STAGE = 'Pre';   // 正式公開の前（Pre）。名前のよこと、バージョンの表記に出す。正式公開のときは '' にする
 document.querySelectorAll('.kz-stage').forEach(e => { e.textContent = STAGE; e.hidden = !STAGE; });
-const DBV = 109;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）
+const DBV = 110;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）
 { const e = document.getElementById('verLogin'); if (e) e.textContent = 'v' + MAPV + (STAGE ? ' ' + STAGE : ''); }   // バージョン表記（ログインの画面）
 // バージョン表記（設定 → プロフィール）：画面の版・サーバーに入っている DB の更新の番号。管理者には、サーバーの更新がまだのとき知らせる
 async function verShow() {
