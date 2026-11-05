@@ -13,6 +13,7 @@ const M3_FH = 3.4;          // 1階の高さ（m）
 const M3_U = 1 / 50;        // 1m → マス
 const M3_VEX = 1.15;        // 地形の高さを少しだけ大きく（見やすく）
 const M3_LIFT = 0.02;       // 道路・線路の帯は、地面から 1m 上
+const M3_DMIN = 1.2;        // いちばん近づいたときの カメラまでの遠さ（マス。60m。道路の白線が見えるように t64b。前は 4）
 // 標高は とびとびの段（100m まで 4m・500m まで 25m・その上 150m ごと）。段の半分（m）：ならした地形も、もとの段の中に（t64）
 //   500m より上（山）は 段が大きく、段の中にとめると 段々が出るので、とめない（ならしたまま）
 const m3Half = e => e <= 100 ? 2 : e <= 500 ? 12.5 : Infinity;
@@ -113,6 +114,7 @@ function m3Close() {
   if (M3.mark) { M3.mark.geometry.dispose(); M3.mark.material.dispose(); M3.mark = null; }
   M3.runHit = []; M3.selLab = null;
   M3.glide = null; M3.labs = []; if (clearRunLayer) clearRunLayer();
+  clearTimeout(M3.sigT); M3.sig = null;
   M3.r.dispose(); M3.cv.remove();
   M3.on = false; S.v3 = null; S.v3rect = null; S.wrap.classList.remove('mp-3d');
   saveCam(); S.dirty = true;
@@ -150,7 +152,9 @@ function m3Rects() {
   const RF = LO.off ? Math.min(R, 700) : Math.min(R, q('rf3', lv));
   const RL = q('rl3', lv) > 0 && !LITE.off ? Math.min(q('rl3', lv), Math.max(R, RB)) : 0;
   const sq = r => ({ x0: M3.tx - r, y0: M3.ty - r, x1: M3.tx + r, y1: M3.ty + r });
-  return { big: sq(LO.off ? RF : R), full: sq(RF), near: sq(RB), lite: RL ? sq(RL) : null, R: LO.off ? RF : R, RF, RB, RL };
+  // 建物・道路のはんい（t64b）：まん中を G マスごとの目にそろえる（少し動かすたびに作りなおさないように。G/2 だけ広く）
+  const G = Math.max(4, Math.round(RB / 5)), qx = Math.round(M3.tx / G) * G, qy = Math.round(M3.ty / G) * G, rq = RB + G / 2;
+  return { big: sq(LO.off ? RF : R), full: sq(RF), near: { x0: qx - rq, y0: qy - rq, x1: qx + rq, y1: qy + rq, cx: qx, cy: qy }, lite: RL ? sq(RL) : null, R: LO.off ? RF : R, RF, RB, RL };
 }
 function m3Frame() {
   if (!M3.on) return;
@@ -164,9 +168,10 @@ function m3Frame() {
   S.v3rect = rc.near; S.cam.z = nearOn ? 8 : 3; needCells();
   if (rc.lite) liteNeed(rc.lite, 80);   // 遠くの建物（t63）
   m3Terrain(rc);
-  m3Blds(rc.near);
+  M3.nearQ = rc.near; m3Blds(rc.near);
   try { m3Lite(rc, nearOn); } catch (e) { console.error(e); }
   try { m3Runs(rc.near); } catch (e) { console.error(e); }   // 列車・バス（t61）
+  m3SigTick();   // 信号の灯（t64b）
   m3Cam();
   M3.r.render(M3.sc, M3.cam);
   m3Labels();   // 建物の名前（t61）
@@ -214,7 +219,7 @@ function m3Terrain(rc) {
     const nr = rc.near; if (t.cx * CS <= nr.x1 + 1 && t.cx * CS + CS >= nr.x0 - 1 && t.cy * CS <= nr.y1 + 1 && t.cy * CS + CS >= nr.y0 - 1) M3.tgN++;
   }
   if (n < todo.length) M3.dirty = true;
-  for (const [k, o] of M3.cm) if (!keep.has(k)) { M3.grpT.remove(o.mesh); o.mesh.geometry.dispose(); M3.cm.delete(k); }
+  for (const [k, o] of M3.cm) if (!keep.has(k)) { M3.grpT.remove(o.mesh); o.mesh.geometry.dispose(); M3.cm.delete(k); M3.tg++; }
 }
 const M3_TMAT = { m: null };
 // 海ぞいか（陸のタイルの となりに 海 D・S がある）。チャンクに おぼえる（となりのチャンクを読んだら はかりなおす）（t64）
@@ -340,8 +345,12 @@ const loH = t => (t.t === 'D' || t.t === 'S') ? 0 : Math.max(0.02, t.e) * M3_U *
 function m3H(x, y) { const t = tileAt(Math.floor(x), Math.floor(y)); if (t) return (t.t === 'D' || t.t === 'S') ? 0 : Math.max(0, t.e) * M3_U * M3_VEX; const l = loAt(Math.floor(x / 4), Math.floor(y / 4)); return l ? loH(l) : 0; }
 // 描いている地形の面の高さ（3D の座標。t64）：地形の網と同じ三角で。建物・道路・線路・駅・列車は、みんな これの上に
 //   網は、チャンクの (x + 0.5, y + 0.5) から st マスごとの点。四角を (左上・左下・右上) と (右上・左下・右下) の三角に。網がまだないところは タイルの高さ
+const M3_SURF = { cx: null, cy: null, o: null, cm: null, tg: -1 };   // さいごに見たチャンク（同じチャンクがつづくので）
 function m3Surf(x, y) {
-  const cx = Math.floor((x - 0.5) / CS), cy = Math.floor((y - 0.5) / CS), o = M3.cm && M3.cm.get(ckey(cx, cy));
+  const cx = Math.floor((x - 0.5) / CS), cy = Math.floor((y - 0.5) / CS), L = M3_SURF;
+  let o;
+  if (L.cx === cx && L.cy === cy && L.cm === M3.cm && L.tg === M3.tg) o = L.o;   // 網を作りなおす（消す）と M3.tg が かわる
+  else { o = M3.cm && M3.cm.get(ckey(cx, cy)); L.cx = cx; L.cy = cy; L.o = o; L.cm = M3.cm; L.tg = M3.tg; }
   if (!o || !o.H) return m3H(x, y);
   const st = o.st, n = o.mode === 'l' ? 17 : CS / st + 1, u = (x - 0.5 - cx * CS) / st, v = (y - 0.5 - cy * CS) / st;
   const i = Math.max(0, Math.min(n - 2, Math.floor(u))), j = Math.max(0, Math.min(n - 2, Math.floor(v))), fu = u - i, fv = v - j, H = o.H;
@@ -433,6 +442,351 @@ function m3LiteMesh(T3, items, minF, excl, cap) {
   return new T3.Mesh(geo, M3_LMAT.m);
 }
 
+/* ---------- 道路（t64b）：路面（アスファルト・車線の白線）・歩道と縁石・交差点（横断歩道・停止線）・ガードレール・街灯・信号 ----------
+   断面は 道路の種類と車線の数から（はばは DB の w。歩道は片がわ 2.75〜4m）。路面の模様は 断面ごとに1枚の絵を、道にそって くりかえす
+   左側通行：線の向き（はじめ→おわり）の「+横」（n = (−dy, dx)）は 進む向きの右。交差点へ入ってくる車は、外向き d の +横 がわ */
+const M3_CURB = 0.15 * M3_U;     // 縁石の高さ（15cm）
+const M3_MARK = 0.03 * M3_U;     // 横断歩道・停止線は 路面より 3cm 上
+// 道路の断面（m）：W 全体・cw 車道・sw 歩道（片がわ）・ln 片がわの車線の数・lw 車線のはば・ctr 中央線（wd 白の破線・w2 白の二重・y2 黄の二重）・P 模様のくりかえし（m）・dash 破線の長さ（m）
+function m3RoadProf(s) {
+  const W = Math.max(6, (s.w || 0.2) * 50), ln = Math.max(0, s.l || 0), c = s.c || 'city';
+  if (c === 'exp') { const n = Math.max(1, ln); return { key: 'e' + n + ':' + Math.round(W), W, cw: W, sw: 0, ln: n, lw: 3.5, med: 3, exp: true, P: 20, dash: 8 }; }
+  if (ln === 0 || c === 'lane') return { key: 'l:' + Math.round(W), W, cw: W, sw: 0, ln: 0, lw: 0, alley: true, P: 10, dash: 0 };
+  const sw = ln === 1 ? 2.75 : ln === 2 ? 3.5 : 4, cw = Math.max(5, W - 2 * sw), yel = (c === 'nat' || c === 'pref') && ln >= 2;
+  return { key: (yel ? 'y' : 'g') + ln + ':' + Math.round(cw * 2), W, cw, sw, ln, lw: Math.min(3.25, (cw - 1) / (2 * ln)), ctr: ln >= 2 ? (yel ? 'y2' : 'w2') : 'wd', P: 10, dash: 5 };
+}
+// 路面の絵（横：車道のはば・たて：くりかえしの長さ P）。断面ごとに1枚（つくった絵は おぼえておく）
+const M3_RTEX = new Map();
+function m3RoadTex(T3, p, far) {
+  const key = p.key + (far ? ':f' : ''); let t = M3_RTEX.get(key); if (t) return t;
+  const c = document.createElement('canvas'); c.width = 512; c.height = 256; const g = c.getContext('2d');
+  const o0 = far ? p.sw : 0, ww = far ? p.W : p.cw, X = m => (m + o0) / ww * 512, Y = m => m / p.P * 256;   // 遠いとき：歩道も絵に（横は 全体のはば）
+  if (far && p.sw > 0) { g.fillStyle = '#bdb8ad'; g.fillRect(0, 0, 512, 256); }
+  g.fillStyle = p.alley ? '#6a6c6f' : p.exp ? '#4b4e52' : '#56595d'; g.fillRect(X(0), 0, X(p.cw) - X(0), 256);
+  let r = 12345; const rnd = () => (r = (r * 16807) % 2147483647) / 2147483647;   // アスファルトの つぶつぶ（いつも同じ）
+  for (let i = 0; i < 3800; i++) { g.fillStyle = rnd() < 0.5 ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.09)'; g.fillRect(X(0) + rnd() * (X(p.cw) - X(0)), rnd() * 256, 1 + rnd() * 2, 1 + rnd() * 2); }
+  const line = (x, w, col, dash) => { g.fillStyle = col; const a = X(x - w / 2), b = Math.max(1.5, X(w)); g.fillRect(a, 0, b, dash ? Y(dash) : 256); };
+  const W1 = 'rgba(244,244,240,.95)', Y1 = 'rgba(236,184,52,.95)', cx = p.cw / 2;
+  if (p.alley) { line(0.6, 0.15, W1); line(p.cw - 0.6, 0.15, W1); }   // 路側帯の線
+  else if (p.exp) {
+    g.fillStyle = '#8b8d8a'; g.fillRect(X(cx - p.med / 2), 0, X(p.med), 256);   // 中央分離帯
+    for (const sd of [-1, 1]) {
+      const i0 = cx + sd * (p.med / 2 + 0.75);
+      line(i0, 0.15, W1);   // 内がわの線
+      for (let k = 1; k < p.ln; k++) line(i0 + sd * k * p.lw, 0.15, W1, p.dash);   // 車線の境（8m の線・12m あける）
+      line(i0 + sd * p.ln * p.lw, 0.2, W1);   // 外がわの線
+    }
+  } else {
+    if (p.ctr === 'wd') line(cx, 0.15, W1, p.dash);   // 中央線：片がわ1車線は 白の破線
+    else { const cc = p.ctr === 'y2' ? Y1 : W1; line(cx - 0.2, 0.15, cc); line(cx + 0.2, 0.15, cc); }   // 片がわ2車線以上：二重の線（国道・県道は黄色）
+    for (const sd of [-1, 1]) {
+      for (let k = 1; k < p.ln; k++) line(cx + sd * k * p.lw, 0.15, W1, p.dash);   // 車線の境（5m の線・5m あける）
+      const e = cx + sd * p.ln * p.lw; if (Math.abs(e - cx) < cx - 0.3) line(e, 0.15, W1);   // 外がわの線（路肩とのさかい）
+    }
+  }
+  t = new T3.CanvasTexture(c); t.wrapS = T3.ClampToEdgeWrapping; t.wrapT = T3.RepeatWrapping;
+  t.anisotropy = Math.min(8, M3.r && M3.r.capabilities.getMaxAnisotropy ? M3.r.capabilities.getMaxAnisotropy() : 4);
+  M3_RTEX.set(key, t); return t;
+}
+const M3_SW = [0.74, 0.72, 0.68], M3_CURBC = [0.84, 0.84, 0.82], M3_ASPH = [0.335, 0.347, 0.362], M3_EMB = [0.50, 0.47, 0.42], M3_PIER = [0.56, 0.56, 0.57];
+const M3_WHITE = [0.95, 0.95, 0.93], M3_RAIL = [0.86, 0.87, 0.87], M3_CONC = [0.72, 0.72, 0.70], M3_WALL = [0.62, 0.70, 0.74];
+// 道路をつくる（t64b）。segs：近くの道路の線。M3.grpR に足す。道のまわりの物（街灯・信号）は 近いときだけ（M3.d < 60）
+function m3Roads(T3, segs) {
+  const tR0 = performance.now();   // かかった時間（たしかめる用）
+  // 遠さで出すもの：縁石（d < 12）・街灯と信号（d < 30。まん中から RO マスまで）・歩道（d < 40。遠いと路面の絵に）・横断歩道と停止線（d < 80）・ガードレールと分離帯（d < 150）
+  const props = M3.d < 30, curbs = M3.d < 12, marks = M3.d < 80, wide = M3.d < 150, nr = M3.nearQ || { cx: M3.tx, cy: M3.ty };
+  const RO = Math.max(12, M3.d * 1.2), pnear = (x, y) => Math.abs(x - nr.cx) < RO && Math.abs(y - nr.cy) < RO;
+  const far = M3.d >= 40;   // 遠い：歩道は路面の絵に（帯は全体のはばを1枚）
+  const T = new Map(), CP = [], CC = [], MP = [], MC = [], LIGHT = [], SIG = [];
+  const q4 = (P, C, a, b, c, d, col) => { P.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2], a[0], a[1], a[2], c[0], c[1], c[2], d[0], d[1], d[2]); for (let k = 0; k < 6; k++) C.push(col[0], col[1], col[2]); };
+  const quad = (a, b, c, d, col) => q4(CP, CC, a, b, c, d, col), mark = (a, b, c, d, col) => q4(MP, MC, a, b, c, d, col);
+  const tri = (a, b, c, col) => { CP.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]); for (let k = 0; k < 3; k++) CC.push(col[0], col[1], col[2]); };
+  const lenOf = s => s.L ? s.L[s.np - 1] : (s._len != null ? s._len : (s._len = (() => { let a = 0; for (let i = 0; i < s.np - 1; i++) a += Math.hypot(s.P[2 * i + 2] - s.P[2 * i], s.P[2 * i + 3] - s.P[2 * i + 1]); return a; })()));
+  const codeAt = (s, sv) => s.pf && s.L && s.st ? (s.st[Math.min(s.st.length - 1, Math.max(0, Math.round(sv)))] || 'G') : 'G';
+  // 断面の高さ：点 (x, y)・線の上の sv・横向き (ux, uy)・つくり c・車道の半分 a・全体の半分 b（マス）
+  //   → [車道の+横, 車道の−横, 歩道の外の+横, 歩道の外の−横, 地面（+横の外）, 地面（−横の外）, 地面（まん中）]
+  const sect = (s, x, y, sv, ux, uy, c, a, b) => {
+    const z = s.pf && s.L ? pfZ(s.pf, sv) * M3_U * M3_VEX : null, up = c === 'V' || c === 'B';
+    const at = o => { const g = m3Surf(x + ux * o, y + uy * o); return [(up ? z : z == null ? g : Math.max(z, g)) + M3_LIFT, g]; };
+    const L = at(a), R = at(-a), gC = m3Surf(x, y);
+    if (b <= a + 1e-6) return [L[0], R[0], L[0], R[0], L[1], R[1], gC];
+    const LO = at(b), RO = at(-b), cl = L[0] + M3_CURB, cr = R[0] + M3_CURB;
+    return [L[0], R[0], up ? cl : Math.max(cl, LO[0]), up ? cr : Math.max(cr, RO[0]), LO[1], RO[1], gC];
+  };
+  // 線ごとの横向き（点ごと。長さ1・曲がりで少し長く）・線の上の点
+  const normals = s => {
+    if (s._U) return s._U;
+    const P = s.P, n = s.np, U = new Float32Array(2 * n), dir = k => { const dx = P[2 * k + 2] - P[2 * k], dy = P[2 * k + 3] - P[2 * k + 1], L = Math.hypot(dx, dy); return L < 1e-6 ? null : [-dy / L, dx / L]; };
+    for (let i = 0; i < n; i++) {
+      const a = i > 0 ? dir(i - 1) : null, b = i < n - 1 ? dir(i) : null, u = a && b ? [a[0] + b[0], a[1] + b[1]] : (a || b); if (!u) continue;
+      const L = Math.hypot(u[0], u[1]); if (L < 1e-6) { const v = b || a; U[2 * i] = v[0]; U[2 * i + 1] = v[1]; continue; }
+      const ux = u[0] / L, uy = u[1] / L, v = b || a, cs = Math.max(0.5, ux * v[0] + uy * v[1]); U[2 * i] = ux / cs; U[2 * i + 1] = uy / cs;
+    }
+    return (s._U = U);
+  };
+  const segAt = (s, sv) => {   // 線の上の sv（マス）の点と横向き
+    const P = s.P, n = s.np, U = normals(s); let acc = 0;
+    for (let i = 0; i < n - 1; i++) {
+      const D = Math.hypot(P[2 * i + 2] - P[2 * i], P[2 * i + 3] - P[2 * i + 1]);
+      if (acc + D >= sv || i === n - 2) { const t = D > 1e-9 ? Math.max(0, Math.min(1, (sv - acc) / D)) : 0;
+        return { x: P[2 * i] + (P[2 * i + 2] - P[2 * i]) * t, y: P[2 * i + 1] + (P[2 * i + 3] - P[2 * i + 1]) * t, ux: U[2 * i] + (U[2 * i + 2] - U[2 * i]) * t, uy: U[2 * i + 1] + (U[2 * i + 3] - U[2 * i + 1]) * t }; }
+      acc += D;
+    }
+    return { x: P[0], y: P[1], ux: U[0], uy: U[1] };
+  };
+  // 線のはし（交差点・つぎめ）
+  const ends = new Map();
+  for (const s of segs) {
+    if (s.np < 2) continue;
+    s._prof = m3RoadProf(s); s._U = null;
+    for (const e of [0, 1]) {
+      const nid = e ? s.n1 : s.n0; if (nid == null) continue;
+      const P = s.P, n = s.np, i0 = e ? n - 1 : 0; let j = e ? n - 2 : 1;
+      while (j > 0 && j < n - 1 && Math.hypot(P[2 * j] - P[2 * i0], P[2 * j + 1] - P[2 * i0 + 1]) < 0.05) j += e ? -1 : 1;
+      const dx = P[2 * j] - P[2 * i0], dy = P[2 * j + 1] - P[2 * i0 + 1], L = Math.hypot(dx, dy); if (L < 1e-6) continue;
+      let a = ends.get(nid); if (!a) ends.set(nid, a = []);
+      a.push({ s, e, d: [dx / L, dy / L], x: P[2 * i0], y: P[2 * i0 + 1], c: codeAt(s, e ? lenOf(s) : 0), p: s._prof });
+    }
+  }
+  const trim = new Map(), INT = [];
+  for (const a of ends.values()) {
+    if (a.length === 2 && a[0].c === 'G' && a[1].c === 'G') {   // つぎめ：となりの線と横向きを そろえる（すきまが出ないように）
+      const tA = [-a[0].d[0], -a[0].d[1]], tB = a[1].d, rA = [-tA[1], tA[0]], rB = [-tB[1], tB[0]], m = [rA[0] + rB[0], rA[1] + rB[1]], L = Math.hypot(m[0], m[1]);
+      if (L > 1e-6) {
+        const ux = m[0] / L, uy = m[1] / L, cs = Math.max(0.5, ux * rA[0] + uy * rA[1]), M = [ux / cs, uy / cs];
+        for (const [o, f] of [[a[0], a[0].e ? 1 : -1], [a[1], a[1].e ? -1 : 1]]) { const U = normals(o.s), i = o.e ? o.s.np - 1 : 0; U[2 * i] = M[0] * f; U[2 * i + 1] = M[1] * f; }
+      }
+      continue;
+    }
+    if (a.length < 3 || a.some(o => o.c !== 'G' || o.p.exp)) continue;   // 交差点：3本以上の地面の道（高速・高架・トンネルはのぞく）
+    a.forEach(o => { o.ang = Math.atan2(o.d[1], o.d[0]); }); a.sort((p, q) => p.ang - q.ang);
+    for (const o of a) {
+      let r = o.p.W / 100;
+      for (const q of a) {
+        if (q === o) continue;
+        const sn = Math.abs(o.d[0] * q.d[1] - o.d[1] * q.d[0]), cs = Math.abs(o.d[0] * q.d[0] + o.d[1] * q.d[1]);
+        if (sn < 0.25) continue;   // ほぼ まっすぐ つづく線
+        r = Math.max(r, (q.p.W / 100 + o.p.W / 100 * cs) / sn);
+      }
+      o.r = Math.min(r + 0.5 / 50, lenOf(o.s) * 0.45);
+      const t = trim.get(o.s) || [0, 0]; t[o.e] = o.r; trim.set(o.s, t);
+    }
+    INT.push(a);
+  }
+  // 高速と ほかの道路が 同じ高さで交わるところ（高速の s と、相手の はばの半分）：防音壁・ガードレール・分離帯を切る
+  const xing = new Map();
+  for (const e of segs) {
+    if (e.c !== 'exp' || e.np < 2 || e.pf) continue;
+    const list = [];
+    for (const o of segs) {
+      if (o === e || o.c === 'exp' || o.pf || o.bb[2] < e.bb[0] - 0.5 || o.bb[0] > e.bb[2] + 0.5 || o.bb[3] < e.bb[1] - 0.5 || o.bb[1] > e.bb[3] + 0.5) continue;
+      let acc = 0;
+      for (let i = 0; i < e.np - 1; i++) {
+        const ax = e.P[2 * i], ay = e.P[2 * i + 1], bx = e.P[2 * i + 2], by = e.P[2 * i + 3], D = Math.hypot(bx - ax, by - ay);
+        for (let j = 0; j < o.np - 1; j++) {
+          const cx = o.P[2 * j], cy = o.P[2 * j + 1], dx = o.P[2 * j + 2], dy = o.P[2 * j + 3], den = (bx - ax) * (dy - cy) - (by - ay) * (dx - cx);
+          if (Math.abs(den) < 1e-9) continue;
+          const t = ((cx - ax) * (dy - cy) - (cy - ay) * (dx - cx)) / den, u = ((cx - ax) * (by - ay) - (cy - ay) * (bx - ax)) / den;
+          if (t >= 0 && t <= 1 && u >= 0 && u <= 1) list.push([acc + D * t, o._prof.W / 100 + 0.06]);
+        }
+        acc += D;
+      }
+    }
+    if (list.length) xing.set(e, list);
+  }
+  // 道の帯（車道・歩道・縁石・盛土・はしら・ガードレール・分離帯・防音壁・街灯）
+  const piece = (s, p, x0, y0, s0, ux0, uy0, x1, y1, s1, ux1, uy1, c, A, B, dep, tx, a, b) => {
+    if (dep < 3 && c !== 'V' && c !== 'B' && Math.hypot(x1 - x0, y1 - y0) > 0.12) {
+      const xm = (x0 + x1) / 2, ym = (y0 + y1) / 2, sm = (s0 + s1) / 2, uxm = (ux0 + ux1) / 2, uym = (uy0 + uy1) / 2, Mh = sect(s, xm, ym, sm, uxm, uym, c, a, b);
+      if ([0, 1, 2, 3].some(k => Math.abs(Mh[k] - (A[k] + B[k]) / 2) > 0.006)) {
+        piece(s, p, x0, y0, s0, ux0, uy0, xm, ym, sm, uxm, uym, c, A, Mh, dep + 1, tx, a, b); piece(s, p, xm, ym, sm, uxm, uym, x1, y1, s1, ux1, uy1, c, Mh, B, dep + 1, tx, a, b); return;
+      }
+    }
+    const v0 = s0 * 50 / p.P, v1 = s1 * 50 / p.P;
+    const L0 = [x0 + ux0 * a, A[0], y0 + uy0 * a], L1 = [x1 + ux1 * a, B[0], y1 + uy1 * a], R1 = [x1 - ux1 * a, B[1], y1 - uy1 * a], R0 = [x0 - ux0 * a, A[1], y0 - uy0 * a];
+    tx.P.push(...L0, ...L1, ...R1, ...L0, ...R1, ...R0); tx.UV.push(0, v0, 0, v1, 1, v1, 0, v0, 1, v1, 1, v0);   // 車道（路面の絵）
+    if (b > a) {   // 歩道と縁石
+      quad([x0 + ux0 * b, A[2], y0 + uy0 * b], [x1 + ux1 * b, B[2], y1 + uy1 * b], [L1[0], B[0] + M3_CURB, L1[2]], [L0[0], A[0] + M3_CURB, L0[2]], M3_SW);
+      quad([R0[0], A[1] + M3_CURB, R0[2]], [R1[0], B[1] + M3_CURB, R1[2]], [x1 - ux1 * b, B[3], y1 - uy1 * b], [x0 - ux0 * b, A[3], y0 - uy0 * b], M3_SW);
+      if (curbs) { quad(L0, L1, [L1[0], B[0] + M3_CURB, L1[2]], [L0[0], A[0] + M3_CURB, L0[2]], M3_CURBC); quad(R0, R1, [R1[0], B[1] + M3_CURB, R1[2]], [R0[0], A[1] + M3_CURB, R0[2]], M3_CURBC); }
+    }
+    const oL = b > a ? 2 : 0, oR = b > a ? 3 : 1, up = c === 'V' || c === 'B';
+    const eL0 = [x0 + ux0 * b, A[oL], y0 + uy0 * b], eL1 = [x1 + ux1 * b, B[oL], y1 + uy1 * b], eR0 = [x0 - ux0 * b, A[oR], y0 - uy0 * b], eR1 = [x1 - ux1 * b, B[oR], y1 - uy1 * b];
+    const lift = (e, h) => [e[0], e[1] + h, e[2]], wall = (e0, e1, h0, h1, col) => quad(lift(e0, h0), lift(e1, h0), lift(e1, h1), lift(e0, h1), col);
+    if (!up) {   // 盛土（地面の区間で、まわりより 1m 以上 高い）：いちばん外のはしから地面まで
+      if (A[oL] - M3_LIFT - A[4] > 0.02 || B[oL] - M3_LIFT - B[4] > 0.02) quad([eL0[0], A[4] - 0.006, eL0[2]], [eL1[0], B[4] - 0.006, eL1[2]], eL1, eL0, M3_EMB);
+      if (A[oR] - M3_LIFT - A[5] > 0.02 || B[oR] - M3_LIFT - B[5] > 0.02) quad([eR0[0], A[5] - 0.006, eR0[2]], [eR1[0], B[5] - 0.006, eR1[2]], eR1, eR0, M3_EMB);
+    }
+    if (!wide) return;
+    const m = 1 / 50;   // 1m（マス）
+    const xs = xing.get(s); if (xs && xs.some(([cs, hw]) => s1 > cs - hw && s0 < cs + hw)) return;   // 高速と道が交わるところ
+    if (up) { wall(eL0, eL1, 0, 1.1 * m, M3_CONC); wall(eR0, eR1, 0, 1.1 * m, M3_CONC); }   // 高架・橋の高欄（コンクリートのかべ）
+    else if (p.exp || A[oL] - M3_LIFT - A[4] > 0.04) {   // 高速・高い盛土：ガードレール（防音壁のところは かべ）
+      const z = (tileAt(Math.floor(x0), Math.floor(y0)) || {}).z, noise = p.exp && 'abcdk'.includes(z || '-');
+      const gi = (e0, e1, sd) => [[e0[0] - sd * ux0 * 0.4 * m, e0[1], e0[2] - sd * uy0 * 0.4 * m], [e1[0] - sd * ux1 * 0.4 * m, e1[1], e1[2] - sd * uy1 * 0.4 * m]];
+      for (const [e0, e1, sd] of [[eL0, eL1, 1], [eR0, eR1, -1]]) { const [g0, g1] = gi(e0, e1, sd); if (noise) wall(g0, g1, 0, 3.5 * m, M3_WALL); else wall(g0, g1, 0.55 * m, 0.85 * m, M3_RAIL); }
+    }
+    if (p.exp) {   // 中央分離帯のかべ（はば 60cm・高さ 90cm）
+      const cm = (x, y, ux, uy, A2, o) => [x + ux * o, (A2[0] + A2[1]) / 2, y + uy * o];
+      for (const o of [0.3 * m, -0.3 * m]) quad(cm(x0, y0, ux0, uy0, A, o), cm(x1, y1, ux1, uy1, B, o), lift(cm(x1, y1, ux1, uy1, B, o), 0.9 * m), lift(cm(x0, y0, ux0, uy0, A, o), 0.9 * m), M3_CONC);
+      quad(lift(cm(x0, y0, ux0, uy0, A, 0.3 * m), 0.9 * m), lift(cm(x1, y1, ux1, uy1, B, 0.3 * m), 0.9 * m), lift(cm(x1, y1, ux1, uy1, B, -0.3 * m), 0.9 * m), lift(cm(x0, y0, ux0, uy0, A, -0.3 * m), 0.9 * m), M3_CONC);
+    }
+  };
+  for (const s of segs) {
+    if (s.np < 2) continue;
+    const p = s._prof, b = p.W / 100, a = far ? b : p.cw / 100, tr = trim.get(s) || [0, 0], len = lenOf(s), lo = tr[0], hi = len - tr[1];
+    if (hi - lo < 0.01) continue;
+    const tk = p.key + (far ? ':f' : ''); let tx = T.get(tk); if (!tx) T.set(tk, tx = { tex: m3RoadTex(T3, p, far), P: [], UV: [] });
+    const P = s.P, U = normals(s); let acc = 0, nextPier = 0, nextLight = lo + 0.3, side = 1;
+    for (let i = 0; i < s.np - 1; i++) {
+      const ax = P[2 * i], ay = P[2 * i + 1], bx = P[2 * i + 2], by = P[2 * i + 3], D = Math.hypot(bx - ax, by - ay); if (D < 1e-6) continue;
+      const L0 = s.L ? s.L[i] : acc; acc += D;
+      if (L0 + D <= lo || L0 >= hi) continue;
+      const m = Math.max(1, Math.ceil(D));
+      for (let q = 0; q < m; q++) {
+        let t0 = q / m, t1 = (q + 1) / m; const sa = L0 + D * t0, sb = L0 + D * t1;
+        if (sb <= lo || sa >= hi) continue;
+        if (sa < lo) t0 = (lo - L0) / D; if (sb > hi) t1 = (hi - L0) / D;
+        const s0 = L0 + D * t0, s1 = L0 + D * t1, c = codeAt(s, (s0 + s1) / 2); if (c === 'T') continue;
+        const x0 = ax + (bx - ax) * t0, y0 = ay + (by - ay) * t0, x1 = ax + (bx - ax) * t1, y1 = ay + (by - ay) * t1;
+        const ux0 = U[2 * i] + (U[2 * i + 2] - U[2 * i]) * t0, uy0 = U[2 * i + 1] + (U[2 * i + 3] - U[2 * i + 1]) * t0, ux1 = U[2 * i] + (U[2 * i + 2] - U[2 * i]) * t1, uy1 = U[2 * i + 1] + (U[2 * i + 3] - U[2 * i + 1]) * t1;
+        const A = sect(s, x0, y0, s0, ux0, uy0, c, a, b), B = sect(s, x1, y1, s1, ux1, uy1, c, a, b);
+        piece(s, p, x0, y0, s0, ux0, uy0, x1, y1, s1, ux1, uy1, c, A, B, 0, tx, a, b);
+        if ((c === 'V' || c === 'B') && s0 >= nextPier && A[0] - M3_LIFT > A[6] + 2 * M3_U) {   // 高架・橋の はしら
+          const top = (A[0] + A[1]) / 2 - M3_LIFT, g = A[6], pw = Math.max(0.03, b * 0.3);
+          quad([x0 - pw, g, y0], [x0 + pw, g, y0], [x0 + pw, top, y0], [x0 - pw, top, y0], M3_PIER); quad([x0, g, y0 - pw], [x0, g, y0 + pw], [x0, top, y0 + pw], [x0, top, y0 - pw], M3_PIER);
+          nextPier = s0 + 1.5;
+        }
+        // 街灯（歩道のある道。30m ごと・左右かわりばんこ。アームは道のまん中へ）
+        while (props && p.sw > 0 && c === 'G' && nextLight < s1) {
+          if (nextLight >= s0 && pnear(x0, y0)) {
+            const f = (nextLight - s0) / Math.max(1e-6, s1 - s0), x = x0 + (x1 - x0) * f, y = y0 + (y1 - y0) * f, ux = ux0 + (ux1 - ux0) * f, uy = uy0 + (uy1 - uy0) * f;
+            const o = side * (b - 0.6 / 50), h = (side > 0 ? A[2] + (B[2] - A[2]) * f : A[3] + (B[3] - A[3]) * f);
+            LIGHT.push([x + ux * o, h, y + uy * o, Math.atan2(-side * uy, -side * ux)]);
+          }
+          nextLight += 0.6; side = -side;
+        }
+      }
+    }
+  }
+  // 交差点：路面（白線なし）・歩道の角（まるい縁石）・横断歩道・停止線・信号
+  const bez = (A, C, B, t) => [(1 - t) * (1 - t) * A[0] + 2 * t * (1 - t) * C[0] + t * t * B[0], (1 - t) * (1 - t) * A[1] + 2 * t * (1 - t) * C[1] + t * t * B[1]];
+  const meet = (P1, d1, P2, d2) => { const cr = d1[0] * d2[1] - d1[1] * d2[0]; if (Math.abs(cr) < 0.15) return null; const t = ((P2[0] - P1[0]) * d2[1] - (P2[1] - P1[1]) * d2[0]) / cr; return t < 0.02 && t > -3 ? [P1[0] + d1[0] * t, P1[1] + d1[1] * t] : null; };
+  for (const a of INT) {
+    const big = a.filter(o => o.p.ln >= 1).length, sig = big >= 2, mx = Math.max(...a.map(o => o.p.ln));
+    // 道ごとの切り口：外向き d の +横 が「左（L）」、−横 が「右（R）」。歩道の外は LO・RO
+    for (const o of a) {
+      const len = lenOf(o.s), sv = o.e ? len - o.r : o.r, E = segAt(o.s, sv), f = o.e ? -1 : 1, A = sect(o.s, E.x, E.y, sv, E.ux, E.uy, 'G', far ? o.p.W / 100 : o.p.cw / 100, o.p.W / 100);
+      const cb = o.p.W / 100, ca = far ? cb : o.p.cw / 100, ux = E.ux * f, uy = E.uy * f;
+      o.L = [E.x + ux * ca, E.y + uy * ca, f > 0 ? A[0] : A[1]]; o.R = [E.x - ux * ca, E.y - uy * ca, f > 0 ? A[1] : A[0]];
+      o.LO = [E.x + ux * cb, E.y + uy * cb, f > 0 ? A[2] : A[3]]; o.RO = [E.x - ux * cb, E.y - uy * cb, f > 0 ? A[3] : A[2]];
+      o.sv = sv; o.f = f;
+    }
+    const ring = [];   // 交差点の路面のふち（外向きの角の順）
+    for (let k = 0; k < a.length; k++) {
+      const o = a[k], q = a[(k + 1) % a.length];
+      ring.push(o.R, o.L);
+      const C = !far && o.p.sw > 0 && q.p.sw > 0 ? meet(o.L, o.d, q.R, q.d) : null;
+      if (C) {   // まるい縁石：o の左のはし → q の右のはし
+        const CO = meet(o.LO, o.d, q.RO, q.d) || C, N = 6, inner = [], outer = [];
+        for (let i = 0; i <= N; i++) { const t = i / N, P2 = bez(o.L, C, q.R, t), Q2 = bez(o.LO, CO, q.RO, t), h = o.L[2] + (q.R[2] - o.L[2]) * t; inner.push([P2[0], h, P2[1]]); outer.push([Q2[0], Math.max(h + M3_CURB, m3Surf(Q2[0], Q2[1]) + M3_LIFT), Q2[1]]); }
+        for (let i = 1; i < N; i++) ring.push([inner[i][0], inner[i][2], inner[i][1]]);
+        for (let i = 0; i < N; i++) {
+          const i0 = inner[i], i1 = inner[i + 1];
+          quad(outer[i], outer[i + 1], [i1[0], i1[1] + M3_CURB, i1[2]], [i0[0], i0[1] + M3_CURB, i0[2]], M3_SW);   // 歩道の角
+          if (curbs) quad(i0, i1, [i1[0], i1[1] + M3_CURB, i1[2]], [i0[0], i0[1] + M3_CURB, i0[2]], M3_CURBC);   // 縁石
+        }
+      }
+    }
+    // 路面：まん中から扇に（高さは ふちの平均）
+    const hc = ring.reduce((u, r) => u + r[2], 0) / ring.length, cx = ring.reduce((u, r) => u + r[0], 0) / ring.length, cy = ring.reduce((u, r) => u + r[1], 0) / ring.length;
+    for (let k = 0; k < ring.length; k++) { const r0 = ring[k], r1 = ring[(k + 1) % ring.length]; tri([cx, hc, cy], [r1[0], r1[2], r1[1]], [r0[0], r0[2], r0[1]], M3_ASPH); }
+    // 横断歩道（信号のある交差点の、歩道のある道）・停止線（入ってくる車線：外向き d の +横）
+    for (const o of a) {
+      const ca = o.p.cw / 100, len = lenOf(o.s), cw = o.p.sw > 0 && sig, at = dist => {   // 交差点から dist（マス）の点
+        const sv = o.e ? len - dist : dist; if (sv < 0 || sv > len) return null;
+        const E = segAt(o.s, sv), A = sect(o.s, E.x, E.y, sv, E.ux, E.uy, 'G', ca, ca);
+        return { x: E.x, y: E.y, ux: E.ux * o.f, uy: E.uy * o.f, hl: o.f > 0 ? A[0] : A[1], hr: o.f > 0 ? A[1] : A[0] };
+      };
+      const pt = (E, off) => { const f = (off + ca) / (2 * ca); return [E.x + E.ux * off, E.hr + (E.hl - E.hr) * f + M3_MARK, E.y + E.uy * off]; };
+      const r = o.r, m = 1 / 50;
+      if (marks && cw && r + 5 * m < len * 0.6) {   // しま（はば 45cm・あいだ 45cm・長さ 4m）
+        const E0 = at(r + 0.5 * m), E1 = at(r + 4.5 * m);
+        if (E0 && E1) for (let off = -ca + 0.3 * m; off + 0.45 * m <= ca - 0.3 * m; off += 0.9 * m) mark(pt(E0, off), pt(E1, off), pt(E1, off + 0.45 * m), pt(E0, off + 0.45 * m), M3_WHITE);
+      }
+      if (marks && o.p.ln >= 1 && (sig || o.p.ln < mx)) {   // 停止線（信号のある交差点・せまいほうの道）
+        const d0 = r + (cw ? 5.7 : 1.2) * m;
+        if (d0 + m < len * 0.6) { const E0 = at(d0), E1 = at(d0 + 0.45 * m); if (E0 && E1) mark(pt(E0, 0.3 * m), pt(E1, 0.3 * m), pt(E1, ca - 0.5 * m), pt(E0, ca - 0.5 * m), M3_WHITE); }
+      }
+      // 信号（入ってくる車の左の角。アームは車線の上へ・灯は外を向く）
+      if (props && sig && o.p.ln >= 1 && pnear(o.x, o.y)) {
+        const E = at(r + 1.0 * m); if (E) {
+          const off = ca + Math.max(0.5, o.p.sw * 0.5) * m, base = pt(E, Math.min(off, ca))[1] + M3_CURB;
+          SIG.push({ x: E.x + E.ux * off, y: E.y + E.uy * off, h: base, ux: E.ux, uy: E.uy, d: o.d, arm: Math.max(2.5, o.p.ln * o.p.lw * 0.8 + o.p.sw * 0.5) * m, grp: Math.abs(Math.sin(o.ang - a[0].ang)) > 0.7 ? 1 : 0 });
+        }
+      }
+    }
+  }
+  // メッシュにする
+  const lam = o => new T3.MeshLambertMaterial(Object.assign({ polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }, o));
+  for (const [k, tx] of T) {
+    if (!tx.P.length) continue;
+    const g = new T3.BufferGeometry(); g.setAttribute('position', new T3.Float32BufferAttribute(tx.P, 3)); g.setAttribute('uv', new T3.Float32BufferAttribute(tx.UV, 2)); g.computeVertexNormals();
+    const off = k[0] === 'e' ? -1 : -3;   // 同じ高さで重なるときは、高速の路面が下に
+    M3.grpR.add(new T3.Mesh(g, lam({ map: tx.tex, polygonOffsetFactor: off, polygonOffsetUnits: off })));
+  }
+  for (const [P, C, off] of [[CP, CC, -2], [MP, MC, -5]]) {
+    if (!P.length) continue;
+    const g = new T3.BufferGeometry(); g.setAttribute('position', new T3.Float32BufferAttribute(P, 3)); g.setAttribute('color', new T3.Float32BufferAttribute(C, 3)); g.computeVertexNormals();
+    M3.grpR.add(new T3.Mesh(g, lam({ vertexColors: true, side: T3.DoubleSide, polygonOffsetFactor: off, polygonOffsetUnits: off })));
+  }
+  m3Props(T3, LIGHT, SIG);
+  M3.tRoad = performance.now() - tR0;
+}
+// 街灯・信号（まとめて描く：InstancedMesh）。信号の灯は 40秒で ひとまわり（交差点の向きで2つの組）
+function m3Props(T3, LIGHT, SIG) {
+  const mtx = new T3.Matrix4(), q = new T3.Quaternion(), pos = new T3.Vector3(), sc = new T3.Vector3(), up = new T3.Vector3(0, 1, 0), m = 1 / 50;
+  const inst = (geo, mat, list, fn) => {
+    if (!list.length) return null;
+    const im = new T3.InstancedMesh(geo, mat, list.length);
+    list.forEach((o, i) => { fn(o); mtx.compose(pos, q, sc); im.setMatrixAt(i, mtx); });
+    im.instanceMatrix.needsUpdate = true; M3.grpR.add(im); return im;
+  };
+  const box = () => new T3.BoxGeometry(1, 1, 1), gray = () => new T3.MeshLambertMaterial({ color: '#8f9396' }), dark = () => new T3.MeshLambertMaterial({ color: '#3a3d40' });
+  // 街灯：柱（高さ 8m）・アーム（1.6m）・灯（光る）
+  inst(box(), gray(), LIGHT, o => { pos.set(o[0], o[1] + 4 * m, o[2]); q.identity(); sc.set(0.18 * m, 8 * m, 0.18 * m); });
+  inst(box(), gray(), LIGHT, o => { pos.set(o[0] + Math.cos(o[3]) * 0.8 * m, o[1] + 7.9 * m, o[2] + Math.sin(o[3]) * 0.8 * m); q.setFromAxisAngle(up, -o[3]); sc.set(1.6 * m, 0.12 * m, 0.12 * m); });
+  inst(box(), new T3.MeshBasicMaterial({ color: '#fff4d6' }), LIGHT, o => { pos.set(o[0] + Math.cos(o[3]) * 1.6 * m, o[1] + 7.8 * m, o[2] + Math.sin(o[3]) * 1.6 * m); q.setFromAxisAngle(up, -o[3]); sc.set(0.7 * m, 0.14 * m, 0.32 * m); });
+  // 信号：柱（6m）・アーム・灯の箱（車線の上）・灯（青・黄・赤。左から）
+  M3.sig = null;
+  if (!SIG.length) return;
+  const ang = o => Math.atan2(o.uy, o.ux);   // アームの向き（+横 → 道のまん中は −横）
+  inst(box(), gray(), SIG, o => { pos.set(o.x, o.h + 3 * m, o.y); q.identity(); sc.set(0.25 * m, 6 * m, 0.25 * m); });
+  inst(box(), gray(), SIG, o => { pos.set(o.x - o.ux * o.arm / 2, o.h + 5.8 * m, o.y - o.uy * o.arm / 2); q.setFromAxisAngle(up, -ang(o)); sc.set(o.arm, 0.15 * m, 0.15 * m); });
+  inst(box(), dark(), SIG, o => { pos.set(o.x - o.ux * o.arm, o.h + 5.5 * m, o.y - o.uy * o.arm); q.setFromAxisAngle(up, -ang(o)); sc.set(1.3 * m, 0.45 * m, 0.35 * m); });
+  const lamps = [];
+  for (const o of SIG) for (let k = 0; k < 3; k++) lamps.push({ o, k });
+  const lm = inst(new T3.BoxGeometry(1, 1, 1), new T3.MeshBasicMaterial({ color: '#ffffff' }), lamps, ({ o, k }) => {
+    const along = (k - 1) * 0.4 * m, cx = o.x - o.ux * (o.arm + along), cy = o.y - o.uy * (o.arm + along);   // 青は 柱のがわ（入ってくる車から見て左）・赤は 道のまん中がわ
+    pos.set(cx + o.d[0] * 0.19 * m, o.h + 5.5 * m, cy + o.d[1] * 0.19 * m); q.setFromAxisAngle(up, -ang(o)); sc.set(0.3 * m, 0.3 * m, 0.04 * m);
+  });
+  M3.sig = { lm, lamps, ph: -1 };
+  m3SigTick(true);
+}
+// 信号の灯：組0 は 青 0〜17秒・黄 17〜20秒・赤 20〜40秒、組1 は その反対（赤 0〜20・青 20〜37・黄 37〜40）
+const M3_LAMP = [[0.12, 0.95, 0.62], [1, 0.78, 0.12], [1, 0.16, 0.12]], M3_LAMP_OFF = [0.13, 0.14, 0.15];
+function m3SigTick(force) {
+  const S2 = M3.sig; if (!S2 || !S2.lm) return;
+  const t = (Date.now() / 1000) % 40, ph = t < 17 ? 0 : t < 20 ? 1 : t < 37 ? 2 : 3;
+  if (ph === S2.ph && !force) return;
+  S2.ph = ph;
+  const lit = g => g === 0 ? [0, 1, 2, 2][ph] : [2, 2, 0, 1][ph], col = new M3.T.Color();
+  S2.lamps.forEach(({ o, k }, i) => { const c = lit(o.grp) === k ? M3_LAMP[k] : M3_LAMP_OFF; col.setRGB(c[0], c[1], c[2]); S2.lm.setColorAt(i, col); });
+  if (S2.lm.instanceColor) S2.lm.instanceColor.needsUpdate = true;
+  const nx = [17, 20, 37, 40][ph] - t;   // つぎに かわるとき 描きなおす
+  clearTimeout(M3.sigT); M3.sigT = setTimeout(() => { M3.dirty = true; }, Math.max(50, nx * 1000 + 30));
+}
+
 /* ---------- 建物・道路・線路 ---------- */
 function m3Blds(v) {
   const it = visibleItems();   // S.v3rect（近いはんい）・S.cam.z（細かさ）は m3Frame で合わせてある
@@ -440,9 +794,11 @@ function m3Blds(v) {
   const segs = [...it.segs.values()].filter(s => s.bb[2] >= v.x0 && s.bb[0] <= v.x1 && s.bb[3] >= v.y0 && s.bb[1] <= v.y1);
   const rws = [...(it.rwys ? it.rwys.values() : [])].filter(r => r.bb && r.bb[2] >= v.x0 && r.bb[0] <= v.x1 && r.bb[3] >= v.y0 && r.bb[1] <= v.y1);
   const sts = [...it.stas.values()].filter(t => t.fx >= v.x0 - 2 && t.fx <= v.x1 + 2 && t.fy >= v.y0 - 2 && t.fy <= v.y1 + 2);   // 駅（t62）
-  const key = bs.length + ':' + bs.reduce((a, b) => (a + b.id * 31 + b.floors) % 1e9, 0) + '|' + segs.length + ':' + segs.reduce((a, s) => (a + s.id * 17 + (s.pf ? Math.round(s.pf.reduce((u, w) => u + w, 0)) : 0)) % 1e9, 0) + '|' + M3.cm.size
+  const key = bs.length + ':' + bs.reduce((a, b) => (a + b.id * 31 + b.floors) % 1e9, 0) + '|' + segs.length + ':' + segs.reduce((a, s) => (a + s.id * 17 + (s.pf ? Math.round(s.pf.reduce((u, w) => u + w, 0)) : 0)) % 1e9, 0)
             + '|' + rws.length + ':' + rws.reduce((a, r) => (a + r.id * 13) % 1e9, 0) + '|' + sts.length + ':' + sts.reduce((a, t) => (a + t.id * 7 + (t.pl || 0) * 3 + (t.tr || 0)) % 1e9, 0)
-            + '|' + M3.tgN;   // 近くの地形の網を作りなおしたら、のせなおす（t64）
+            + '|' + M3.tgN   // 近くの地形の網を作りなおしたら、のせなおす（t64）
+            + '|' + (M3.d < 12 ? 'k' : M3.d < 30 ? 'p' : M3.d < 40 ? 'n' : M3.d < 80 ? 'm' : M3.d < 150 ? 'w' : 'f')   // 道のまわりの物の段（t64b）
+            + '|' + (M3.d < 30 ? Math.round(Math.log2(M3.d) * 2) : '-');   // 街灯・信号の はんい（近づくほど せまく）
   if (key === M3.bKey) return;
   M3.bKey = key;
   m3Clear(M3.grpB); m3Clear(M3.grpR);
@@ -532,7 +888,10 @@ function m3Blds(v) {
   const mkMesh = (arr, tex, grp) => {
     if (!arr.length) return;
     const n = arr.length / 11, P = new Float32Array(n * 3), N = new Float32Array(n * 3), C = new Float32Array(n * 3), UV = new Float32Array(n * 2);
-    for (let i = 0; i < n; i++) { const o = i * 11; P.set(arr.slice(o, o + 3), i * 3); N.set(arr.slice(o + 3, o + 6), i * 3); C.set(arr.slice(o + 6, o + 9), i * 3); UV[i * 2] = arr[o + 9]; UV[i * 2 + 1] = arr[o + 10]; }
+    for (let i = 0, o = 0, j = 0; i < n; i++, o += 11, j += 3) {   // 1つずつ写す（小さい配列を作らない。t64b）
+      P[j] = arr[o]; P[j + 1] = arr[o + 1]; P[j + 2] = arr[o + 2]; N[j] = arr[o + 3]; N[j + 1] = arr[o + 4]; N[j + 2] = arr[o + 5];
+      C[j] = arr[o + 6]; C[j + 1] = arr[o + 7]; C[j + 2] = arr[o + 8]; UV[i * 2] = arr[o + 9]; UV[i * 2 + 1] = arr[o + 10];
+    }
     const g = new T3.BufferGeometry(); g.setAttribute('position', new T3.BufferAttribute(P, 3)); g.setAttribute('normal', new T3.BufferAttribute(N, 3)); g.setAttribute('color', new T3.BufferAttribute(C, 3)); g.setAttribute('uv', new T3.BufferAttribute(UV, 2));
     const m = new T3.MeshLambertMaterial({ vertexColors: true, map: tex || null, side: T3.DoubleSide });
     grp.add(new T3.Mesh(g, m));
@@ -645,9 +1004,9 @@ function m3Blds(v) {
       }
     }
   };
-  for (const s of segs) {
-    const isRail = s.k === 'rail', wdt = Math.max(isRail ? 0.18 : 0.14, s.w || 0.2), col = isRail ? [0.42, 0.38, 0.35] : (s.c === 'exp' ? [0.62, 0.66, 0.72] : [0.72, 0.72, 0.70]);
-    band(s, s.P, s.np, wdt, col, M3_LIFT);
+  for (const s of segs) {   // 線路（道路は m3Roads で。t64b）
+    if (s.k !== 'rail') continue;
+    band(s, s.P, s.np, Math.max(0.18, s.w || 0.2), [0.42, 0.38, 0.35], M3_LIFT);
   }
   // 滑走路（t61）：黒っぽい帯（はば r.w マス）と、白い中心線
   for (const r of rws) {
@@ -657,10 +1016,11 @@ function m3Blds(v) {
   }
   if (RD.length) {   // 四角ごとに 位置18・色18 の順
     const P = [], C = [];
-    for (let i = 0; i < RD.length; i += 36) { P.push(...RD.slice(i, i + 18)); C.push(...RD.slice(i + 18, i + 36)); }
+    for (let i = 0; i < RD.length; i += 36) { for (let k = 0; k < 18; k++) { P.push(RD[i + k]); C.push(RD[i + 18 + k]); } }
     const g = new T3.BufferGeometry(); g.setAttribute('position', new T3.Float32BufferAttribute(P, 3)); g.setAttribute('color', new T3.Float32BufferAttribute(C, 3)); g.computeVertexNormals();
     M3.grpR.add(new T3.Mesh(g, new T3.MeshBasicMaterial({ vertexColors: true, side: T3.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })));
   }
+  try { m3Roads(T3, segs.filter(s => s.k === 'road')); } catch (e) { console.error(e); }   // 道路（t64b）
 }
 
 /* ---------- 走行位置（t61・t62）：列車は両ごと、バス・船・飛行機は1つの箱。線路・道路・航路の上を、ダイヤのとおりに。
@@ -809,7 +1169,7 @@ function m3Bind(cv) {
       const na = ids[0] === e.pointerId ? { x: e.clientX, y: e.clientY } : a, nb = ids[1] === e.pointerId ? { x: e.clientX, y: e.clientY } : b;
       const d0 = Math.hypot(b.x - a.x, b.y - a.y), d1 = Math.hypot(nb.x - na.x, nb.y - na.y);
       const a0 = Math.atan2(b.y - a.y, b.x - a.x), a1 = Math.atan2(nb.y - na.y, nb.x - na.x);
-      if (d0 > 10 && d1 > 10) M3.d = Math.max(4, Math.min(900, M3.d * d0 / d1));
+      if (d0 > 10 && d1 > 10) M3.d = Math.max(M3_DMIN, Math.min(900, M3.d * d0 / d1));
       let da = a1 - a0; if (da > Math.PI) da -= 2 * Math.PI; else if (da < -Math.PI) da += 2 * Math.PI;
       M3.yaw += da * (S.v3x ? -1 : 1);   // 2本指でひねった向きに地図が回る（⇄ 左右反転で反対に）
       const my0 = (a.y + b.y) / 2, my1 = (na.y + nb.y) / 2;
@@ -823,9 +1183,9 @@ function m3Bind(cv) {
     if (e.type === 'pointerup' && n0 === 1 && P.size === 0) letGo(e); else if (e.type === 'pointerup' && P.size === 1 && n0 === 2) letGo(e); };   // 2本指をはなしたら、回る惰性
   cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
   cv.addEventListener('contextmenu', e => e.preventDefault());
-  cv.addEventListener('wheel', e => { e.preventDefault(); M3.d = Math.max(4, Math.min(900, M3.d * Math.pow(1.0015, e.deltaY))); S.dirty = true; }, { passive: false });
+  cv.addEventListener('wheel', e => { e.preventDefault(); M3.d = Math.max(M3_DMIN, Math.min(900, M3.d * Math.pow(1.0015, e.deltaY))); S.dirty = true; }, { passive: false });
 }
-function m3Zoom(f) { M3.d = Math.max(4, Math.min(900, M3.d / f)); }
+function m3Zoom(f) { M3.d = Math.max(M3_DMIN, Math.min(900, M3.d / f)); }
 function m3Target(x, y) { M3.tx = x; M3.ty = y; }
 function m3Resize() { if (!M3.on) return; M3.r.setPixelRatio(m3PR()); M3.r.setSize(S.W, S.H, false); M3.cam.aspect = S.W / Math.max(1, S.H); M3.cam.updateProjectionMatrix(); }
 
