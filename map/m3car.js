@@ -114,6 +114,7 @@
       let mat;
       if (o.mk.k === 'vc') { g.setAttribute('color', new T3.Float32BufferAttribute(o.C, 3)); mat = new T3.MeshLambertMaterial({ vertexColors: true }); }
       else { g.setAttribute('uv', new T3.Float32BufferAttribute(o.U, 2)); mat = new T3.MeshLambertMaterial({ map: tex(G, T3, o.mk.img), alphaTest: o.mk.mask ? 0.5 : 0 }); }
+      mat.userData.noUg = true;   // 地下ビュー（DB の更新109）でも すかさない
       g.setIndex(o.I.length > 65535 ? new T3.Uint32BufferAttribute(o.I, 1) : new T3.Uint16BufferAttribute(o.I, 1));
       g.computeBoundingSphere();
       out.push({ g, mat, mesh: null, cap: 0, n: 0 });

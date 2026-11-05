@@ -531,6 +531,14 @@ function prepArea(d) {
   d.lanes = d.lanes || []; for (const l of d.lanes) prepLane(l);   // 航路（t54o）
   d.rwys = d.rwys || []; for (const r of d.rwys) prepRwy(r);         // 滑走路（t57）
   d.props = (d.props || []).map(a => ({ id: a[0], kind: a[1], x: a[2] / 100, y: a[3] / 100, rot: a[4], col: a[5], mine: a[6] === 1 }));   // 小物（DB の更新103）
+  if (d.ugm) S.ugmOK = true;   // 地下街（DB の更新109）のあるサーバー：[id, 駅, 点（1/100 マス）, 名前, 自分の]
+  d.ugm = (d.ugm || []).map(prepUgm);
+}
+function prepUgm(a) {
+  const p = a[2] || [], P = [];
+  for (let i = 0; i + 1 < p.length; i += 2) P.push([p[i] / 100, p[i + 1] / 100]);
+  let L = 0; for (let i = 1; i < P.length; i++) L += Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1]);
+  return { id: a[0], sta: a[1], P, n: a[3], mine: !!a[4], L };
 }
 // 滑走路（t57）：両はし（マス）・向き・はしの番号（北から右まわりの角度 ÷ 10。a のはしは a → b の向き）
 function prepRwy(r) {
@@ -571,7 +579,7 @@ function prepParcel(a) {
 function visibleItems() {
   const [lod, cs] = lodOf(S.cam.z), v = view();
   const i0 = Math.floor(v.x0 / cs), j0 = Math.floor(v.y0 / cs), i1 = Math.floor(v.x1 / cs), j1 = Math.floor(v.y1 / cs);
-  const segs = new Map(), stas = new Map(), deps = new Map(), subs = new Map(), attrs = new Map(), nodes = new Map(), parcels = new Map(), places = new Map(), chos = new Map(), blds = new Map(), props = new Map(), lanes = new Map(), rwys = new Map(), names = {};
+  const segs = new Map(), stas = new Map(), deps = new Map(), subs = new Map(), attrs = new Map(), nodes = new Map(), parcels = new Map(), places = new Map(), chos = new Map(), blds = new Map(), props = new Map(), lanes = new Map(), rwys = new Map(), ugm = new Map(), names = {};
   const take = d => {
     for (const s of d.segs) segs.set(s.id, s);
     for (const s of d.stas) stas.set(s.id, s);
@@ -586,6 +594,7 @@ function visibleItems() {
     for (const c of d.chos) chos.set(c[0], c);
     for (const l of (d.lanes || [])) lanes.set(l.id, l);
     for (const r of (d.rwys || [])) rwys.set(r.id, r);
+    for (const u of (d.ugm || [])) ugm.set(u.id, u);   // 地下街（DB の更新109）
     Object.assign(names, d.names);
   };
   for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
@@ -600,7 +609,7 @@ function visibleItems() {
       if (any) break;
     }
   }
-  return { segs, stas, deps, subs, attrs, attrB: new Set([...attrs.values()].map(a => a.bld)), nodes, parcels, places, chos, blds, props, lanes, rwys, names };
+  return { segs, stas, deps, subs, attrs, attrB: new Set([...attrs.values()].map(a => a.bld)), nodes, parcels, places, chos, blds, props, lanes, rwys, ugm, names };
 }
 // 変わったもの（ほかの人の工事など）。15秒ごと
 async function poll() {
@@ -831,6 +840,7 @@ function render() {
   }
   if (S.pwOK && z >= 2) drawDeadSecs(g, rails, z);   // デッドセクション（DB の更新87）
   if (S.subsOK && z >= 2) drawPower(g, rails, z);    // エアセクション・電気の来ていない線（DB の更新89）
+  if (S.ugmOK && z >= 1.5 && it.ugm && it.ugm.size) drawUgm(g, it, z);   // 地下街（DB の更新109）
   // 航路（海の上の点線。t54o）
   drawLanes(g, it, z);
   // 高速（高架なので上に。高さを決めた高速は、トンネルのところをのぞく）
@@ -3392,7 +3402,7 @@ function build(root) {
     <canvas class="mp-cv"></canvas><canvas class="mp-cvr"></canvas>
     <div class="mp-top">
       <div class="mp-topb"><select class="mp-as" title="だれの名前で"></select>
-      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-lay="track" title="非電化はオレンジ・単線はむらさきの点線">非電化・単線</button><button data-lay="run" title="列車・バスの走行位置">🚃 走行</button><button data-lay="wxmap" title="天気図（等圧線・高気圧と低気圧・雨と雪・気温）">🌤 天気図</button><button data-lay="jam" title="道路の混みぐあい（オレンジ 混雑・赤 渋滞・黒 通行止め）" hidden>🚗 渋滞</button><button data-lay="er" title="救急車（いま出ているもの）" hidden>🚑 救急</button><button data-lay="snowz" title="雪の地域（雪国・豪雪地帯・特別豪雪地帯。雪の対策の補助金）">❄ 雪の地域</button><button data-lay="elev" title="高低差（標高を色で。北西から光を当てた陰つき）">⛰ 高低差</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button><button data-v3 title="ななめから立体に見る">🗻 3D</button><button data-v3x hidden title="横に回す向きを反対にする（2本指でひねる・右ドラッグ）">⇄ 左右反転</button><button data-v3e hidden title="自分の土地に 自販機・ベンチ・植木などを置く">🧰 小物</button></div>
+      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-lay="track" title="非電化はオレンジ・単線はむらさきの点線">非電化・単線</button><button data-lay="run" title="列車・バスの走行位置">🚃 走行</button><button data-lay="wxmap" title="天気図（等圧線・高気圧と低気圧・雨と雪・気温）">🌤 天気図</button><button data-lay="jam" title="道路の混みぐあい（オレンジ 混雑・赤 渋滞・黒 通行止め）" hidden>🚗 渋滞</button><button data-lay="er" title="救急車（いま出ているもの）" hidden>🚑 救急</button><button data-lay="snowz" title="雪の地域（雪国・豪雪地帯・特別豪雪地帯。雪の対策の補助金）">❄ 雪の地域</button><button data-lay="elev" title="高低差（標高を色で。北西から光を当てた陰つき）">⛰ 高低差</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button><button data-v3 title="ななめから立体に見る">🗻 3D</button><button data-v3x hidden title="横に回す向きを反対にする（2本指でひねる・右ドラッグ）">⇄ 左右反転</button><button data-v3e hidden title="自分の土地に 自販機・ベンチ・植木などを置く">🧰 小物</button><button data-v3u hidden title="地面と建物をすかして、トンネル・地下駅・地下街を見る">⛏ 地下</button></div>
       <span class="mp-addr" translate="no" hidden></span>
     </div>
     <div class="mp-zoom"><button data-find title="さがす">🔍</button><button data-full title="大きく">⤢</button><button data-zin>＋</button><button data-zout>－</button><button data-home title="瑠璃市役所">⌂</button><button data-opt title="地図の設定">⚙</button></div>
@@ -3478,7 +3488,10 @@ function build(root) {
     const v3e = S.wrap.querySelector('[data-v3e]');   // 小物を置く（編集モード。t65）
     const e3 = on => { S.v3edit = !!on; v3e.classList.toggle('on', S.v3edit); if (S.v3edit) { hint('小物：自分の土地をタップして置く・置いた小物をタップして回す／動かす'); setTimeout(() => hint(''), 4000); } };
     v3e.onclick = () => { if (!S.lookDB && S.lookDB !== null) return toast(T('サーバーの更新のあとで使えます')); e3(!S.v3edit); };
-    v3.onclick = async () => { if (S.v3) m3Close(); else await m3Open(); v3.classList.toggle('on', !!S.v3); b25.hidden = !!S.v3; v3x.hidden = !S.v3; v3e.hidden = !S.v3 || !lookOn(); if (!S.v3) e3(false); optSync(); }; }
+    const v3u = S.wrap.querySelector('[data-v3u]');   // 地下ビュー（DB の更新109）：地面と建物をすかして、トンネル・地下駅・地下街を見る
+    const u3 = on => { S.v3u = !!on; v3u.classList.toggle('on', S.v3u); if (window.m3Ug) window.m3Ug(S.v3u); if (S.v3u) { hint('地下：地面と建物をすかして、トンネル・地下駅・地下街を見ます（もう一度おすと もどります）'); setTimeout(() => hint(''), 4000); } };
+    v3u.onclick = () => u3(!S.v3u);
+    v3.onclick = async () => { if (S.v3) { u3(false); m3Close(); } else await m3Open(); v3.classList.toggle('on', !!S.v3); b25.hidden = !!S.v3; v3x.hidden = !S.v3; v3e.hidden = !S.v3 || !lookOn(); v3u.hidden = !S.v3; if (!S.v3) e3(false); optSync(); }; }
   S.wrap.querySelector('[data-full]').onclick = () => { S.wrap.classList.toggle('mp-full'); resize(); };
   S.wrap.querySelector('[data-find]').onclick = () => openFind();   // さがす（t59）
   S.wrap.querySelector('.mp-wx').onclick = () => { const [x, y] = wxCenter(); openWx(x, y); };   // 天気（t62）
@@ -3750,6 +3763,8 @@ async function lookAt(x, y, px, py) {
   if (hb) { const [bx, by] = hb.cell.split(',').map(Number); return showSpot(bx, by); }
   const rw = nearRwy(x, y, 6);
   if (rw) return showRwy(rw);
+  const ug = S.ugmOK && S.cam.z >= 1.5 ? nearUgm(x, y, 8) : null;   // 地下街（DB の更新109）
+  if (ug) return showUgm(ug, x, y);
   const sg = nearSeg(x, y, 8);
   if (sg && (S.cam.z >= 3 || sg.s.k === 'rail' || ['exp', 'nat'].includes(sg.s.c))) return showSeg(sg.s, sg);
   return showSpot(Math.floor(x * 5), Math.floor(y * 5));
@@ -4343,11 +4358,13 @@ function showSta(s) {
       ${air ? `<b>滑走路</b><span>${s.pl > 0 ? `<span>${fmt(s.pl)}m（いちばん長い滑走路）</span>` : '<span class="mp-warn">まだありません（飛行機は飛べません）</span>'}</span><b>発着口</b><span><span>${s.tr}こ</span>（<span>1つで1時間に1便</span>）</span>` : ''}
       ${port && pdep ? (gov ? `<b>駐機場</b><span>${pdep.cap}機まで（みんなで使う）</span>` : air ? `<b>駐機場</b><span>${pdep.cap}機まで</span>` : `<b>船の置き場</b><span>${pdep.cap}隻まで</span>`) : ''}
       <b>${air ? '空路' : port ? '航路' : '系統'}</b><span>${(s.rt || []).map(r => `<a href="#" data-rt="${r.id}" style="color:${esc(r.c)};font-weight:800">■ ${esc(r.n)}</a>`).join('<br>') || 'なし'}</span>
-      ${s.k === 'rail' ? thruRow(s.o) : ''}</div>
+      ${s.k === 'rail' ? thruRow(s.o) : ''}
+      ${s.k === 'rail' && S.ugmOK ? (() => { const us = [...S.vis.ugm.values()].filter(g => g.sta === s.id);   // 地下街（DB の更新109）
+        return us.length ? `<b>地下街</b><span>${us.map(g => `<a href="#" data-ugm="${g.id}" translate="no">${esc(g.n)}</a>（${fmt(Math.round(g.L * 50))}m）`).join('<br>')}</span>` : ''; })() : ''}</div>
     ${gov ? `<div class="mp-row"><button class="btn main" data-slot>🛫 発着口・入札</button>${pdep ? '<button class="btn" data-cars>飛行機を見る・注文する</button>' : ''}<button class="btn" data-newr>＋ 空路</button>${adm ? '<button class="btn" data-ren>名前を変える</button><button class="btn" data-lend>使用料</button>' : ''}</div>
       <p class="muted small"><span>国の空港です。だれでも駐機場に飛行機を置いて（≡ →「車両と編成」）、空路に使えます。空路に入れると、1路線・1日の使用料を国にはらいます（使いはじめたときの値段のまま）。</span><span>この空港を出る便は、1時間に、持っている発着口の数まで（発着口の権利は入札で買います）</span></p>`
     : s.mine && port ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button><button class="btn" data-lend>貸し出し</button>${pdep ? (air ? '<button class="btn" data-cars>飛行機を見る</button>' : '<button class="btn" data-cars>船を見る</button>') : ''}${air ? '<button class="btn" data-newr>＋ 空路</button>' : '<button class="btn" data-newr>＋ 航路</button>'}</div>
-      <p class="muted small">${air ? '空港は、空港の建物をこわすとなくなります' : '港は、フェリーターミナルの建物をこわすとなくなります'}</p>` : s.mine ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button>${s.k === 'bus' ? '<button class="btn" data-lend>貸し出し</button>' : '<button class="btn" data-plat>ホーム・番線</button><button class="btn" data-trk>' + (pfOn() ? '発着番線・ホームの形' : '発着番線') + '</button>' + (S.hgt2 ? '<button class="btn" data-sth>⛰ 駅の高さ</button>' : '') + (tomeOn() ? '<button class="btn" data-tome>🅿 留置線をつくる</button>' : '')}${s.k === 'rail' && S.snowOK && (s.ml || snowZoneAt(s.fx, s.fy) > 0) ? `<button class="btn" data-melt>${s.ml ? '融雪器をはずす' : '❄ 融雪器をつける'}</button>` : ''}${s.k === 'rail' && S.supOK ? `<button class="btn" data-sup="water">${s.wt ? '給水設備をはずす' : '💧 給水設備をつくる'}</button><button class="btn" data-sup="coal">${s.cl ? '給炭設備をはずす' : '⛏ 給炭設備をつくる'}</button>` : ''}<button class="btn" data-del>こわす</button></div>` : ''}
+      <p class="muted small">${air ? '空港は、空港の建物をこわすとなくなります' : '港は、フェリーターミナルの建物をこわすとなくなります'}</p>` : s.mine ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button>${s.k === 'bus' ? '<button class="btn" data-lend>貸し出し</button>' : '<button class="btn" data-plat>ホーム・番線</button><button class="btn" data-trk>' + (pfOn() ? '発着番線・ホームの形' : '発着番線') + '</button>' + (S.hgt2 ? '<button class="btn" data-sth>⛰ 駅の高さ</button>' : '') + (tomeOn() ? '<button class="btn" data-tome>🅿 留置線をつくる</button>' : '') + (ugmOn() ? '<button class="btn" data-ugmb>🛍 地下街をつくる</button>' : '')}${s.k === 'rail' && S.snowOK && (s.ml || snowZoneAt(s.fx, s.fy) > 0) ? `<button class="btn" data-melt>${s.ml ? '融雪器をはずす' : '❄ 融雪器をつける'}</button>` : ''}${s.k === 'rail' && S.supOK ? `<button class="btn" data-sup="water">${s.wt ? '給水設備をはずす' : '💧 給水設備をつくる'}</button><button class="btn" data-sup="coal">${s.cl ? '給炭設備をはずす' : '⛏ 給炭設備をつくる'}</button>` : ''}<button class="btn" data-del>こわす</button></div>` : ''}
     ${S.admin && (s.rt || []).length ? '<div class="mp-row"><button class="btn" data-unkomk>🚦 乱れを起こす（管理者）</button></div>' : ''}`, sh => {
     const cs = sh.querySelector('[data-cars]'); if (cs) cs.onclick = () => openCars(pdep.id);
     const um = sh.querySelector('[data-unkomk]'); if (um) um.onclick = () => unkoMake(s);   // t108
@@ -4358,6 +4375,8 @@ function showSta(s) {
     sh.querySelectorAll('[data-rt]').forEach(a => a.onclick = ev => { ev.preventDefault(); openDia(Number(a.dataset.rt)); });
     const th = sh.querySelector('[data-thru]'); if (th) th.onclick = () => thruReq({ sta: s.id }, () => { if (S.sel && S.sel.kind === 'sta' && S.sel.id === s.id) showSta(s); });
     const tk = sh.querySelector('[data-trk]'); if (tk) tk.onclick = () => trkEdit(s);
+    const ub = sh.querySelector('[data-ugmb]'); if (ub) ub.onclick = () => startUgm(s);   // 地下街（DB の更新109）
+    sh.querySelectorAll('[data-ugm]').forEach(a => a.onclick = ev => { ev.preventDefault(); const g = S.vis.ugm.get(Number(a.dataset.ugm)); if (g) showUgm(g); });
     const pl = sh.querySelector('[data-plat]'); if (pl) pl.onclick = () => staResize(s);
     const sth = sh.querySelector('[data-sth]'); if (sth) sth.onclick = () => staHeight(s);   // 駅の高さ（DB の更新84）
     const ld = sh.querySelector('[data-lend]'); if (ld) ld.onclick = async () => {
@@ -4375,6 +4394,174 @@ function showSta(s) {
   addrInto(s.fx, s.fy, () => S.sel && S.sel.kind === 'sta' && S.sel.id === s.id);
   if (s.k === 'rail' && s.o !== myKey() && !thruFresh()) loadThru().then(() => { if (S.sel && S.sel.kind === 'sta' && S.sel.id === s.id) showSta(s); });
 }
+/* ---------- 地下街（DB の更新109）：自分の駅から 道路の下に のばす。駅の乗り降りする人が お店に来る ---------- */
+const ugmOn = () => { lookOn(); return (S.dbv || 0) >= 109; };
+const UGM_W = 14 / 50;   // はば 14m（マス）
+// 2D：うすい だいだいの帯と、点線のふち
+function drawUgm(g, it, z) {
+  const w = Math.max(3, UGM_W * z);
+  g.save(); g.lineJoin = 'round'; g.lineCap = 'round';
+  for (const u of it.ugm.values()) {
+    const P = u.P; if (P.length < 2) continue;
+    const on = S.sel && S.sel.kind === 'ugm' && S.sel.id === u.id;
+    g.beginPath(); g.moveTo(sx(P[0][0]), sy(P[0][1])); for (let i = 1; i < P.length; i++) g.lineTo(sx(P[i][0]), sy(P[i][1]));
+    g.setLineDash([]); g.strokeStyle = on ? 'rgba(232,140,24,.6)' : 'rgba(240,164,48,.38)'; g.lineWidth = w; g.stroke();
+    if (z >= 4) { g.setLineDash([Math.max(4, 0.14 * z), Math.max(3, 0.09 * z)]); g.strokeStyle = on ? '#a85c00' : 'rgba(168,92,0,.75)'; g.lineWidth = Math.max(1, Math.min(2.5, 0.04 * z)); g.stroke(); }
+    if (z >= 10 && u.n) {   // 名前（まん中あたり）
+      let L = 0, k = 1; for (; k < P.length; k++) { const d = Math.hypot(P[k][0] - P[k - 1][0], P[k][1] - P[k - 1][1]); if (L + d >= u.L / 2) break; L += d; }
+      const a = P[Math.min(k, P.length - 1) - 1], b = P[Math.min(k, P.length - 1)], t = Math.hypot(b[0] - a[0], b[1] - a[1]) ? (u.L / 2 - L) / Math.hypot(b[0] - a[0], b[1] - a[1]) : 0;
+      label(g, u.n, sx(a[0] + (b[0] - a[0]) * t), sy(a[1] + (b[1] - a[1]) * t), { size: 11, color: '#7a4300', bg: 'rgba(255,248,236,.85)' });
+    }
+  }
+  g.restore();
+}
+// 地下街をタップしたか（まん中の線から はばの半分 ＋ rpx の半分）
+function nearUgm(x, y, rpx) {
+  const it = S.vis; if (!it || !it.ugm) return null; let best = null;
+  for (const u of it.ugm.values()) {
+    const P = u.P;
+    for (let i = 1; i < P.length; i++) {
+      const ax = P[i - 1][0], ay = P[i - 1][1], dx = P[i][0] - ax, dy = P[i][1] - ay, L2 = dx * dx + dy * dy;
+      const t = L2 ? clamp(((x - ax) * dx + (y - ay) * dy) / L2, 0, 1) : 0, d = Math.hypot(x - (ax + dx * t), y - (ay + dy * t));
+      if (d <= UGM_W / 2 + rpx / 2 / S.cam.z && (!best || d < best.d)) best = { u, d };
+    }
+  }
+  return best && best.u;
+}
+async function showUgm(u, tx, ty) {
+  S.sel = { kind: 'ugm', id: u.id }; S.dirty = true;
+  sheet(`<h4>🛍 <span translate="no">${esc(u.n)}</span><span>（地下街）</span></h4><p class="muted small">読みこんでいます…</p>`);
+  const d = await api('mp_ugm_get', { p_id: u.id });
+  if (!d || !S.sel || S.sel.kind !== 'ugm' || S.sel.id !== u.id) return;
+  const st = S.vis && S.vis.stas.get(d.sta);
+  sheet(`<h4>🛍 <span translate="no">${esc(d.name)}</span><span>（地下街）</span></h4>
+    <div class="mp-kv"><b>持ち主</b><span><span>${esc(d.who || '')}</span>${d.mine ? '<small>（あなた）</small>' : ''}</span>
+      <b>駅</b><span>${st ? `<a href="#" data-sta translate="no">${esc(d.sname || '')}</a>` : `<span translate="no">${esc(d.sname || '')}</span>`}</span>
+      <b>長さ</b><span><span>${fmt(d.m)}m</span>・<span>はば ${d.w}m</span></span>
+      <b>お客さん</b><span>${d.n != null ? `<span>1日 ${fmt(d.n)}人</span> / <span>1日に入れる人 ${fmt(d.cap)}人</span>` : '<span class="muted">つぎの1時間から数えます</span>'}</span>
+      ${d.pool != null ? `<b>来る見こみ</b><span><span>${fmt(d.pool)}人</span> <small>（駅の乗り降りの 8%。同じ駅の地下街で 長さで分けます）</small></span>` : ''}
+      <b>お店の売り上げ</b><span><span>1人</span> <span>${X(d.fee)}</span>${d.rev != null ? ` <small>（<span>24時間 ${X(d.rev)}</span>）</small>` : ''}</span>
+      ${d.up != null ? `<b>維持費</b><span>1日 ${X(d.up)}</span>` : ''}
+      ${d.cost != null ? `<b>工事費</b><span>${X(d.cost)}</span>` : ''}</div>
+    <p class="muted small" style="margin:2px 0 6px"><span>駅の乗り降りする人が、地下街のお店に来ます。売り上げと維持費は 1時間ごとです。</span>${S.v3 ? '' : '<span>3D の「地下」で、地下街の中が見られます。</span>'}</p>
+    <div class="mp-row">${d.mine ? '<button class="btn" data-ren>名前を変える</button><button class="btn" data-del>こわす</button>' : ''}${tx != null ? '<button class="btn" data-road>上の道路を見る</button>' : ''}</div>`, sh => {
+    const bb = () => { const xs = u.P.map(p => p[0]), ys = u.P.map(p => p[1]); refreshBox(Math.min(...xs) - 2, Math.min(...ys) - 2, Math.max(...xs) + 2, Math.max(...ys) + 2); };
+    const sa = sh.querySelector('[data-sta]'); if (sa) sa.onclick = ev => { ev.preventDefault(); showSta(st); };
+    const rd = sh.querySelector('[data-road]'); if (rd) rd.onclick = () => { const sg = nearSeg(tx, ty, 10, q => q.k === 'road'); if (sg) showSeg(sg.s, sg); else showSpot(Math.floor(tx * 5), Math.floor(ty * 5)); };
+    const rn = sh.querySelector('[data-ren]'); if (rn) rn.onclick = async () => {
+      const nm = prompt(T('地下街の名前（30文字まで）'), d.name); if (nm == null || !nm.trim()) return;
+      if (await api('mp_ugm_set', { p_id: u.id, p_name: nm.trim() }, '名前を変えました')) { u.n = nm.trim(); bb(); showUgm(u, tx, ty); }
+    };
+    const dl = sh.querySelector('[data-del]'); if (dl) dl.onclick = async () => {
+      if (!await confirm2(T(`「${d.name}」をこわします（工事費はもどりません）。よろしいですか？`), { what: `「${d.name}」`, q: '本当にこわしますか？', ok: 'こわす', note: 'もとに戻せません' })) return;
+      if (await api('mp_ugm_del', { p_id: u.id }, 'こわしました')) { sheet(null); S.sel = null; bb(); }
+    };
+  });
+}
+// 駅のホーム（まっすぐとみなす）から (x, y) までの きょり（マス）
+function staDist(s, x, y) {
+  const h = s.pl / 100, c = Math.cos(s.a), n = Math.sin(s.a), ax = s.fx - c * h, ay = s.fy - n * h, dx = 2 * c * h, dy = 2 * n * h, L2 = dx * dx + dy * dy;
+  const t = L2 ? clamp(((x - ax) * dx + (y - ay) * dy) / L2, 0, 1) : 0;
+  return Math.hypot(x - (ax + dx * t), y - (ay + dy * t));
+}
+// 線 s の上の at0 から at1 までの あいだの点（向きのとおり）
+function segBetween(s, a0, a1) {
+  const P = s.P, out = []; let acc = 0; const lo = Math.min(a0, a1), hi = Math.max(a0, a1);
+  for (let i = 0; i < s.np; i++) {
+    if (i) acc += Math.hypot(P[2 * i] - P[2 * i - 2], P[2 * i + 1] - P[2 * i - 1]);
+    if (acc > lo + 0.02 && acc < hi - 0.02) out.push([P[2 * i], P[2 * i + 1]]);
+  }
+  return a1 >= a0 ? out : out.reverse();
+}
+// 地下街をなぞる：駅のそばをタップしてから、道路の上をタップしていく（道路の線にすいつく。同じ道路なら まがり角もなぞる）
+function startUgm(s) {
+  setTool('look');
+  const st = { s, pts: [], q: null, err: null, seq: 0, timer: 0 };
+  S.toolState = st; S.sel = { kind: 'sta', id: s.id };
+  const flat = () => {   // 送る点（ほとんどまっすぐな なぞった点は へらす。80点まで）
+    const a = st.pts.filter((p, i) => {
+      if (!p.mid || i === 0 || i === st.pts.length - 1) return true;
+      const q = st.pts[i - 1], r = st.pts[i + 1], a1 = Math.atan2(p.y - q.y, p.x - q.x), a2 = Math.atan2(r.y - p.y, r.x - p.x);
+      return Math.abs(Math.atan2(Math.sin(a2 - a1), Math.cos(a2 - a1))) > 0.05;
+    });
+    return a.flatMap(p => [Math.round(p.x * 100), Math.round(p.y * 100)]);
+  };
+  const quote = () => {
+    clearTimeout(st.timer); st.q = null; st.err = null;
+    if (st.pts.length < 2) return ugmSheet(st);
+    ugmSheet(st);
+    const my = ++st.seq, pts = flat();
+    st.timer = setTimeout(async () => {
+      let q = null, err = null;
+      try { q = await call('mp_ugm_build', { p_sta: s.id, p_pts: pts, p_name: '', p_as: S.as, p_dry: true }); } catch (e) { err = errJa(e.message); }
+      if (st.seq !== my || S.toolState !== st) return;
+      st.q = q; st.err = err; st.sent = pts; S.dirty = true; ugmSheet(st);
+    }, 300);
+  };
+  st.quote = quote;
+  S.drawTool = (g, z) => {
+    if (S.toolState !== st || !st.pts.length) return;
+    const P = st.pts, ok = st.q && st.q.ok;
+    g.save(); g.lineJoin = 'round'; g.lineCap = 'round';
+    if (P.length > 1) {
+      g.beginPath(); g.moveTo(sx(P[0].x), sy(P[0].y)); for (let i = 1; i < P.length; i++) g.lineTo(sx(P[i].x), sy(P[i].y));
+      g.strokeStyle = ok ? 'rgba(232,140,24,.55)' : 'rgba(120,120,120,.45)'; g.lineWidth = Math.max(4, UGM_W * z); g.stroke();
+      g.strokeStyle = ok ? '#a85c00' : '#555'; g.lineWidth = 1.5; g.setLineDash([6, 4]); g.stroke(); g.setLineDash([]);
+    }
+    for (const [i, p] of P.entries()) if (!p.mid) { g.fillStyle = i === 0 ? '#1f5fbf' : '#a85c00'; g.beginPath(); g.arc(sx(p.x), sy(p.y), i === 0 ? 6 : 4.5, 0, 6.3); g.fill(); }
+    const marks = (arr, c) => { g.fillStyle = c; for (const b of arr || []) { g.beginPath(); g.arc(sx(b[0] / 100), sy(b[1] / 100), Math.max(3, 0.06 * z), 0, 6.3); g.fill(); } };
+    if (st.q) { marks(st.q.bad, 'rgba(210,30,30,.85)'); marks(st.q.ov, 'rgba(150,40,160,.85)'); }
+    g.restore();
+  };
+  S.tapHook = (x, y) => {
+    if (S.cam.z < 3) { setCam(x, y, 6); hint('近づいてから、駅のそば・道路の上をタップします'); return; }
+    if (!st.pts.length) {
+      if (staDist(s, x, y) > 1.0 + (0.22 * Math.max(1, s.tr) + 0.18) / 2) { toast(T('はじめは、駅のそば（ホームから 50m 以内）をタップします')); return; }
+      st.pts.push({ x, y });
+    } else {
+      if (st.pts.length >= 80) { toast(T('点が多すぎます（80まで）')); return; }
+      const sn = nearSeg(x, y, 18, q => q.k === 'road' && q.c !== 'exp'), last = st.pts[st.pts.length - 1];
+      const p = sn ? { x: sn.x, y: sn.y, sid: sn.s.id, at: sn.at } : { x, y };
+      if (sn && last.sid === sn.s.id && last.at != null) for (const q of segBetween(sn.s, last.at, sn.at)) st.pts.push({ x: q[0], y: q[1], sid: sn.s.id, mid: true });
+      st.pts.push(p);
+    }
+    quote(); S.dirty = true;
+  };
+  S.toolEnd = () => { clearTimeout(st.timer); S.tapHook = null; S.toolState = null; S.drawTool = null; };
+  S.onSheetClose = () => { if (S.toolState === st) { setTool('look'); } };
+  hint('地下街：駅のそば（ホームから 50m 以内）をタップしてから、道路の上をタップしていきます');
+  ugmSheet(st);
+}
+function ugmSheet(st) {
+  if (S.toolState !== st) return;
+  const q = st.q, s = st.s, n = st.pts.length;
+  sheet(`<h4>🛍 <span>地下街をつくる</span> <small class="muted">（<span translate="no">${esc(s.n)}</span>）</small></h4>
+    ${n < 2 ? `<p class="muted small">${n ? '<span>つぎに、道路の上をタップしていきます（道路の線にすいつきます。同じ道路なら まがり角も なぞります）</span>' : '<span>はじめに、駅のそば（ホームから 50m 以内）をタップします</span>'}</p>`
+      : q ? `<div class="mp-kv"><b>長さ</b><span><span>${fmt(q.m)}m</span>・<span>はば ${q.w}m</span></span>
+          <b>工事費</b><span class="mp-cost">${X(q.cost)}</span>
+          <b>維持費</b><span>1日 ${X(q.up)}</span>
+          <b>お客さんの見こみ</b><span><span>1日 ${fmt(q.n)}人</span> / <span>1日に入れる人 ${fmt(q.cap)}人</span><br><small>（<span>駅の乗り降り 1日 ${fmt(q.flow)}人</span>${q.others ? `・<span>同じ駅の地下街 ${q.others}本と 長さで分けます</span>` : ''}）</small></span>
+          <b>売り上げの見こみ</b><span>24時間 ${X(q.rev)} <small>（1人 ${X(q.fee)}）</small></span></div>
+        ${q.ok ? '' : `<p class="mp-warn">${esc(q.why || '')}</p>`}${q.bad && q.bad.length ? '<p class="muted small"><span style="color:#d21e1e">●</span> <span>道路の下でないところ（そこに点を足すか、1つもどします）</span></p>' : ''}${q.ov && q.ov.length ? '<p class="muted small"><span style="color:#962aa0">●</span> <span>ほかの地下街と重なるところ</span></p>' : ''}`
+      : st.err ? `<p class="mp-warn">${esc(st.err)}</p>` : '<p class="muted small">見つもっています…</p>'}
+    <div class="mp-row">${n ? '<button class="btn" data-undo>1つもどす</button><button class="btn" data-clr>はじめから</button>' : ''}<button class="btn main" data-ok ${q && q.ok ? '' : 'disabled'}>つくる</button><button class="btn" data-quit>やめる</button></div>
+    <p class="muted small" style="margin:4px 0 0"><span>地下街は、駅から 道路の下に のばします（25m〜1km・はば 14m）。駅の乗り降りする人が お店に来て、1時間ごとに売り上げが入ります（維持費も）。</span></p>`, sh => {
+    const un = sh.querySelector('[data-undo]'); if (un) un.onclick = () => { st.pts.pop(); while (st.pts.length && st.pts[st.pts.length - 1].mid) st.pts.pop(); st.quote(); S.dirty = true; };
+    const cl = sh.querySelector('[data-clr]'); if (cl) cl.onclick = () => { st.pts = []; st.quote(); S.dirty = true; };
+    sh.querySelector('[data-quit]').onclick = () => { sheet(null); setTool('look'); showSta(s); };
+    const ok = sh.querySelector('[data-ok]'); if (ok) ok.onclick = async () => {
+      if (!q || !q.ok || !st.sent) return;
+      if (!confirm(T(`地下街（${fmt(q.m)}m）をつくります。工事費 ${X(q.cost)}。よろしいですか？`))) return;
+      const r = await api('mp_ugm_build', { p_sta: s.id, p_pts: st.sent, p_name: '', p_as: S.as, p_dry: false });
+      if (!r) return;
+      toast(T(`「${r.name}」をつくりました（${fmt(r.cost)} X）`));
+      const b = r.bb || []; refreshBox(b[0] / 100 - 2, b[1] / 100 - 2, b[2] / 100 + 2, b[3] / 100 + 2);
+      setTool('look'); sheet(null); S.dirty = true;
+    };
+  });
+  S.onSheetClose = () => { if (S.toolState === st) setTool('look'); };
+}
+
 // 駅の高さを変える（DB の更新84）：地上駅・高架駅・地下駅。ホームの前後の線路の高さを決めなおす。見つもってから
 const STA_LV = { G: '地上駅', E: '高架駅', U: '地下駅' };
 function staHeight(s) {
@@ -8796,6 +8983,7 @@ const FAC_UI = {
   hotel: { ic: '🏨', who: '宿泊客', cap: '泊まれる人', pool: '泊まりにくる見こみ', fee: '宿泊料', unit: '1人 1泊', day: '24時間の宿泊料', lv: '宿泊料の水準', npc: '町のホテル会社', come: '旅の人が泊まる' },
   hospital: { ic: '🏥', who: '患者・利用者', cap: '1日に見られる人', pool: 'かかる見こみ', fee: '診療報酬など', unit: '1人 1日', day: '24時間の診療報酬など', lv: '料金の水準', npc: '町の医療法人', come: '患者・利用者が来る' },
   leisure: { ic: '🎡', who: '来場者', cap: '1日に入れる人', pool: '来る見こみ', fee: '入場料など', unit: '1人', day: '24時間の入場料など', lv: '料金の水準', npc: '町の会社', come: '来場者が来る' },
+  shop: { ic: '🛍', who: 'お客さん', cap: '1日に入れる人', pool: '来る見こみ', fee: 'お店の売り上げ', unit: '1人', day: '24時間の売り上げ', lv: '値段の水準', npc: '町のお店', come: '駅の人がお店に来る' },   // 駅ナカのお店（DB の更新109）
 };
 // 月のならび → 春・夏・秋・冬（ほかは月を）
 function monthsTxt(ms) {
@@ -8813,10 +9001,12 @@ function bFeats(p, o) {
     const ui0 = FAC_UI[kd.use] || FAC_UI.leisure, ui = kd.kb ? { ...ui0, come: '客が馬券を買う', cap: '1日に入れる人', fee: '手数料', unit: '1人 1日' } : ui0;   // 場外馬券売り場（DB の更新92）
     ft(`<span>${ui.come}</span>`, 'in');
     if (kd.kb) ft('手数料は、レースのある時間に入る（G1 などは多い）', 'in');
-    if (ok) ft(`<span>${ui.cap} ${fmt(Math.floor(o.total_m2 / kd.spp))}人</span>`, 'in');
+    if (ok) ft(`<span>${ui.cap} ${fmt(Math.floor((p.self1 ? (o.fm2 || o.total_m2 / Math.max(1, o.floors || o.f1 || 1)) : o.total_m2) / kd.spp))}人</span>`, 'in');   // 駅直結ビル（DB の更新109）：お店は 1階だけ
     ft(`<span>${ui.fee}</span> <span>${ui.unit}</span> <span>${X(kd.fee)}</span>`);
     if (kd.acc) ft(kd.use === 'school' ? '駅が近いと生徒がふえる' : '駅が近いと客がふえる', 'up');
-    if (kd.rs) ft('駅の乗り降りする人も来る', 'up');
+    if (kd.rs) ft(p.sta ? 'となりの駅の乗り降りする人が来る' : '駅の乗り降りする人も来る', 'up');
+    if (p.self1) ft('1階は自分のお店・2階から上はテナントに貸す', 'in');
+    if (p.sta) ft('自分の駅のとなり（ホームから 20m 以内）に建てる', 'dn');
     if (kd.loc) ft('地価が高いと値段も高い', 'up');
     if (kd.pk) ft(`<span>多い月</span> ${monthsTxt(kd.pk)}`, 'up');
     if (kd.op) ft(`<span>少ない月</span> ${monthsTxt(kd.op)}`, 'dn');
@@ -9247,6 +9437,7 @@ function scBlock(d) {
       : s.use === 'school' || s.kind === 'school' ? '<span>生徒は、まわりの人（その年ごろの人）から通ってきます。同じ種類の学校が近くにあると分けあいます。</span>'
       : s.use === 'hotel' ? '<span>宿泊客は、近くの駅の乗り降りする人（旅の人）と、まわりの人から来ます。同じ種類の宿が近くにあると分けあいます。地価が高いところは宿泊料も高くなります。</span>'
       : s.use === 'hospital' ? '<span>患者・利用者は、まわりの人から来ます。同じ種類の病院・施設が近くにあると分けあいます。</span>'
+      : s.use === 'shop' ? '<span>お客さんは、となりの駅（250m 以内）の乗り降りする人と、まわりの人から来ます。同じ駅のそばの駅ナカのお店と分けあいます。地価が高いところは値段も高くなります。お店は1階だけです（2階から上はテナントに貸します）。</span>'
       : '<span>来場者は、まわりの人と、近くの駅の乗り降りする人から来ます。同じ種類の施設が近くにあると分けあいます。</span>';
     return `<h4 style="margin:12px 0 4px">${ui.ic} <span>${esc(k.n || ui.who)}</span></h4><div class="mp-kv">
       <b>${ui.who}</b><span><span>${fmt(s.n || 0)}人</span> / <span>${ui.cap} ${fmt(s.cap || 0)}人</span></span>
@@ -9257,7 +9448,7 @@ function scBlock(d) {
       ${s.can && s.day != null ? `<b>${ui.day}</b><span>${X(s.day)}</span>` : ''}
       ${s.can ? `<b>${ui.lv}</b><span><input type="range" min="50" max="200" step="5" value="${lv}" class="mp-sclv" style="width:55%;vertical-align:middle"> <b class="mp-sclvn">${lv}%</b> <button class="btn" data-sclv style="padding:2px 8px">決める</button></span>` : ''}
       </div>
-      <p class="muted small" style="margin:2px 0 6px">${how}${k.acc ? '<span>駅・バス停が近いとふえます。</span>' : ''}<span>近くの駅・バス停の乗る人にふえます（次の日から）。</span>${s.gov ? '' : `<span>自分で使うか会社が借りると、${ui.fee}（人件費などをひいた分）が${s.grp === 'kbshop' ? 'レースのある時間に' : '1時間ごとに'}入ります。水準が高いと減ります。</span>`}</p>`;
+      <p class="muted small" style="margin:2px 0 6px">${how}${k.acc ? '<span>駅・バス停が近いとふえます。</span>' : ''}${k.w ? '<span>近くの駅・バス停の乗る人にふえます（次の日から）。</span>' : ''}${s.gov ? '' : `<span>自分で使うか会社が借りると、${ui.fee}（人件費などをひいた分）が${s.grp === 'kbshop' ? 'レースのある時間に' : '1時間ごとに'}入ります。水準が高いと減ります。</span>`}</p>`;
   }
   const st = s.stock || {}, stock = Object.keys(st).length ? gSort(st).map(([g, q]) => qG(g, q)).join('・') : '<span class="muted">なし</span>';
   const prodSel = s.can && s.opts ? `<b>つくるもの</b><span><select class="mp-inp" data-scprod style="width:auto"><option value="">ふつう（いままでどおり）</option>${s.opts.map(g => `<option value="${g}" ${s.prod === g ? 'selected' : ''}>${esc(GN(g))}</option>`).join('')}</select> <button class="btn" data-scprodset style="padding:2px 8px">決める</button></span>` : '';

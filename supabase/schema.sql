@@ -18073,6 +18073,22 @@ create index if not exists mp_trains_cpl on public.mp_trains using gin (cpl json
 alter table public.mp_stations add column if not exists trk jsonb;   -- 番線の順に [{d: down・up・both, m: main・side}]。null はいつもの決まり
 alter table public.mp_segs add column if not exists pfill boolean;   -- 古い線の縦断を決めたか（DB の更新108）：true 決めた・false 決められなかった（地形のまま）・null まだ
 create index if not exists mp_segs_pfill on public.mp_segs (id) where kind = 'rail' and prof is null and pfill is null;
+create table if not exists public.mp_ugm (    -- 地下街（DB の更新109）
+  id    bigserial primary key,
+  sta   bigint not null references public.mp_stations(id) on delete cascade,   -- 出入りする駅
+  own_u uuid references public.profiles(id) on delete set null,
+  own_c int references public.companies(id) on delete set null,
+  pts   int[] not null,                -- 折れ線（1/100 マス）。はじめの点は 駅のそば
+  len   real not null,                 -- 長さ（マス）
+  bb    box not null,                  -- 範囲（マス）
+  name  text not null default '',
+  cost  bigint not null default 0,
+  st    jsonb,                         -- いまのようす（1時間ごと）：n 1日の客・cap 入れる人・pool 来る見こみ
+  created_at timestamptz not null default now()
+);
+create index if not exists mp_ugm_sta on public.mp_ugm (sta);
+create index if not exists mp_ugm_bb on public.mp_ugm using gist (bb);
+alter table public.mp_ugm enable row level security;
 alter table public.mp_series add column if not exists adm boolean not null default false;   -- 管理者だけ（ためし。DB の更新107）：ほかの人の注文の一覧に出さない
 alter table public.mp_series add column if not exists mdl text;   -- 3D のモデル（map/m3car.js のキー。DB の更新107）
 alter table public.mp_stations add column if not exists pf text;   -- ホームの形（DB の更新107）：番線のあいだ（両はしも）ごとに P（ホーム）・-（なし）。はじめの T は頭端式。null は おまかせ
@@ -19193,6 +19209,9 @@ begin
                   'tr', coalesce(ss.trip > now(), false), 'mine', coalesce(ss.own_u = u or ss.own_c = any(me_cs), false) or (ss.gov and _is_admin(u)),
                   'o', case when ss.gov then 'gov' when ss.own_u is not null then 'u:' || ss.own_u else 'c:' || ss.own_c end)), '[]'::jsonb)
                from mp_subs ss where p_lod < 2 and ss.x between (p_x0 - 3) * 100 and (p_x1 + 3) * 100 and ss.y between (p_y0 - 3) * 100 and (p_y1 + 3) * 100),
+    -- 地下街（DB の更新109）：[id, 駅, 点（1/100 マス）, 名前, 自分の]
+    'ugm', (select coalesce(jsonb_agg(jsonb_build_array(g.id, g.sta, to_jsonb(g.pts), g.name, coalesce(g.own_u = u or g.own_c = any(me_cs), false))), '[]'::jsonb)
+               from mp_ugm g where p_lod < 2 and g.bb && box(point(p_x0 - 1, p_y0 - 1), point(p_x1 + 1, p_y1 + 1))),
     'ver', coalesce((select max(ver) from mp_changes), 0), 'snow', 1, 'hgt', 1, 'sup', 1, 'hgt2', 1, 'sig', 1, 'quad', 1, 'pw', 1, 'subs2', 1, 'park2', 1, 'spec', 1) into r;   -- sup：給水・給炭のあるサーバー（DB の更新78）・hgt2：平坦・高さを決める・勾配の上限・駅の高さ（DB の更新84）・sig：信号の段（DB の更新85）・quad：複々線（DB の更新86）・pw：電化方式（DB の更新87）・subs2：変電所（DB の更新89）・park2：テーマパークとアトラクション（DB の更新91）
   return r;
 end $$;
@@ -23450,6 +23469,7 @@ begin
   while last < h and n < 12 loop
     last := last + interval '1 hour'; n := n + 1;
     begin perform _mp_tick_hour(last); exception when others then raise warning 'mp hour: %', sqlerrm; end;
+    begin perform _mp_ugm_hour(last); exception when others then raise warning 'mp ugm: %', sqlerrm; end;   -- 地下街（DB の更新109）
     if extract(hour from last at time zone 'Asia/Tokyo') = 4 then
       begin perform _mp_tick_day(); exception when others then raise warning 'mp day: %', sqlerrm; end;
     end if;
@@ -23458,6 +23478,183 @@ begin
   begin perform _mp_prof_fill_some(4, 3000); exception when others then raise warning 'mp prof fill: %', sqlerrm; end;   -- 古い線路の縦断（DB の更新108）
   begin perform _mp_tmp_back(); exception when others then raise warning 'mp tmp: %', sqlerrm; end;   -- 期間つき増結の車両を入れ替え枠にもどす（DB の更新80）
   update mp_state set v = last where k = 'hour';
+end $$;
+
+-- 地下街（DB の更新109）：きまり
+--   はば 14m（通路 6m ＋ 両がわの お店 4m ずつ）。工事費 1m 30,000 X・維持費 1m 1日 40 X。お店の広さ 1m 8㎡（1.5㎡ で 1日 1人）
+--   客：駅の1日の乗り降り × 8%（同じ駅の地下街で 長さで分ける）。1人 100 X
+create or replace function public._mp_ugm_k() returns jsonb
+language sql immutable as $$ select '{"w":14,"cpm":30000,"upm":40,"spm":8,"spp":1.5,"rs":0.08,"fee":100,"min":0.5,"max":20,"free":1.2,"near":1.0}'::jsonb $$;
+-- 駅の1日の乗り降り（系統の24時間の乗った人 × 2 を、止まる駅で分ける。_mp_sc_school_calc と同じ）
+create or replace function public._mp_ugm_flow(p_sta bigint, h timestamptz) returns real
+language sql stable set search_path = public as $$
+  select coalesce(sum(coalesce(hs.s, 0) * 2.0 / greatest(array_length(r.stops, 1), 1)), 0)::real
+    from mp_routes r left join lateral (select sum(hh.served) s from mp_hours hh where hh.route = r.id and hh.hour > h - interval '24 hours' and hh.hour <= h) hs on true
+   where r.ok and p_sta = any(r.stops)
+$$;
+-- 地下街の線を確かめる：p_pts［x0, y0, x1, y1, …］（1/100 マス）。はじめの点は 駅のそば（ホームから 50m 以内）。
+--   駅のそば（ホームから 60m）より先は 道路の下（道路のはばの中 ＋ 5m。高速道路はのぞく）。長さ 25m〜1km・点 2〜80。ほかの地下街と重ならない（10m）
+--   返す：{ok, why, len（マス）, m, cost, up（1日の維持費）, cap, flow, pool, n（見こみ）, rev（1日の売り上げの見こみ）, bb, bad［[x, y]…］（道路の下でないところ）, ov（重なるところ）}
+create or replace function public._mp_ugm_chk(p_sta bigint, p_pts int[], pu uuid, pc int, p_skip bigint default null) returns jsonb
+language plpgsql stable set search_path = public as $$
+declare zk jsonb := _mp_ugm_k(); zs mp_stations; zsg mp_segs; zn int := coalesce(array_length(p_pts, 1), 0) / 2; zl real := 0; zi int; zj int; zj0 int; zm int;
+        zax real; zay real; zbx real; zby real; zd real; zx real; zy real; zsub int[]; zhw real; zpd real; zbad jsonb := '[]'::jsonb; znb int := 0; zov jsonb := '[]'::jsonb; zno int := 0;
+        zwhy text; zfl real; zol real; zcap int; zpool real; zcnt int;
+begin
+  select * into zs from mp_stations where id = p_sta;
+  if not found or zs.kind <> 'rail' or zs.seg is null then raise exception '鉄道の駅ではありません'; end if;
+  if _mp_pperson(pu, pc) is null or _mp_pperson(zs.own_u, zs.own_c) is distinct from _mp_pperson(pu, pc) then raise exception '地下街は 自分の駅から つくります'; end if;
+  if coalesce(array_length(p_pts, 1), 0) % 2 <> 0 or zn < 2 or zn > 80 then raise exception '地下街の点の数がちがいます（2〜80）'; end if;
+  if exists (select 1 from unnest(p_pts) v where v is null) then raise exception '地下街の点がちがいます'; end if;
+  select * into zsg from mp_segs where id = zs.seg;
+  zsub := _mp_sub(zsg.pts, greatest(0, zs.at - zs.plat / 100.0), least(zsg.len, zs.at + zs.plat / 100.0));
+  zhw := (0.22 * greatest(1, zs.tracks) + 0.18) / 2;   -- ホームのはばの半分（マス）
+  for zi in 1..zn - 1 loop
+    zl := zl + sqrt(((p_pts[2 * zi + 1] - p_pts[2 * zi - 1]) / 100.0) ^ 2 + ((p_pts[2 * zi + 2] - p_pts[2 * zi]) / 100.0) ^ 2);
+  end loop;
+  if (_mp_proj(zsub, p_pts[1] / 100.0, p_pts[2] / 100.0)).dist > (zk ->> 'near')::real + zhw then zwhy := '地下街は 駅のそば（ホームから 50m 以内）から はじめます';
+  elsif zl < (zk ->> 'min')::real then zwhy := '地下街は 25m 以上にします';
+  elsif zl > (zk ->> 'max')::real then zwhy := '地下街は 1km までです';
+  else
+    -- 10m（0.2 マス）ごとに しらべる
+    for zi in 1..zn - 1 loop
+      zax := p_pts[2 * zi - 1] / 100.0; zay := p_pts[2 * zi] / 100.0; zbx := p_pts[2 * zi + 1] / 100.0; zby := p_pts[2 * zi + 2] / 100.0;
+      zd := sqrt((zbx - zax) ^ 2 + (zby - zay) ^ 2);
+      zm := greatest(1, ceil(zd / 0.2)::int);
+      zj0 := case when zi = 1 then 0 else 1 end;
+      for zj in zj0..zm loop
+        zx := zax + (zbx - zax) * zj / zm; zy := zay + (zby - zay) * zj / zm;
+        zpd := (_mp_proj(zsub, zx, zy)).dist;
+        if zpd > (zk ->> 'free')::real + zhw and not exists (
+             select 1 from mp_segs zr where zr.kind = 'road' and zr.cls <> 'exp' and zr.bb && box(point(zx - 1, zy - 1), point(zx + 1, zy + 1))
+                and (_mp_proj(zr.pts, zx, zy)).dist <= zr.w / 2 + 0.1) then
+          znb := znb + 1;
+          if jsonb_array_length(zbad) < 40 then zbad := zbad || jsonb_build_array(jsonb_build_array(round(zx * 100), round(zy * 100))); end if;
+        end if;
+        if zpd > zhw + 0.3 and exists (
+             select 1 from mp_ugm zg where zg.id is distinct from p_skip and zg.bb && box(point(zx - 0.5, zy - 0.5), point(zx + 0.5, zy + 0.5))
+                and (_mp_proj(zg.pts, zx, zy)).dist < 0.2) then
+          zno := zno + 1;
+          if jsonb_array_length(zov) < 40 then zov := zov || jsonb_build_array(jsonb_build_array(round(zx * 100), round(zy * 100))); end if;
+        end if;
+      end loop;
+    end loop;
+    if znb > 0 then zwhy := format('道路の下でないところがあります（約%sm）。駅のそばから先は 道路の上をなぞります', znb * 10);
+    elsif zno > 0 then zwhy := format('ほかの地下街と重なっています（約%sm）', zno * 10);
+    end if;
+  end if;
+  zfl := _mp_ugm_flow(p_sta, now());
+  zol := coalesce((select sum(zg.len) from mp_ugm zg where zg.sta = p_sta and zg.id is distinct from p_skip), 0);
+  zcap := floor(zl * 50 * (zk ->> 'spm')::real / (zk ->> 'spp')::real)::int;
+  zpool := zfl * (zk ->> 'rs')::real;
+  zcnt := least(zcap, floor(zpool * zl / greatest(zl + zol, 0.01)))::int;
+  return jsonb_build_object('ok', zwhy is null, 'why', zwhy, 'len', round(zl::numeric, 3), 'm', round(zl * 50),
+    'cost', round(zl * 50) * (zk ->> 'cpm')::bigint, 'up', round(zl * 50 * (zk ->> 'upm')::real), 'cap', zcap, 'flow', round(zfl), 'pool', round(zpool),
+    'n', zcnt, 'rev', zcnt * (zk ->> 'fee')::int, 'fee', (zk ->> 'fee')::int, 'w', (zk ->> 'w')::int, 'others', (select count(*) from mp_ugm zg where zg.sta = p_sta and zg.id is distinct from p_skip),
+    'sname', zs.name, 'bad', zbad, 'ov', zov,
+    'bb', jsonb_build_array((select min(p_pts[2 * i - 1]) from generate_series(1, zn) i), (select min(p_pts[2 * i]) from generate_series(1, zn) i),
+                            (select max(p_pts[2 * i - 1]) from generate_series(1, zn) i), (select max(p_pts[2 * i]) from generate_series(1, zn) i)));
+end $$;
+-- 地下街をつくる（p_dry なら見つもりだけ）。名前が空なら「駅の名前＋地下街」（同じ駅の2つ目から 番号）
+create or replace function public.mp_ugm_build(p_sta bigint, p_pts int[], p_name text, p_as text, p_dry boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); pa record; zq jsonb; zid bigint; znm text; zbase text; zn int; zb jsonb;
+begin
+  perform _mp_ok(u);
+  select * into pa from _mp_party(u, p_as);
+  if pa.gv then raise exception '国は地下街をつくりません'; end if;
+  if char_length(coalesce(p_name, '')) > 30 then raise exception '名前は30文字までです'; end if;
+  if not coalesce(p_dry, false) then perform _mp_lock(pa.pu, pa.pc); end if;
+  zq := _mp_ugm_chk(p_sta, p_pts, pa.pu, pa.pc, null);
+  if coalesce(p_dry, false) then return zq; end if;
+  if not (zq ->> 'ok')::boolean then raise exception '%', zq ->> 'why'; end if;
+  zbase := left(coalesce((select regexp_replace(s.name, '駅$', '') from mp_stations s where s.id = p_sta), ''), 24) || '地下街';
+  znm := nullif(btrim(coalesce(p_name, '')), '');
+  if znm is null then
+    znm := zbase; zn := 1;
+    while exists (select 1 from mp_ugm zg where zg.sta = p_sta and zg.name = znm) loop zn := zn + 1; znm := zbase || zn; end loop;   -- 2つ目から 番号
+  end if;
+  perform _mp_pay(pa.pu, pa.pc, false, (zq ->> 'cost')::bigint, 'bld', format('地下街「%s」（%sm）をつくった', znm, zq ->> 'm'));
+  zb := zq -> 'bb';
+  insert into mp_ugm(sta, own_u, own_c, pts, len, bb, name, cost)
+    values (p_sta, pa.pu, pa.pc, p_pts, (zq ->> 'len')::real,
+            box(point((zb ->> 0)::int / 100.0, (zb ->> 1)::int / 100.0), point((zb ->> 2)::int / 100.0, (zb ->> 3)::int / 100.0)), znm, (zq ->> 'cost')::bigint)
+    returning id into zid;
+  perform _mp_chg('ugm', zid, 'set', (select bb from mp_ugm where id = zid));
+  return (zq - 'bad' - 'ov') || jsonb_build_object('id', zid, 'name', znm);
+end $$;
+-- 地下街のようす（地図でタップしたとき）
+create or replace function public.mp_ugm_get(p_id bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me_g(); zg mp_ugm; zk jsonb := _mp_ugm_k(); me_cs int[]; zmine boolean;
+begin
+  perform _mp_ok(u);
+  select * into zg from mp_ugm where id = p_id;
+  if not found then raise exception '地下街がありません（こわされたかもしれません）'; end if;
+  me_cs := array(select id from companies where owner = u);
+  zmine := coalesce(zg.own_u = u or zg.own_c = any(me_cs), false);
+  return jsonb_build_object('id', zg.id, 'name', zg.name, 'sta', zg.sta, 'sname', (select name from mp_stations where id = zg.sta),
+    'm', round(zg.len * 50), 'w', (zk ->> 'w')::int, 'mine', zmine, 'who', _mp_pname(zg.own_u, zg.own_c, false),
+    'n', (zg.st ->> 'n')::int, 'cap', coalesce((zg.st ->> 'cap')::int, floor(zg.len * 50 * (zk ->> 'spm')::real / (zk ->> 'spp')::real)::int), 'pool', (zg.st ->> 'pool')::int,
+    'fee', (zk ->> 'fee')::int, 'up', case when zmine then round(zg.len * 50 * (zk ->> 'upm')::real) end,
+    'rev', case when zmine and zg.st ? 'n' then (zg.st ->> 'n')::int * (zk ->> 'fee')::int end,
+    'cost', case when zmine then zg.cost end, 'at', zg.created_at);
+end $$;
+-- 地下街の名前を変える
+create or replace function public.mp_ugm_set(p_id bigint, p_name text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); zg mp_ugm; znm text := btrim(coalesce(p_name, ''));
+begin
+  perform _mp_ok(u);
+  select * into zg from mp_ugm where id = p_id for update;
+  if not found then raise exception '地下街がありません'; end if;
+  if not coalesce(zg.own_u = u or zg.own_c in (select id from companies where owner = u), false) then raise exception 'あなたの地下街ではありません'; end if;
+  if znm = '' or char_length(znm) > 30 then raise exception '名前は1〜30文字です'; end if;
+  update mp_ugm set name = znm where id = p_id;
+  perform _mp_chg('ugm', p_id, 'set', zg.bb);
+  return jsonb_build_object('id', p_id, 'name', znm);
+end $$;
+-- 地下街をこわす（工事費はもどらない）
+create or replace function public.mp_ugm_del(p_id bigint) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); zg mp_ugm;
+begin
+  perform _mp_ok(u);
+  select * into zg from mp_ugm where id = p_id for update;
+  if not found then raise exception '地下街がありません'; end if;
+  if not coalesce(zg.own_u = u or zg.own_c in (select id from companies where owner = u), false) then raise exception 'あなたの地下街ではありません'; end if;
+  delete from mp_ugm where id = p_id;   -- 地図へは トリガー（_mp_ugm_gone）で知らせる
+  return jsonb_build_object('id', p_id, 'name', zg.name);
+end $$;
+-- 地下街がなくなったら（こわした・駅がなくなった）地図に知らせる
+create or replace function public._mp_ugm_gone() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  perform _mp_chg('ugm', old.id, 'del', old.bb);
+  return old;
+end $$;
+drop trigger if exists mp_ugm_gone on public.mp_ugm;
+create trigger mp_ugm_gone after delete on public.mp_ugm for each row execute function public._mp_ugm_gone();
+-- 1時間ごと（_mp_tick）：地下街の客・売り上げ・維持費
+create or replace function public._mp_ugm_hour(h timestamptz) returns void
+language plpgsql set search_path = public as $$
+declare zk jsonb := _mp_ugm_k(); zg record; zamt bigint; zup bigint;
+begin
+  if not exists (select 1 from mp_ugm) then return; end if;
+  for zg in
+    with zf as (select zs.sta, _mp_ugm_flow(zs.sta, h) flow, sum(zs.len) tl from mp_ugm zs group by zs.sta)
+    select g.id, g.own_u, g.own_c, g.name, g.len, g.created_at, zf.flow,
+           floor(g.len * 50 * (zk ->> 'spm')::real / (zk ->> 'spp')::real)::int cap,
+           least(floor(g.len * 50 * (zk ->> 'spm')::real / (zk ->> 'spp')::real), floor(zf.flow * (zk ->> 'rs')::real * g.len / greatest(zf.tl, 0.01)))::int n
+      from mp_ugm g join zf on zf.sta = g.sta order by g.id
+  loop
+    update mp_ugm set st = jsonb_build_object('n', zg.n, 'cap', zg.cap, 'pool', round(zg.flow * (zk ->> 'rs')::real), 'at', h) where id = zg.id;
+    if zg.own_u is null and zg.own_c is null then continue; end if;
+    zamt := round(zg.n * (zk ->> 'fee')::int / 24.0 * greatest(0, least(1, extract(epoch from h - zg.created_at) / 3600.0)));   -- つくってから1時間たっていなければ、その分だけ
+    if zamt > 0 then perform _mp_earn(zg.own_u, zg.own_c, false, zamt, 'fee', format('地下街の売り上げ：%s（%s人）', zg.name, zg.n)); end if;
+    zup := round(zg.len * 50 * (zk ->> 'upm')::real / 24.0);
+    if zup > 0 then perform _mp_soft_pay(zg.own_u, zg.own_c, false, zup, 'upkeep', format('維持費（地下街：%s）', zg.name)); end if;
+  end loop;
 end $$;
 
 /* ---------- お金の記録（自分の名義） ---------- */
@@ -24978,6 +25175,7 @@ language sql immutable as $$
    {"k":"depart","n":"百貨店","use":"shop","u":300,"z":"cd","cpm":900,"f0":5,"f1":12,"min":60,"max":800,"sh":["full","slab"],"cat":"shop","c":"#d8c3a5","rl":1.3,"dm":0.95,"fx":{"shop":0.12,"office":0.04},"dn":["{}百貨店","{}デパート"]},
    {"k":"fashionbldg","n":"ファッションビル","use":"shop","u":60,"z":"cd","cpm":850,"f0":5,"f1":12,"min":10,"max":200,"sh":["full","slab","tower"],"cat":"shop","c":"#e3cfd6","rl":1.3,"dm":0.95,"fx":{"shop":0.06},"dn":["{}ファッションビル"]},
    {"k":"ekibiru","n":"駅ビル","use":"shop","mix":[[0.5,"shop"],[1,"office"]],"us":{"shop":80,"office":0},"z":"cd","cpm":850,"f0":3,"f1":12,"min":10,"max":200,"sh":["full","slab"],"cat":"shop","c":"#d6ccbd","rl":1.25,"dm":1.1,"fx":{"shop":0.08},"dn":["{}駅ビル"]},
+   {"k":"ekichoku","n":"駅直結ビル","use":"shop","mix":[[0.4,"shop"],[1,"office"]],"us":{"shop":100000,"office":100000},"z":"abcdefghk","cpm":700,"f0":2,"f1":30,"min":3,"max":200,"sh":["full","slab","L"],"sc":"ekichoku","self1":true,"sta":true,"cat":"shop","c":"#d3cbbd","rl":1.15,"dm":1.1,"fx":{"shop":0.05},"dn":["{}駅ビル"]},
    {"k":"famires","n":"ファミリーレストラン","use":"shop","one":true,"z":"bcdek","cpm":380,"f0":1,"f1":2,"min":4,"max":30,"sh":["full"],"cat":"shop","c":"#efc89a","dn":["{}ファミリーレストラン"]},
    {"k":"ramen","n":"ラーメン屋","use":"shop","one":true,"z":"bcdk","cpm":350,"f0":1,"f1":2,"min":1,"max":4,"sh":["full"],"cat":"shop","c":"#d9a066","rl":1.1,"dm":1.1,"dn":["{}ラーメン屋"]},
    {"k":"soba","n":"そば屋","use":"shop","one":true,"z":"bcdk","cpm":350,"f0":1,"f1":2,"min":1,"max":4,"sh":["full"],"cat":"shop","c":"#9c7a52","dn":["{}そば屋"]},
@@ -25482,10 +25680,27 @@ language sql stable set search_path = public as $$
                                 where lseg(point(s.pts[2 * i - 1] / 100.0, s.pts[2 * i] / 100.0), point(s.pts[2 * i + 1] / 100.0, s.pts[2 * i + 2] / 100.0))
                                       ?# box(point(x0 / 5.0 - 1, y0 / 5.0 - 1), point((x1 + 1) / 5.0 + 1, (y1 + 1) / 5.0 + 1))))
 $$;
+-- 名義の人（会社なら その会社の持ち主）。国は null（DB の更新109）
+create or replace function public._mp_pperson(pu uuid, pc int) returns uuid
+language sql stable set search_path = public as $$
+  select coalesce(pu, (select c.owner from companies c where c.id = pc))
+$$;
+-- 筆のとなり（ホームの区画から 2区画＝20m 以内）にある、同じ人（その人の会社もふくむ）の鉄道の駅。いちばん近いもの（DB の更新109：駅直結ビル）
+create or replace function public._mp_sta_touch(p mp_parcels) returns bigint
+language sql stable set search_path = public as $$
+  select zt.id from mp_stations zt
+   where zt.kind = 'rail' and zt.seg is not null
+     and zt.x between ((p.bb[1])[0] / 5.0 - 12) * 100 and ((p.bb[0])[0] / 5.0 + 12) * 100
+     and zt.y between ((p.bb[1])[1] / 5.0 - 12) * 100 and ((p.bb[0])[1] / 5.0 + 12) * 100
+     and _mp_pperson(p.own_u, p.own_c) is not null and _mp_pperson(zt.own_u, zt.own_c) = _mp_pperson(p.own_u, p.own_c)
+     and exists (select 1 from _mp_sta_cells(zt.id) zc join mp_pcells zp on zp.parcel = p.id and abs(zp.x - zc.x) <= 2 and abs(zp.y - zc.y) <= 2)
+   order by (zt.x / 100.0 - ((p.bb[1])[0] + (p.bb[0])[0]) / 10.0) ^ 2 + (zt.y / 100.0 - ((p.bb[1])[1] + (p.bb[0])[1]) / 10.0) ^ 2
+   limit 1
+$$;
 create or replace function public._mp_bld_check(p mp_parcels, p_kind text, p_shape text, p_floors int, p_opt text) returns jsonb
 language plpgsql stable set search_path = public as $$
 declare pr jsonb; zs text; zr jsonb; cv real := 1; far real := 99; mf int := 99; pcs int[]; cs int[]; nmax int; cnt int; fm2 int; f0 int; f1 int; fl int; plan jsonb;
-        x0 int; y0 int; x1 int; y1 int; bad text; rent numeric := 0; lv numeric; z text;
+        x0 int; y0 int; x1 int; y1 int; bad text; rent numeric := 0; lv numeric; z text; zsta bigint;
 begin
   select b into pr from jsonb_array_elements(_mp_bld_presets()) b where b ->> 'k' = p_kind;
   if pr is null then raise exception '建物の種類がちがいます'; end if;
@@ -25507,6 +25722,10 @@ begin
   end if;
   if coalesce((pr ->> 'xw')::boolean, false) and not _mp_near_exp(x0, y0, x1, y1) then   -- サービスエリア・パーキングエリア（DB の更新103）
     raise exception '%は高速道路のそば（50m 以内）に建てます', pr ->> 'n';
+  end if;
+  if coalesce((pr ->> 'sta')::boolean, false) then   -- 駅直結ビル（DB の更新109）：自分の駅のとなり
+    zsta := _mp_sta_touch(p);
+    if zsta is null then raise exception '%は自分の駅のとなり（ホームから 20m 以内）に建てます', pr ->> 'n'; end if;
   end if;
   -- 道路・線路・駅・車庫のかかっていない区画
   pcs := array(select v from (select pc.x, pc.y, row_number() over (order by pc.y, pc.x) rn from mp_pcells pc where pc.parcel = p.id
@@ -25533,7 +25752,7 @@ begin
   return jsonb_build_object('kind', p_kind, 'name', pr ->> 'n', 'shape', coalesce(p_shape, 'full'), 'cells', to_jsonb(cs), 'fm2', fm2, 'f0', f0, 'f1', f1, 'floors', fl,
     'units', jsonb_array_length(plan), 'uses', (select jsonb_object_agg(us, n) from (select e ->> 'use' us, count(*) n from jsonb_array_elements(plan) e group by 1) q),
     'total_m2', case when fl = 0 then fm2 else fm2 * fl end, 'cost', round(case when fl = 0 then fm2 else fm2 * fl end * (pr ->> 'cpm')::numeric)::bigint,
-    'rent_day', round(rent), 'cv', cv, 'far', far, 'plan', plan);
+    'rent_day', round(rent), 'cv', cv, 'far', far, 'plan', plan) || case when zsta is null then '{}'::jsonb else jsonb_build_object('sta', zsta) end;
 end $$;
 create or replace function public.mp_bld_quote(p_parcel bigint, p_kind text, p_shape text, p_floors int, p_opt text, p_as text) returns jsonb
 language plpgsql security definer set search_path = public as $$
@@ -25582,6 +25801,7 @@ begin
       if zs is not null then why := format('用途地域で建てられません（%s）', zs);
       elsif coalesce((pr ->> 'sea')::boolean, false) and not seaok then why := format('%sは海のそばに建てます', pr ->> 'n');
       elsif coalesce((pr ->> 'xw')::boolean, false) and not expok then why := format('%sは高速道路のそば（50m 以内）に建てます', pr ->> 'n');
+      elsif coalesce((pr ->> 'sta')::boolean, false) and _mp_sta_touch(p) is null then why := format('%sは自分の駅のとなり（ホームから 20m 以内）に建てます', pr ->> 'n');   -- 駅直結ビル（DB の更新109）
       elsif npcs = 0 then why := '道路・線路・駅・車庫がかかっている土地には建てられません';
       end if;
     end if;
@@ -25652,6 +25872,9 @@ begin
   if p.bld is not null then raise exception 'もう建物があります（先にこわしてください）'; end if;
   if char_length(coalesce(p_name, '')) > 30 then raise exception '名前は30文字までです'; end if;
   q := _mp_bld_check(p, p_kind, p_shape, p_floors, p_opt);
+  if nullif(btrim(coalesce(p_name, '')), '') is null and q ? 'sta' then   -- 駅直結ビル（DB の更新109）：はじめの名前は 駅の名前から
+    p_name := left((select regexp_replace(s.name, '駅$', '') from mp_stations s where s.id = (q ->> 'sta')::bigint) || '駅ビル', 30);
+  end if;
   perform _mp_pay(pa.pu, pa.pc, false, (q ->> 'cost')::bigint, 'bld', format('%s（%s㎡）を建てた', q ->> 'name', q ->> 'total_m2'));
   bid := _mp_bld_make(p.id, q, p_opt, p_name, (q ->> 'cost')::bigint, false);
   perform _mp_sc_touch(bid);   -- 施設なら、客をすぐ数える（t54m）
@@ -27893,6 +28116,7 @@ language sql immutable as $$
     "capsule": {"n":"カプセルホテル","use":"hotel","spp":6,"r":40,"age":0.0008,"rs":0.01,"fee":300,"w":1.0,"acc":true,"loc":true},
     "guesthouse": {"n":"ゲストハウス","use":"hotel","spp":12,"r":100,"age":0.0004,"rs":0.005,"fee":450,"w":1.0,"acc":true,"loc":true},
     "stahotel": {"n":"駅前ホテル","use":"hotel","spp":28,"r":60,"age":0.001,"rs":0.015,"fee":1100,"w":1.0,"acc":true,"loc":true},
+    "ekichoku": {"n":"駅ナカのお店","use":"shop","spp":1.5,"r":4,"rr":5,"age":0.003,"rs":0.06,"fee":100,"w":0,"acc":false,"loc":true},
     "condo": {"n":"コンドミニアム","use":"hotel","spp":50,"r":200,"age":0.0003,"rs":0.003,"fee":2200,"w":0.6,"acc":false,"loc":true,"pk":[7,8]},
     "clinic": {"n":"診療所","use":"hospital","spp":8,"r":16,"age":0.02,"rs":0,"fee":400,"w":0.2,"acc":false,"loc":false},
     "dental": {"n":"歯科医院","use":"hospital","spp":10,"r":16,"age":0.008,"rs":0,"fee":450,"w":0.1,"acc":false,"loc":false},
@@ -27978,7 +28202,11 @@ begin
   insert into mp_sc(bld, prod, grp, x, y, lv) values (bid, pr ->> 'mk', pr ->> 'sc', cx, cy, case when pr ->> 'mk' in ('railcar', 'ship') then 0.9 else 1 end)   -- 車両・船は定価の90%から
     on conflict (bld) do nothing;
   -- 学校・特殊工場は、はじめは「自分で使う」（建てた人・会社が動かす。入居募集・テナント募集にも変えられる）
-  update mp_units set mode = 'self' where bld = bid and t_kind is null and mode = 'npc';
+  if coalesce((pr ->> 'self1')::boolean, false) then   -- 駅直結ビル（DB の更新109）：1階（はじめの部屋）だけ。上の階は テナント募集のまま
+    update mp_units set mode = 'self' where id = (select zu.id from mp_units zu where zu.bld = bid order by zu.floor, zu.no limit 1) and t_kind is null and mode = 'npc';
+  else
+    update mp_units set mode = 'self' where bld = bid and t_kind is null and mode = 'npc';
+  end if;
 end $$;
 -- だれが動かしているか（h の時刻に）：ok 人・会社が動かしている（pu・pc）・npc 町の人（学校法人）が入っている・gv 国の建物。m2 延床面積
 create or replace function public._mp_sc_op(bid bigint, h timestamptz, out ok boolean, out npc boolean, out pu uuid, out pc int, out gv boolean, out m2 int)
@@ -28037,8 +28265,8 @@ begin
    where cap > 0 and (p_only is null or t.bld = p_only);
   -- 来る人：まわりの人 × わりあい ＋ 近くの駅の乗り降り × わりあい。駅で通えるか・まわりの建物の効果（fx）・季節
   update _scs t set pool = (_mp_catch(t.x, t.y, (kd -> t.grp ->> 'r')::real) * (kd -> t.grp ->> 'age')::real
-                            + coalesce((kd -> t.grp ->> 'rs')::real, 0) * coalesce((select sum(f.flow) from _sflow f where f.sx between t.x - 15 and t.x + 15 and f.sy between t.y - 15 and t.y + 15
-                                                                                     and (f.sx - t.x) ^ 2 + (f.sy - t.y) ^ 2 <= 225), 0))
+                            + coalesce((kd -> t.grp ->> 'rs')::real, 0) * coalesce((select sum(f.flow) from _sflow f where f.sx between t.x - coalesce((kd -> t.grp ->> 'rr')::real, 15) and t.x + coalesce((kd -> t.grp ->> 'rr')::real, 15) and f.sy between t.y - coalesce((kd -> t.grp ->> 'rr')::real, 15) and t.y + coalesce((kd -> t.grp ->> 'rr')::real, 15)
+                                                                                     and (f.sx - t.x) ^ 2 + (f.sy - t.y) ^ 2 <= coalesce((kd -> t.grp ->> 'rr')::real, 15) ^ 2), 0))   -- rr：駅をさがす はんい（マス。駅直結ビルは 5。DB の更新109）
                            * t.acc * greatest(0.1, 1 + t.fxv) * (1 + t.aap)
                            * case when coalesce(kd -> t.grp -> 'pk', '[]'::jsonb) @> to_jsonb(mo) then 1.3 when coalesce(kd -> t.grp -> 'op', '[]'::jsonb) @> to_jsonb(mo) then 0.75 else 1 end
    where cap > 0 and (p_only is null or t.bld = p_only);
@@ -28106,7 +28334,7 @@ begin
     if amt > 0 then
       perform _mp_earn(fa.pu, fa.pc, false, amt, case when fa.fuse = 'school' then 'tuition' else 'fee' end,
                        format(case when fa.grp = 'kbshop' then '馬券の手数料：%s（%s人）' else case fa.fuse when 'school' then '授業料：%s（%s人）' when 'hotel' then '宿泊料：%s（%s人）' when 'hospital' then '診療報酬など：%s（%s人）'
-                                           else '入場料など：%s（%s人）' end end, fa.name, fa.sn));
+                                           when 'shop' then 'お店の売り上げ：%s（%s人）' else '入場料など：%s（%s人）' end end, fa.name, fa.sn));
       insert into mp_sclog(at, bld, k, qty, amt) values (h, fa.bld, 'fee', fa.sn, amt);
     end if;
   end loop;
@@ -34450,7 +34678,7 @@ begin
             '_mp_snowzone','_mp_snowzone_at','_mp_snow_sub','_mp_snowc','_mp_snow_x','_mp_snow_km','_mp_snow_ready','_mp_snow_fac','_mp_snow_tick','_mp_snow_subsidy','_mp_snow_upkeep','_wx_snow',
             '_mp_gz','_mp_pz','_mp_seg_z','_mp_node_z','_mp_prof_sub','_mp_prof_rev','_mp_gsamp','_mp_hd','_mp_prof_solve','_mp_xing','_mp_prof_obst','_mp_st_code','_mp_smul',
             '_mp_prof_make','_mp_prof_pack','_mp_att_z','_mp_end_z','_mp_prof_ground','_mp_prof_cat','_mp_st_of','_mp_tiles_s','_mp_st_tiles','_mp_st_map','_mp_st_cost','_mp_st_muls',
-            '_mp_zl','_mp_sta_lv','_mp_sta_cost','_mp_bld_hit_z','_mp_dep_fx','_mp_chain','_mp_fix_xing','_mp_prof_redo','_mp_prof_fill_some',
+            '_mp_zl','_mp_sta_lv','_mp_sta_cost','_mp_bld_hit_z','_mp_dep_fx','_mp_chain','_mp_fix_xing','_mp_prof_redo','_mp_prof_fill_some','_mp_pperson','_mp_sta_touch','_mp_ugm_k','_mp_ugm_flow','_mp_ugm_chk','_mp_ugm_gone','_mp_ugm_hour','mp_ugm_build','mp_ugm_get','mp_ugm_set','mp_ugm_del',
             'mp_admin_airport','mp_admin_cho_merge','mp_admin_cho_split','mp_admin_lvset','mp_admin_place_at','mp_admin_rates','mp_admin_rename','mp_admin_state',
             'mp_admin_zone','mp_area','mp_bld_build','mp_bld_demolish','mp_bld_get','mp_bld_options','mp_bld_quote','mp_bld_set','mp_bld_look','_mp_look_cost','_mp_rot_cost','_mp_near_exp','_mp_prop_kinds','mp_prop_kinds','_mp_prop_party','mp_prop_put','mp_prop_set','mp_prop_del','mp_unit_colors',
             'mp_boot','mp_car_log','mp_car_move','mp_car_order','mp_car_scrap','mp_car_work','mp_cars_gone','mp_cars_list',

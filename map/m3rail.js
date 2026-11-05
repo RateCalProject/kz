@@ -10,7 +10,7 @@
    遠いほど かんたんに（レール・架線は近くだけ・遠くは 道床と枕木の絵だけ）
    道路とかさなるところ：地面どうしは踏切（駅の中・高速道路はのぞく）。高架・橋の下の道路には柱を立てない。高い盛土の下の道路は 短い橋で */
 const U = 1 / 50;   // 1m（マス）
-let X = null, T3 = null, M3 = null, GEN = 0, LIFT = 0.02, VEX = 1.15;
+let X = null, T3 = null, M3 = null, GEN = 0, LIFT = 0.02, VEX = 1.15, UG = false;   // UG：地下ビュー（DB の更新109）
 let LQ = [4, 8, 15], CEN = { x: 0, y: 0, h: 0 }, NODES = new Map(), RIDX = null;
 
 // ---- 寸法（m） ----
@@ -235,6 +235,7 @@ LB.prototype.l = function (p, q) { this.a.push(p[0], p[1], p[2], q[0], q[1], q[2
 const MAT = {}, TEX = new Map();
 const keep = m => { m.keep = true; return m; };
 function matV() { return MAT.v || (MAT.v = keep(new T3.MeshLambertMaterial({ vertexColors: true, side: T3.DoubleSide }))); }
+function matU() { return MAT.u || (MAT.u = keep(new T3.MeshLambertMaterial({ vertexColors: true, side: T3.DoubleSide }))); }   // 地下ビューの トンネルの中（DB の更新109）
 function matX() { return MAT.x || (MAT.x = keep(new T3.MeshLambertMaterial({ vertexColors: true, side: T3.DoubleSide, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6 }))); }
 function matL(k) { return MAT['l' + k] || (MAT['l' + k] = keep(new T3.LineBasicMaterial({ color: k === 1 ? '#3a3632' : '#2a2c2e' }))); }
 function matT(sp) {
@@ -618,11 +619,11 @@ function overlaps(rails, sts, inSta) {
 let G = null;   // この作りなおしの 入れもの
 function build(cx) {
   const t0 = performance.now(), tm = R.tm = {};
-  X = cx; T3 = cx.T3; M3 = cx.M3; LIFT = cx.M3_LIFT; VEX = cx.M3_VEX; GEN++;
+  X = cx; T3 = cx.T3; M3 = cx.M3; LIFT = cx.M3_LIFT; VEX = cx.M3_VEX; GEN++; UG = !!cx.ug;
   const MQ = cx.MQ || {}, lv = Math.max(0, Math.min(3, Number(MQ.d3) || 0)), kq = lv <= 0 ? 0.6 : lv >= 3 ? 1.5 : lv >= 2 ? 1.2 : 1;
   LQ = [4 * kq, 8 * kq, 15 * kq];
   const v = cx.v; CEN = { x: v.cx != null ? v.cx : M3.tx, y: v.cy != null ? v.cy : M3.ty, h: Math.max(4, Math.round((v.x1 - v.x0) / 10)) * 0.5 };
-  G = { v: new GB(false), x: new GB(false), trk: new Map(), w: new LB(), f: new LB(), arms: [], lamps: [], xs: [], q: lv, eco: lv <= 0 };
+  G = { v: new GB(false), x: new GB(false), u: new GB(false), trk: new Map(), w: new LB(), f: new LB(), arms: [], lamps: [], xs: [], q: lv, eco: lv <= 0 };
   // 1. 線路（読んであるもの全部：つぎめ・駅の線をたどるため）
   NODES = new Map(); const all = [];
   for (const sg of (cx.it && cx.it.segs ? cx.it.segs.values() : cx.segs)) {
@@ -771,7 +772,7 @@ function segRun(C, ia, ib) {
   const urban = S => { const t = X.tileAt(Math.floor(S.x), Math.floor(S.y)); return !!(t && t.z && 'abcdefgk'.includes(t.z)); };
   for (let j = 0; j + 1 < SA.length; j++) {
     const A = SA[j], B = SA[j + 1], c = PC[j][0], tr = PC[j].length > 1, lod = Math.max(A.lod, B.lod);
-    if (c === 'T') continue;
+    if (c === 'T') { if (UG) tunPiece(C, A, B); continue; }   // トンネルの中は 地下ビューのときだけ（DB の更新109）
     if (DECK[c]) deckPiece(C, A, B, c, tr, lod, runs.find(r => j >= r.j0 && j <= r.j1)); else bedPiece(C, A, B, lod, lod >= 1 && !G.eco && urban(A));
     trackPiece(C, A, B, lod);
     platPiece(C, A, B, lod, SA[j - 1], SA[j + 2], c);
@@ -1010,6 +1011,26 @@ function abut(C, S, sd) {
   const DL = S.eL + 1.6, DR = S.eR + 1.6, W = DL + DR, tx = S.tx * sd, ty = S.ty * sd;
   const cx = S.x + S.nx * ((DL - DR) / 2) * U + tx * 2 * U, cy = S.y + S.ny * ((DL - DR) / 2) * U + ty * 2 * U, gz = Math.min(X.m3Surf(cx, cy), S.rt + ZF * U) - 0.6 * U;
   G.v.box(cx, cy, tx, ty, 2.0 * U, (W / 2 + 0.2) * U, gz, S.rt + ZF * U - 0.02 * U, CL.concD);
+}
+// トンネルの中（地下ビュー。DB の更新109）：床・左右の壁（天井はなし：上から中が見える）・レール・地下駅のホーム
+const CLU = { f: [0.44, 0.44, 0.45], w: [0.80, 0.78, 0.73], wt: [0.92, 0.90, 0.85], r: [0.22, 0.22, 0.24], s: [0.52, 0.48, 0.43], p: [0.88, 0.86, 0.80], pe: [0.95, 0.82, 0.25], ps: [0.70, 0.68, 0.64] };
+function tunPiece(C, A, B) {
+  const g = G.u, wl = Math.max(A.eL, B.eL) + 1.4, wr = Math.max(A.eR, B.eR) + 1.4;
+  const P = (S, o, h) => [S.x + S.nx * o * U, S.rt + h * U, S.y + S.ny * o * U];
+  g.q(P(A, -wr, -0.5), P(B, -wr, -0.5), P(B, wl, -0.5), P(A, wl, -0.5), CLU.f);   // 床
+  for (const o of [wl, -wr]) {   // 壁（上のはしは 明るく）
+    g.q(P(A, o, -0.5), P(B, o, -0.5), P(B, o, 5.4), P(A, o, 5.4), CLU.w);
+    g.q(P(A, o, 5.4), P(B, o, 5.4), P(B, o, 5.8), P(A, o, 5.8), CLU.wt);
+  }
+  for (const t of A.tr) {   // バラスト（コンクリート道床）とレール
+    g.q(P(A, t.o - 1.3, -0.25), P(B, t.o - 1.3, -0.25), P(B, t.o + 1.3, -0.25), P(A, t.o + 1.3, -0.25), CLU.s);
+    for (const r of [-0.72, 0.72]) g.q(P(A, t.o + r - 0.05, 0), P(B, t.o + r - 0.05, 0), P(B, t.o + r + 0.05, 0), P(A, t.o + r + 0.05, 0), CLU.r);
+  }
+  for (const p of A.pl) {   // 地下駅のホーム（上・ふち・黄色い線）
+    g.q(P(A, p.a, 1.1), P(B, p.a, 1.1), P(B, p.b, 1.1), P(A, p.b, 1.1), CLU.p);
+    g.q(P(A, p.a, -0.2), P(B, p.a, -0.2), P(B, p.a, 1.1), P(A, p.a, 1.1), CLU.ps); g.q(P(A, p.b, -0.2), P(B, p.b, -0.2), P(B, p.b, 1.1), P(A, p.b, 1.1), CLU.ps);
+    if (p.b - p.a > 2.4) { g.q(P(A, p.a + 0.6, 1.12), P(B, p.a + 0.6, 1.12), P(B, p.a + 0.9, 1.12), P(A, p.a + 0.9, 1.12), CLU.pe); g.q(P(A, p.b - 0.9, 1.12), P(B, p.b - 0.9, 1.12), P(B, p.b - 0.6, 1.12), P(A, p.b - 0.6, 1.12), CLU.pe); }
+  }
 }
 // トンネルの入口：入口の面（アーチの口・まわりのコンクリート）と 中の暗がり。out：外の向き（線の向きに ±1）
 function portal(C, S, out, cOut) {
@@ -1479,6 +1500,7 @@ function flush() {
   if (G.v.nv) grp.add(G.v.mesh(matV()));
   for (const o of G.trk.values()) if (o.g.nv) grp.add(o.g.mesh(matT(o.sp)));
   if (G.x.nv) grp.add(G.x.mesh(matX()));
+  if (G.u.nv) { const m = G.u.mesh(matU()); m.userData.ug = true; grp.add(m); }   // 地下ビューの トンネル（DB の更新109）
   for (const [lb, k] of [[G.w, 0], [G.f, 1]]) if (lb.a.length) { const geo = new T3.BufferGeometry(); geo.setAttribute('position', new T3.Float32BufferAttribute(lb.a, 3)); grp.add(new T3.LineSegments(geo, matL(k))); }
   flushX();
   R.nv = G.v.nv;

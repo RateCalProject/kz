@@ -173,6 +173,7 @@ function m3Frame() {
   try { m3Lite(rc, nearOn); } catch (e) { console.error(e); }
   try { m3Runs(rc.near); } catch (e) { console.error(e); }   // 列車・バス（t61）
   m3SigTick();   // 信号の灯（t64b）
+  m3UgPass();   // 地下ビュー（DB の更新109）：地面・建物・道路を すかす
   m3Cam();
   M3.r.render(M3.sc, M3.cam);
   m3Labels();   // 建物の名前（t61）
@@ -306,7 +307,7 @@ const m3Dispose = o => o.traverse(x => { if (x.geometry) x.geometry.dispose(); i
 // 3D の中のもの（線路・地形のファイルに わたす。t64c）
 function m3X() {
   return { T3: M3.T, M3, S, CS, MQ, PAL, LO, tileAt, ckey, loAt, loH, now, m3Hash, m3Half, m3Coast, m3W, m3ChunkMesh, m3LoMesh, m3Surf, m3OnLine, pfZ, runRef,
-    M3_U, M3_VEX, M3_LIFT, M3_FH, M3_TMAT, visibleItems };
+    M3_U, M3_VEX, M3_LIFT, M3_FH, M3_TMAT, visibleItems, ug: !!M3.ug };   // ug：地下ビュー（DB の更新109）
 }
 const M3_TMAT = { m: null };
 // 海ぞいか（陸のタイルの となりに 海 D・S がある）。チャンクに おぼえる（となりのチャンクを読んだら はかりなおす）（t64）
@@ -912,10 +913,12 @@ function m3Blds(v) {
   const rws = [...(it.rwys ? it.rwys.values() : [])].filter(r => r.bb && r.bb[2] >= v.x0 && r.bb[0] <= v.x1 && r.bb[3] >= v.y0 && r.bb[1] <= v.y1);
   const sts = [...it.stas.values()].filter(t => t.fx >= v.x0 - 2 && t.fx <= v.x1 + 2 && t.fy >= v.y0 - 2 && t.fy <= v.y1 + 2);   // 駅（t62）
   const prs = it.props ? [...it.props.values()] : [];   // 小物（t65）
+  const ugs = it.ugm ? [...it.ugm.values()].filter(u => u.P.some(p => p[0] >= v.x0 - 1 && p[0] <= v.x1 + 1 && p[1] >= v.y0 - 1 && p[1] <= v.y1 + 1)) : [];   // 地下街（DB の更新109）
   const key = bs.length + ':' + bs.reduce((a, b) => (a + b.id * 31 + b.floors + (b.lk || 0) * 7 + (b.rot == null ? 0 : b.rot + 1) * 11 + (b.sc ? JSON.stringify(b.sc).length * 13 : 0)) % 1e9, 0)
             + '|' + prs.length + ':' + prs.reduce((a, p) => (a + p.id * 17 + Math.round(p.x * 100) + Math.round(p.y * 100) * 3 + p.rot * 5 + (p.col ? parseInt(p.col.slice(1), 16) % 997 : 0)) % 1e9, 0) + '|' + segs.length + ':' + segs.reduce((a, s) => (a + s.id * 17 + (s.pf ? Math.round(s.pf.reduce((u, w) => u + w, 0)) : 0)) % 1e9, 0)
             + '|' + rws.length + ':' + rws.reduce((a, r) => (a + r.id * 13) % 1e9, 0) + '|' + sts.length + ':' + sts.reduce((a, t) => (a + t.id * 7 + (t.pl || 0) * 3 + (t.tr || 0)) % 1e9, 0)
             + '|' + M3.tgN   // 近くの地形の網を作りなおしたら、のせなおす（t64）
+            + '|' + (M3.ug ? 'u' : '') + ugs.reduce((a, u) => (a + u.id * 37 + u.P.length + Math.round(u.L * 100)) % 1e9, ugs.length)   // 地下ビュー・地下街（DB の更新109）
             + '|' + (M3.d < 12 ? 'k' : M3.d < 30 ? 'p' : M3.d < 40 ? 'n' : M3.d < 80 ? 'm' : M3.d < 150 ? 'w' : 'f')   // 道のまわりの物の段（t64b）
             + '|' + (M3.d < 30 ? Math.round(Math.log2(M3.d) * 2) : '-');   // 街灯・信号の はんい（近づくほど せまく）
   if (key === M3.bKey) return;
@@ -959,8 +962,10 @@ function m3Blds(v) {
       let gmin = Infinity; for (const h of gl) if (h < gmin) gmin = h;
       const dc = Math.hypot(M3.d, Math.max(0, Math.hypot(b.cx - v.cx, b.cy - v.cy) - G5 * 0.5));   // カメラまでの遠さの めやす（マス）
       let top = g0 + hgt;
-      const lod = dc < 6 * kq ? 2 : dc < 12 * kq ? 1 : dc < 22 * kq ? 0 : -1, tf0 = performance.now(), fr = FRo(b), tb0 = performance.now(); M3.bst[4][1] += tb0 - tf0;   // 道のほう（向きの自動にも。遠くでも）
+      const dk = b.kind === 'ekichoku' ? m3EkiLink(b, sts) : null;   // 駅直結ビル（DB の更新109）：駅のほうを向く
+      const lod = dc < 6 * kq ? 2 : dc < 12 * kq ? 1 : dc < 22 * kq ? 0 : -1, tf0 = performance.now(), fr = dk ? dk.front : FRo(b), tb0 = performance.now(); M3.bst[4][1] += tb0 - tf0;   // 道のほう（向きの自動にも。遠くでも）
       try { top = AR.build(AB, b, g0, gmin, { lod, front: fr }); } catch (e) { console.error(e); }
+      if (dk && lod >= 0) try { m3EkiDeck(AB, dk, it, lod); } catch (e) { console.error(e); }
       const sx = M3.bst[lod + 1]; sx[0]++; sx[1] += performance.now() - tb0;   // 段ごとの数と時間（たしかめる用）
       if (b.name) M3.labs.push({ x: b.cx, y: b.cy, h: top + 2 * M3_U, n: b.name, f });
       continue;
@@ -1086,6 +1091,7 @@ function m3Blds(v) {
     const gy = m3Surf(pr.x, pr.y), top = AR.buildProp(AB, pr, gy, { lod: Math.hypot(M3.d, Math.hypot(pr.x - v.cx, pr.y - v.cy)) < 5 ? 2 : 1 });
     M3.propHit.push({ x: pr.x, y: (gy + top) / 2, z: pr.y, o: pr });
   }
+  if (ugs.length) try { m3Ugm(T3, AB, ugs, v); } catch (e) { console.error(e); }   // 地下街（DB の更新109）：地上の出入口・地下ビューでは 中も
   if (AB) { const t1 = performance.now(); M3.nBv = AR.flush(T3, AB, M3.grpB); M3.tBf = performance.now() - t1; }   // 建物の型（t65）：質感ごとのメッシュに
   // 道路・線路：地面の少し上に帯で（道のはば・地形の面にそって。t64）
   //   地面（G）・縦断のない線：帯の左右のはしも 地形の面にそって（坂を横ぎっても うまらない）。縦断があれば その高さより下にしない（盛土は すそを地面まで）
@@ -1170,6 +1176,125 @@ function m3Blds(v) {
   else try { m3Roads(T3, roads); } catch (e) { console.error(e); }
 }
 
+/* ---------- 駅直結ビル・地下街・地下ビュー（DB の更新109） ---------- */
+// 駅直結ビル：いちばん近い鉄道の駅（ホームを まっすぐとみなす）。建物のふち p1 → 駅のふち p2（マス）。front：建物から駅への向き
+function m3EkiLink(b, sts) {
+  let best = null;
+  for (const t of sts) {
+    if (t.k !== 'rail') continue;
+    const h = (t.pl || 0) / 100, c = Math.cos(t.a || 0), n = Math.sin(t.a || 0), ax = t.fx - c * h, ay = t.fy - n * h, L2 = 4 * h * h;
+    const u = L2 ? Math.max(0, Math.min(1, ((b.cx - ax) * 2 * c * h + (b.cy - ay) * 2 * n * h) / L2)) : 0, qx = ax + 2 * c * h * u, qy = ay + 2 * n * h * u, d = Math.hypot(b.cx - qx, b.cy - qy);
+    if (d < 3 && (!best || d < best.d)) best = { t, qx, qy, d };
+  }
+  if (!best || best.d < 1e-3) return null;
+  const { t, qx, qy, d } = best, nx = (b.cx - qx) / d, ny = (b.cy - qy) / d, hw = (0.22 * Math.max(1, t.tr || 1) + 0.18) / 2;
+  const p2 = [qx + nx * hw, qy + ny * hw];
+  let p1 = [b.cx, b.cy];
+  for (let k = 0; k <= 300; k++) { const x = b.cx - nx * k * 0.01, y = b.cy - ny * k * 0.01; if (!b.set.has(Math.floor(x * 5) + ',' + Math.floor(y * 5))) break; p1 = [x, y]; }
+  return { t, p1, p2, front: [-nx, -ny], into: Math.hypot(p2[0] - b.cx, p2[1] - b.cy) < Math.hypot(p1[0] - b.cx, p1[1] - b.cy) };
+}
+// 連絡デッキ（2階の高さ・屋根・ガラスの壁・柱。駅のがわに 階段の塔）。地下駅は なし。高架駅は 地面の高さの 屋根つきの通路
+function m3EkiDeck(AB, dk, it, lod) {
+  const t = dk.t; if (dk.into || t.zl === 'U') return;
+  const [x1, y1] = dk.p1, [x2, y2] = dk.p2, L = Math.hypot(x2 - x1, y2 - y1) * 50; if (L < 2 || L > 80) return;
+  const RL = window.M3RAIL, sg = it.segs.get(t.seg), ry = RL && !RL.fail && RL.runY && sg ? RL.runY(sg, t.at || 0) : null;
+  const g1 = m3Surf(x1, y1) * 50, g2 = m3Surf(x2, y2) * 50, elev = t.zl === 'E';
+  const yd = elev ? Math.max(g1, g2) + 0.15 : Math.max(g1 + 5.5, (ry ? ry.y * 50 : g2) + 7.0);   // 床（m）。地上駅は 橋上駅舎の高さ
+  const ang = Math.atan2(y2 - y1, x2 - x1), cx = (x1 + x2) / 2 * 50, cz = (y1 + y2) / 2 * 50, c = Math.cos(ang), n = Math.sin(ang), W = 6;
+  AB.ox = 0; AB.oz = 0; AB.oy = 0; AB.rc = 1; AB.rs = 0;
+  const SL = [0.78, 0.78, 0.76], GL = [0.56, 0.68, 0.76], RF = [0.62, 0.64, 0.67], PI = [0.72, 0.72, 0.70];
+  if (!elev) AB.obox('c', cx, cz, ang, L + 0.6, W, yd - 0.8, yd, SL);   // 床
+  AB.obox('c', cx, cz, ang, L + 0.6, W + 0.8, yd + 3.2, yd + 3.5, RF);   // 屋根
+  if (lod >= 1) for (const sd of [1, -1]) {   // ガラスの壁（高架駅の通路は 柱だけ）
+    const ox = -n * sd * (W / 2 - 0.1), oz = c * sd * (W / 2 - 0.1);
+    if (!elev) AB.obox('c', cx + ox, cz + oz, ang, L, 0.12, yd, yd + 3.2, GL);
+    else { const k = Math.max(1, Math.round((L - 2) / 6)); for (let i = 0; i <= k; i++) { const u = -L / 2 + 1 + (L - 2) * i / k; AB.obox('c', cx + c * u + ox, cz + n * u + oz, ang, 0.3, 0.3, yd, yd + 3.2, PI); } }
+  }
+  if (!elev) {
+    const np = Math.max(1, Math.round(L / 12));   // 柱
+    for (let k = 1; k < np; k++) { const u = -L / 2 + L * k / np, px = cx + c * u, pz = cz + n * u, gy = m3Surf(px / 50, pz / 50) * 50; if (yd - 0.8 - gy > 1) AB.obox('c', px, pz, ang, 0.8, 0.8, gy - 0.3, yd - 0.8, PI); }
+    const tx = x2 * 50 + c * 2.2, tz = y2 * 50 + n * 2.2, tg = m3Surf(tx / 50, tz / 50) * 50;   // 駅のがわの 階段・エレベーターの塔
+    if (yd - tg > 2) { AB.obox('c', tx, tz, ang, 4.4, W + 1, tg - 0.3, yd + 3.2, [0.84, 0.83, 0.80]); AB.obox('c', tx, tz, ang, 4.8, W + 1.4, yd + 3.2, yd + 3.5, RF); }
+  }
+}
+// 地下街：地上は 出入口（屋根つきの階段の入口。はしと 150m ごと・道の はしに）。地下ビューでは 中（床・通路・お店の前・かべ。天井なし）
+function m3Ugm(T3, AB, ugs, v) {
+  const W = 14, PAL = [[0.95, 0.78, 0.52], [0.86, 0.55, 0.42], [0.62, 0.78, 0.66], [0.96, 0.9, 0.62], [0.72, 0.68, 0.86], [0.92, 0.66, 0.66]];
+  const P = [], N = [], C = [];
+  const q = (a, b, c, d, col) => {
+    const ux = c[0] - a[0], uy = c[1] - a[1], uz = c[2] - a[2], vx = d[0] - b[0], vy = d[1] - b[1], vz = d[2] - b[2];
+    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx; const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
+    for (const p of [a, b, c, a, c, d]) { P.push(p[0], p[1], p[2]); N.push(nx, ny, nz); C.push(col[0], col[1], col[2]); }
+  };
+  for (const u of ugs) {
+    const pts = u.P; let acc = 0, nextE = 0, side = 1;
+    for (let i = 1; i < pts.length; i++) {
+      const [ax, ay] = pts[i - 1], [bx, by] = pts[i], L = Math.hypot(bx - ax, by - ay); if (L < 1e-4) continue;
+      const tx = (bx - ax) / L, ty = (by - ay) / L, nx = -ty, ny = tx, Lm = L * 50, nb = Math.max(1, Math.round(Lm / 8));
+      // 地上の出入口（建物の型が読めているとき）
+      if (AB) while (nextE <= acc + Lm + 1e-6 && (nextE < u.L * 50 - 20 || nextE === 0)) {
+        const f = (nextE - acc) / 50, ex = ax + tx * f + nx * side * 9.5 * M3_U, ey = ay + ty * f + ny * side * 9.5 * M3_U, gy = m3Surf(ex, ey) * 50, ang = Math.atan2(ty, tx);
+        AB.ox = 0; AB.oz = 0; AB.oy = 0; AB.rc = 1; AB.rs = 0;
+        AB.obox('c', ex * 50, ey * 50, ang, 4.2, 2.2, gy - 0.2, gy + 2.7, [0.86, 0.84, 0.80]);
+        AB.obox('c', ex * 50, ey * 50, ang, 4.6, 2.6, gy + 2.7, gy + 3.0, [0.42, 0.44, 0.48]);
+        AB.obox('c', ex * 50 + tx * 2.11, ey * 50 + ty * 2.11, ang, 0.02, 1.6, gy, gy + 2.2, [0.18, 0.17, 0.16]);   // 入口の暗い口
+        nextE += 150; side = -side;
+      }
+      if (M3.ug) for (let k = 0; k < nb; k++) {   // 地下ビュー：中（8m ごとに お店の区画）
+        const f0 = L * k / nb, f1 = L * (k + 1) / nb, x0 = ax + tx * f0, y0 = ay + ty * f0, x1 = ax + tx * f1, y1 = ay + ty * f1;
+        const s0 = m3Surf(x0, y0), s1 = m3Surf(x1, y1), fl0 = s0 - 8 * M3_U, fl1 = s1 - 8 * M3_U, tp0 = s0 - 3.2 * M3_U, tp1 = s1 - 3.2 * M3_U;
+        const A = (x, y, o, h) => [x + nx * o * M3_U, h, y + ny * o * M3_U];
+        q(A(x0, y0, -3, fl0), A(x1, y1, -3, fl1), A(x1, y1, 3, fl1), A(x0, y0, 3, fl0), [0.88, 0.85, 0.78]);   // 通路の床
+        for (const sd of [1, -1]) {
+          const col = PAL[(Math.abs(Math.round((acc + Lm * k / nb) / 8)) * 7 + (sd > 0 ? 3 : 0) + u.id) % PAL.length];
+          q(A(x0, y0, sd * 3, fl0), A(x1, y1, sd * 3, fl1), A(x1, y1, sd * W / 2, fl1), A(x0, y0, sd * W / 2, fl0), [0.62, 0.58, 0.52]);   // お店の床
+          q(A(x0, y0, sd * 3.05, fl0), A(x1, y1, sd * 3.05, fl1), A(x1, y1, sd * 3.05, tp1 - 0.6 * M3_U), A(x0, y0, sd * 3.05, tp0 - 0.6 * M3_U), col);   // お店の前（明るい）
+          q(A(x0, y0, sd * 3.05, tp0 - 0.6 * M3_U), A(x1, y1, sd * 3.05, tp1 - 0.6 * M3_U), A(x1, y1, sd * 3.05, tp1), A(x0, y0, sd * 3.05, tp0), [0.97, 0.96, 0.92]);   // 看板の帯（字はなし）
+          q(A(x0, y0, sd * W / 2, fl0), A(x1, y1, sd * W / 2, fl1), A(x1, y1, sd * W / 2, tp1), A(x0, y0, sd * W / 2, tp0), [0.55, 0.54, 0.52]);   // 外のかべ
+        }
+      }
+      acc += Lm;
+    }
+    if (M3.ug && pts.length > 1) {   // はしの かべ
+      for (const [i0, i1] of [[0, 1], [pts.length - 1, pts.length - 2]]) {
+        const [ex, ey] = pts[i0], [fx, fy] = pts[i1], L = Math.hypot(fx - ex, fy - ey) || 1, nx = -(fy - ey) / L, ny = (fx - ex) / L, s0 = m3Surf(ex, ey);
+        q([ex - nx * W / 2 * M3_U, s0 - 8 * M3_U, ey - ny * W / 2 * M3_U], [ex + nx * W / 2 * M3_U, s0 - 8 * M3_U, ey + ny * W / 2 * M3_U], [ex + nx * W / 2 * M3_U, s0 - 3.2 * M3_U, ey + ny * W / 2 * M3_U], [ex - nx * W / 2 * M3_U, s0 - 3.2 * M3_U, ey - ny * W / 2 * M3_U], [0.55, 0.54, 0.52]);
+      }
+    }
+  }
+  if (P.length) {
+    const g = new T3.BufferGeometry(); g.setAttribute('position', new T3.Float32BufferAttribute(P, 3)); g.setAttribute('normal', new T3.Float32BufferAttribute(N, 3)); g.setAttribute('color', new T3.Float32BufferAttribute(C, 3));
+    const m = new T3.Mesh(g, new T3.MeshLambertMaterial({ vertexColors: true, side: T3.DoubleSide, emissive: '#2a2418' })); m.userData.ug = true; M3.grpB.add(m);
+  }
+}
+// 地下ビュー：地下のもの（userData.ug）と列車のほかを すかす。新しくできたメッシュの質感にも（建物・地形を作りなおすたび）。やめたら もとにもどす
+function m3UgPass() {
+  if (!M3.sc) return;
+  const MS = M3.ugMats || (M3.ugMats = new Set());
+  if (!M3.ug) {
+    if (MS.size) { for (const m of MS) { const o = m.userData.ugo; if (o) { m.transparent = o.t; m.opacity = o.o; m.depthWrite = o.dw; delete m.userData.ugo; m.needsUpdate = true; } } MS.clear(); }
+    if (M3.ugSky) { M3.sc.background.copy(M3.ugSky[0]); if (M3.sc.fog) M3.sc.fog.color.copy(M3.ugSky[1]); M3.ugSky = null; }
+    return;
+  }
+  if (!M3.ugSky && M3.sc.background && M3.sc.background.isColor) {   // 地下ビューの空は 暗い土の色（地下のものが 目立つように）
+    M3.ugSky = [M3.sc.background.clone(), M3.sc.fog ? M3.sc.fog.color.clone() : M3.sc.background.clone()];
+    M3.sc.background.set('#3a3632'); if (M3.sc.fog) M3.sc.fog.color.set('#3a3632');
+  }
+  M3.sc.traverse(o => {
+    if (!o.material || o.userData.ug) return;
+    let p = o.parent; while (p) { if (p.userData && p.userData.ug) return; p = p.parent; }
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+      if (!m || MS.has(m) || (m.userData && m.userData.noUg)) continue;
+      m.userData.ugo = { t: m.transparent, o: m.opacity, dw: m.depthWrite };
+      m.transparent = true; m.opacity = Math.min(m.opacity, o === M3.sea ? 0.3 : 0.14); m.depthWrite = false; m.needsUpdate = true; MS.add(m);
+    }
+  });
+}
+// 地下ビューを つける・けす（map.js のボタン）
+function m3Ug(on) {
+  M3.ug = !!on; M3.bKey = ''; M3.dirty = true; S.dirty = true;
+  if (M3.on && M3.sc) m3UgPass();
+}
 /* ---------- 走行位置（t61・t62）：列車は両ごと、バス・船・飛行機は1つの箱。線路・道路・航路の上を、ダイヤのとおりに。
    大きさは決まった大きさ（遠くから見ても大きくしない）。上りと下りは進む向きの左にずらす ---------- */
 function m3Runs(v) {
@@ -1182,7 +1307,7 @@ function m3Runs(v) {
   if (!M3.run || M3.runCap < n) {
     if (M3.run) { M3.sc.remove(M3.run); M3.run.geometry.dispose(); M3.run.material.dispose(); }
     M3.runCap = Math.max(64, Math.ceil(n * 1.5));
-    M3.run = new T3.InstancedMesh(new T3.BoxGeometry(1, 1, 1), new T3.MeshLambertMaterial({ color: '#ffffff', emissive: '#2a2a2a' }), M3.runCap);
+    M3.run = new T3.InstancedMesh(new T3.BoxGeometry(1, 1, 1), new T3.MeshLambertMaterial({ color: '#ffffff', emissive: '#2a2a2a' }), M3.runCap); M3.run.userData.ug = true;   // 地下ビューでも すかさない
     M3.run.instanceMatrix.setUsage(T3.DynamicDrawUsage); M3.run.frustumCulled = false; M3.sc.add(M3.run);
   }
   const ppx = 0.828 * M3.d / Math.max(300, S.H);   // 画面の 1px が、だいたい何マスか（まん中の距離で）
@@ -1209,8 +1334,8 @@ function m3Runs(v) {
       let y, hide = false;
       const my = MD && MD.runY && sg ? MD.runY(sg, ref[1], px, pz, k) : null;
       if (k === 'ship') y = 0.05 * M3_U;
-      else if (my) { y = my.y; hide = !!my.hide; }
-      else if (sg) { const th = m3OnLine(sg, ref[1], p[0], p[1]); hide = th.c === 'T'; y = (th.c === 'V' || th.c === 'B' ? th.y : Math.max(th.y, m3Surf(px, pz))) + M3_LIFT + 0.1 * M3_U; }
+      else if (my) { y = my.y; hide = !!my.hide && !M3.ug; }   // 地下ビュー（DB の更新109）：トンネルの中も見せる
+      else if (sg) { const th = m3OnLine(sg, ref[1], p[0], p[1]); hide = th.c === 'T' && !M3.ug; y = (th.c === 'V' || th.c === 'B' ? th.y : Math.max(th.y, m3Surf(px, pz))) + M3_LIFT + 0.1 * M3_U; }
       else y = m3Surf(px, pz) + M3_LIFT + 0.1 * M3_U;
       if (k === 'air') { const f = o.H.len > 0 ? o.d / o.H.len : 0; y = Math.max(y, Math.min(1, 6 * f, 6 * (1 - f)) * 900 * M3_U); }   // 飛行機：まん中は 900m の高さ
       if (hide) { if (c === 0 && sel) selP = [px, m3Surf(px, pz) + hh, pz, ww]; continue; }   // トンネルの中：えらんだ列車は しるしだけ（地上に）
@@ -1249,8 +1374,8 @@ function m3RunCars(o, md, it, sel) {
     const p = runPt(o.H, d), ref = runRef(o.H, d), sg = ref ? it.segs.get(ref[0]) : null;
     const off = o.yard ? 0 : MD && MD.off && sg ? MD.off(sg, 'rail', ref[1], ref[2], trs) : sg && !sg.dbl && !sg.q ? 0 : off0, x = p[0] + Math.sin(p[2]) * off, z = p[1] - Math.cos(p[2]) * off;
     const my = MD && MD.runY && sg ? MD.runY(sg, ref[1], x, z, 'rail') : null;
-    if (my) return [x, my.y, z, !!my.hide];
-    if (sg) { const th = m3OnLine(sg, ref[1], p[0], p[1]); return [x, (th.c === 'V' || th.c === 'B' ? th.y : Math.max(th.y, m3Surf(x, z))) + M3_LIFT + 0.1 * M3_U, z, th.c === 'T']; }
+    if (my) return [x, my.y, z, !!my.hide && !M3.ug];
+    if (sg) { const th = m3OnLine(sg, ref[1], p[0], p[1]); return [x, (th.c === 'V' || th.c === 'B' ? th.y : Math.max(th.y, m3Surf(x, z))) + M3_LIFT + 0.1 * M3_U, z, th.c === 'T' && !M3.ug]; }
     return [x, m3Surf(x, z) + M3_LIFT + 0.1 * M3_U, z, false];
   };
   let selP = null;
@@ -1489,5 +1614,5 @@ window.M3Look = { load: m3Arch, looks: kind => m3Arch().then(A => A.looksOf(kind
   props: () => m3Arch().then(A => A.PROP || {}) };   // 小物の型（t65）
 
 M3.surf = m3Surf;   // 地形の面の高さ（たしかめる用。t64）
-Object.assign(window, { m3Open, m3Close, m3Frame, m3RunFrame, m3Moving, m3Zoom, m3Target, m3Resize, m3State: M3 });
+Object.assign(window, { m3Open, m3Close, m3Frame, m3RunFrame, m3Moving, m3Zoom, m3Target, m3Resize, m3Ug, m3State: M3 });
 })();

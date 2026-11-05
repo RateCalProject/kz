@@ -2179,7 +2179,7 @@ A.kinds({
   embassy: ['b_office', { emb: true, set: 6, looks: [4, 1, 10, 8, 2].map(i => OFL[i - 1]) }],
   sky: 'b_sky', skyoffice: 'b_sky', twintower: ['b_sky', { twin: true }],
   zakkyo: 'b_zakkyo', pencil: 'b_zakkyo',
-  depart: 'b_depart', ekibiru: ['b_depart', { deck: true }], fashionbldg: ['b_depart', { looks: [4, 5, 2, 1].map(i => DPL[i - 1]) }], mixeduse: ['b_depart', { mix: true }],
+  depart: 'b_depart', ekibiru: ['b_depart', { deck: true }], ekichoku: ['b_depart', { deck: true }],   // 駅直結ビル（DB の更新109）：駅のほうに 入口と ひさし fashionbldg: ['b_depart', { looks: [4, 5, 2, 1].map(i => DPL[i - 1]) }], mixeduse: ['b_depart', { mix: true }],
   mall: 'b_mall', outlet: ['b_mall', { outlet: true, looks: OTL }], michinoeki: ['b_mall', { eki: true, looks: MCL }],
   arcadeshop: 'b_arcade', ichiba: ['b_arcade', { ichiba: true, looks: ICL }], yatai: ['b_arcade', { yatai: true, looks: YTL }],
   bankbranch: 'b_bank', shinkin: 'b_bank', postoffice: ['b_bank', { post: true, looks: [3, 1, 2, 5].map(i => BKL[i - 1]) }],
