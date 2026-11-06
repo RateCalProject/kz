@@ -109,6 +109,7 @@ async function m3Open() {
 }
 function m3Close() {
   if (!M3.on) return;
+  if (M3.walk && M3.walk.stop) { try { M3.walk.stop(true); } catch (e) { console.error(e); } M3.walk = null; }   // 街を歩く（DB の更新118）
   // 2D のカメラを 3D の真ん中に
   S.cam.x = M3.tx; S.cam.y = M3.ty; S.cam.z = Math.max(1.2, Math.min(40, S.H / Math.max(4, M3.d * 1.05)));
   for (const g of [M3.grpT, M3.grpB, M3.grpR, M3.grpL]) m3Clear(g); M3.lm = new Map();
@@ -176,6 +177,7 @@ function m3WinTex(T3) {
 
 /* ---------- カメラ・まわりのデータ ---------- */
 function m3Cam() {
+  if (M3.walk) { M3.walk.cam(); return; }   // 街を歩く（DB の更新118）：自分の人の うしろから（map/walk.js）
   const { cam } = M3, c = Math.cos(M3.pitch), s = Math.sin(M3.pitch);
   const gy = m3Surf(M3.tx, M3.ty); M3.gy += (gy - M3.gy) * 0.35;
   cam.position.set(M3.tx + Math.sin(M3.yaw) * c * M3.d, M3.gy + s * M3.d, M3.ty + Math.cos(M3.yaw) * c * M3.d);
@@ -199,6 +201,7 @@ function m3Rects() {
 }
 function m3Frame() {
   if (!M3.on) return;
+  if (M3.walk) { try { M3.walk.step(); } catch (e) { console.error(e); } }   // 街を歩く（DB の更新118）：自分の人・ほかの人を うごかす（M3.tx・ty も）
   m3Sun();   // 日のあたり（時刻どおり。15秒ごと）
   const rc = m3Rects();
   // 地形：チャンクを読む（2D の読みこみを、このはんいで）
@@ -223,6 +226,7 @@ function m3Frame() {
 // うごくものだけ（t66）：視点が止まっているとき、列車・バス・踏切・信号を 毎フレーム（地形・建物は そのまま。m3Frame は ときどき）
 function m3RunFrame() {
   if (!M3.on || !M3.r) return;
+  if (M3.walk) { try { M3.walk.step(); } catch (e) { console.error(e); } m3Cam(); }   // 街を歩く（DB の更新118）
   if (M3.nearQ) { try { m3Runs(M3.nearQ); } catch (e) { console.error(e); } }
   m3SigTick();
   M3.r.render(M3.sc, M3.cam);
@@ -231,6 +235,7 @@ function m3RunFrame() {
 // 毎フレーム描く うごくものが 見えているか：列車・バス（走行位置の しるし）・踏切が しまっている・水面（川・海）・天気
 function m3Moving() {
   if (!M3.on) return false;
+  if (M3.walk) return true;   // 街を歩く（DB の更新118）：毎フレーム
   if (S.layer.run && ((M3.runHit && M3.runHit.length) || (M3.run && M3.run.visible))) return true;
   const RL = window.M3RAIL; if (RL && RL.dbg && RL.dbg.xa && RL.dbg.xa.list && RL.dbg.xa.list.some(c => c.cl || c.tg)) return true;
   return !!M3.anim;   // 水面・天気など（それぞれが立てる）
@@ -1688,8 +1693,8 @@ function m3EditTap(cx, cy) {
 function m3Labels() {
   const g = S.ctxr; if (!g) return;
   g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, S.cvr.width, S.cvr.height);
-  const labs = M3.labs || [];
-  if (S.v3photo || (!labs.length && !M3.selLab)) return;   // フォトモード（t67）：名前は 出さない
+  const labs = M3.labs || [], wl = M3.walk && M3.walk.tags ? M3.walk.tags() : null;   // 歩いている人の名前（DB の更新118）
+  if (S.v3photo || (!labs.length && !M3.selLab && !(wl && wl.length))) return;   // フォトモード（t67）：名前は 出さない
   g.setTransform(S.dpr, 0, 0, S.dpr, 0, 0);
   const v = new M3.T.Vector3(), cam = M3.cam, cx = cam.position.x, cz = cam.position.z, used = [];
   const at = l => { v.set(l.x, l.h, l.y).project(cam); if (v.z > 1 || v.z < -1 || v.x < -1.05 || v.x > 1.05 || v.y < -1.05 || v.y > 1.05) return null; return [(v.x + 1) / 2 * S.W, (1 - v.y) / 2 * S.H - 3]; };
@@ -1702,13 +1707,16 @@ function m3Labels() {
     return true;
   };
   g.textAlign = 'center'; g.textBaseline = 'bottom'; g.lineJoin = 'round';
+  if (wl) for (const l of wl) { const p = at(l); if (p) box(l.n, p[0], p[1], '700 12px system-ui, sans-serif', '#fff', 'rgba(24,30,40,.72)', 'rgba(255,255,255,.55)'); }
   // えらんだ列車（いちばん上）
   if (M3.selLab) { const p = at(M3.selLab); if (p) box(M3.selLab.n, p[0], p[1], '700 12px system-ui, sans-serif', '#222', 'rgba(255,236,150,.97)', '#c99a00'); }
   // 駅（t62）：近いものから。遠すぎるときは出さない
   if (M3.d <= 420) {
     let n = 0;
-    for (const [l] of labs.filter(l => l.st && (l.st !== 'bus' || M3.d <= 70)).map(l => [l, (l.x - cx) ** 2 + (l.y - cz) ** 2]).sort((a, b) => a[1] - b[1])) {
-      if (n >= 40) break;
+    const wk = !!M3.walk;   // 歩いているときは 近くだけ（駅 600m・バス停 100m）
+    for (const [l, d2] of labs.filter(l => l.st && (l.st !== 'bus' || M3.d <= 70)).map(l => [l, (l.x - cx) ** 2 + (l.y - cz) ** 2]).sort((a, b) => a[1] - b[1])) {
+      if (n >= (wk ? 8 : 40)) break;
+      if (wk && d2 > (l.st === 'bus' ? 4 : 144)) continue;
       const p = at(l); if (!p) continue;
       if (l.st === 'bus') { if (box(l.n, p[0], p[1], '700 11px system-ui, sans-serif', '#164f99', null)) n++; }
       else if (box(l.n, p[0], p[1], '800 13px system-ui, sans-serif', '#123a7a', 'rgba(255,255,255,.96)', '#1f5fbf')) n++;
@@ -1718,8 +1726,9 @@ function m3Labels() {
   if (!S.v3names || M3.d > 260) return;
   const L = labs.filter(l => !l.st).map(l => [l, (l.x - cx) ** 2 + (l.y - cz) ** 2 - l.f * 4]).sort((a, b) => a[1] - b[1]);
   let n = 0;
-  for (const [l] of L) {
-    if (n >= 70) break;
+  for (const [l, d2] of L) {
+    if (n >= (M3.walk ? 15 : 70)) break;
+    if (M3.walk && (l.x - cx) ** 2 + (l.y - cz) ** 2 > 6.25) continue;   // 歩いているときは 125m まで
     const p = at(l); if (!p) continue;
     if (box(l.n, p[0], p[1], '700 12px system-ui, sans-serif', '#1d2733', null)) n++;
   }
@@ -1744,7 +1753,7 @@ function m3Bind(cv) {
     requestAnimationFrame(glide);
   };
   const letGo = e => {
-    if (!S.inertia || hist.length < 2) { hist = []; return; }
+    if (!S.inertia || hist.length < 2 || M3.walk) { hist = []; return; }
     const a = hist[0], b = hist[hist.length - 1], dt = b[0] - a[0];
     if (dt > 8 && evT(e) - b[0] < 60) {
       const vx = (b[1] - a[1]) / dt, vy = (b[2] - a[2]) / dt, vr = Math.max(-0.004, Math.min(0.004, (b[3] - a[3]) / dt));   // 回る惰性は 1 回転の 1/5 ぐらいまで
@@ -1760,7 +1769,8 @@ function m3Bind(cv) {
     M3.glide = null;
     if (tap0 && Math.hypot(e.clientX - tap0.x, e.clientY - tap0.y) > 8) tap0 = null;
     const dx = e.clientX - p.x, dy = e.clientY - p.y;
-    if (P.size === 1) {
+    if (P.size === 1 && M3.walk) M3.walk.look(dx, dy);   // 街を歩く（DB の更新118）：カメラを まわす
+    else if (P.size === 1) {
       if (p.b === 2 || p.sh) { M3.yaw -= dx * 0.006 * (S.v3x ? -1 : 1); M3.pitch = Math.max(0.22, Math.min(1.5, M3.pitch + dy * 0.005)); }
       else { pan(dx, dy); if (!tap0 && RUN && RUN.follow) runFollow(0); }   // 自分でうごかしたら、追跡をやめる（t62）
     } else if (P.size === 2) {
@@ -1768,11 +1778,11 @@ function m3Bind(cv) {
       const na = ids[0] === e.pointerId ? { x: e.clientX, y: e.clientY } : a, nb = ids[1] === e.pointerId ? { x: e.clientX, y: e.clientY } : b;
       const d0 = Math.hypot(b.x - a.x, b.y - a.y), d1 = Math.hypot(nb.x - na.x, nb.y - na.y);
       const a0 = Math.atan2(b.y - a.y, b.x - a.x), a1 = Math.atan2(nb.y - na.y, nb.x - na.x);
-      if (d0 > 10 && d1 > 10) M3.d = Math.max(M3_DMIN, Math.min(900, M3.d * d0 / d1));
+      if (d0 > 10 && d1 > 10) { if (M3.walk) M3.walk.zoom(d1 / d0); else M3.d = Math.max(M3_DMIN, Math.min(900, M3.d * d0 / d1)); }
       let da = a1 - a0; if (da > Math.PI) da -= 2 * Math.PI; else if (da < -Math.PI) da += 2 * Math.PI;
       M3.yaw += da * (S.v3x ? -1 : 1);   // 2本指でひねった向きに地図が回る（⇄ 左右反転で反対に）
       const my0 = (a.y + b.y) / 2, my1 = (na.y + nb.y) / 2;
-      M3.pitch = Math.max(0.22, Math.min(1.5, M3.pitch + (my1 - my0) * 0.004));
+      if (!M3.walk) M3.pitch = Math.max(0.22, Math.min(1.5, M3.pitch + (my1 - my0) * 0.004));
     }
     p.x = e.clientX; p.y = e.clientY; S.dirty = true; mark(e);
   });
@@ -1782,9 +1792,9 @@ function m3Bind(cv) {
     if (e.type === 'pointerup' && n0 === 1 && P.size === 0) letGo(e); else if (e.type === 'pointerup' && P.size === 1 && n0 === 2) letGo(e); };   // 2本指をはなしたら、回る惰性
   cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
   cv.addEventListener('contextmenu', e => e.preventDefault());
-  cv.addEventListener('wheel', e => { e.preventDefault(); M3.d = Math.max(M3_DMIN, Math.min(900, M3.d * Math.pow(1.0015, e.deltaY))); S.dirty = true; }, { passive: false });
+  cv.addEventListener('wheel', e => { e.preventDefault(); if (M3.walk) { M3.walk.zoom(Math.pow(1.0015, -e.deltaY)); return; } M3.d = Math.max(M3_DMIN, Math.min(900, M3.d * Math.pow(1.0015, e.deltaY))); S.dirty = true; }, { passive: false });
 }
-function m3Zoom(f) { M3.d = Math.max(M3_DMIN, Math.min(900, M3.d / f)); }
+function m3Zoom(f) { if (M3.walk) { M3.walk.zoom(f); return; } M3.d = Math.max(M3_DMIN, Math.min(900, M3.d / f)); }
 function m3Target(x, y) { M3.tx = x; M3.ty = y; }
 function m3Resize() { if (!M3.on) return; M3.r.setPixelRatio(m3PR()); M3.r.setSize(S.W, S.H, false); M3.cam.aspect = S.W / Math.max(1, S.H); M3.cam.updateProjectionMatrix(); }
 

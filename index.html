@@ -693,6 +693,9 @@ details.ed summary{cursor:pointer;color:var(--accent);font-weight:700;font-size:
 .ga-items{display:flex;flex-wrap:wrap;gap:4px;justify-content:center;margin-top:8px}.ga-items span{padding:2px 8px;border:1px solid var(--line);border-radius:8px;font-size:13px}.ga-items span.big{border-color:var(--accent);color:var(--accent);font-weight:800}
 .ga-tbl{border-collapse:collapse;width:100%}.ga-tbl td{border-top:1px solid var(--line);padding:4px 2px}.ga-tbl td:last-child{text-align:right;white-space:nowrap}
 .ga-lr{display:grid;grid-template-columns:auto auto 1fr;gap:8px;padding:5px 0;border-top:1px solid var(--line)}.ga-lr b{text-align:right}
+.ga-skins{display:flex;gap:6px;overflow-x:auto;padding:2px 0 8px;margin-bottom:4px}.ga-sk{flex:none;width:64px;position:relative;text-align:center;border:1px solid var(--line);border-radius:10px;padding:3px 2px 4px;background:var(--bg2,rgba(127,127,127,.06))}
+.ga-sk img{width:52px;height:65px;object-fit:contain;display:block;margin:0 auto}.ga-sk small{display:block;font-size:10px;line-height:1.2}.ga-sk.no img{opacity:.35}.ga-sk i{position:absolute;left:3px;top:3px;font-style:normal;font-size:9px;font-weight:800;color:#fff;background:#8a96a8;border-radius:5px;padding:0 4px}
+.ga-sk i.R{background:#3b7dd8}.ga-sk i.SR{background:#c98a10}.ga-skimg{width:120px;height:150px;object-fit:contain;display:block;margin:6px auto 0}.ga-rare{display:inline-block;font-size:12px;font-weight:800;color:#fff;background:#8a96a8;border-radius:6px;padding:1px 7px;margin-right:4px}.ga-rare.R{background:#3b7dd8}.ga-rare.SR{background:#c98a10}
 .ad-bar{height:10px;border-radius:6px;background:var(--line);overflow:hidden}.ad-bar i{display:block;height:100%;width:0;background:var(--accent,#1F6B4F);transition:width .4s}
 .wk-pick b{font-size:16px}
 .wk-q{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line)}
@@ -1301,7 +1304,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=e12e0d09","zh-TW":"zh-TW.js?v=70508f17","zh-CN":"zh-CN.js?v=354303c9","ko":"ko.js?v=2526766b","ko-Hani":"ko-Hani.js?v=c3b4a9a3"};
+  window.AX_LANGS = {"en":"en.js?v=42c3bc8a","zh-TW":"zh-TW.js?v=bdcf4d4f","zh-CN":"zh-CN.js?v=a76a53a2","ko":"ko.js?v=7e654d7d","ko-Hani":"ko-Hani.js?v=a545e3ce"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -1611,6 +1614,12 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <h3 style="margin-top:0">🏞 国有地ガチャ</h3>
     <p class="muted small" id="gaLNote" style="margin:0 0 8px"></p>
     <button class="btn main wide" data-ga="land" id="gaLandBtn">1回（🎫10）</button>
+  </div>
+  <div class="card hidden" id="gaSkin">
+    <h3 style="margin-top:0">👕 スキンガチャ</h3>
+    <p class="muted small" id="gaSNote" style="margin:0 0 8px"></p>
+    <div class="ga-skins" id="gaSkins"></div>
+    <button class="btn main wide" data-ga="skin" id="gaSkinBtn">1回（🎫20）</button>
   </div>
   <div class="card hidden ga-res" id="gaRes"></div>
   <details class="card ga-on"><summary><b>確率と中身</b></summary><div id="gaOdds" class="small"></div></details>
@@ -5209,7 +5218,7 @@ function stCmpDraw() {
    役所 → ヘルプ（t62）：遊び方・やり方（help/help.json。README からつくる）。さがせる（題・中身・ことば。ひらがな・カタカナ・全角半角は同じに）
    役所 → 意見箱（t62）：運営への問い合わせ（support_open）に「【意見箱】」の件名で送る
    ================================================================= */
-const HELP_V = 'cec10061';
+const HELP_V = '31ebcc1c';
 const HP = { d: null, cat: 'start', q: '' };
 const hpNorm = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
 async function helpLoad() {
@@ -5527,18 +5536,31 @@ function gaDraw() {
   $('#gaLNote').textContent = d.guest ? '国有地ガチャは、本登録してから引けます（設定 → プロフィール）。'
     : `${L.p}% で、国が売っている土地（いま ${fmt(L.left)}筆・時価 ${fmt(L.lo)}〜${fmt(L.hi)} X）が建物ごと当たる。はずれは ${fmt(L.miss)} X。`;
   $('#gaLandBtn').textContent = `1回（🎫${fmt(L.cost)}）`;
+  // スキンガチャ（DB の更新118）：見た目が1つ当たる。国土の 3D の「🚶 歩く」で着る
+  const SK = g.skin || null, own = d.skin_own || {};
+  $('#gaSkin').classList.toggle('hidden', !SK);
+  if (SK) {
+    const L2 = SK.list || [], have = L2.filter(x => own[x.code] > 0).length;
+    $('#gaSNote').textContent = `チケット${fmt(SK.cost)}枚で1回。服（N・R）と MMD のモデル（SR）から1つ当たります。もう持っている見た目が出たら 🎫${fmt(SK.dup)}枚 もどります。当たった見た目は、国土の 3D の「🚶 歩く」で着られます（いま ${fmt(have)} / ${fmt(L2.length)}）。`;
+    $('#gaSkins').innerHTML = L2.map(x => `<div class="ga-sk ${own[x.code] > 0 ? '' : 'no'}"><i class="${esc(x.rare)}">${esc(x.rare)}</i><img src="map/skins/thumbs/${esc(x.code)}.webp?v=${MAPV}" alt="" loading="lazy" onerror="this.style.visibility='hidden'"><small>${esc(x.name)}</small></div>`).join('');
+    $('#gaSkinBtn').textContent = `1回（🎫${fmt(SK.cost)}）`;
+  }
   $$('#vGacha [data-ga]').forEach(x => {
-    const cost = x.dataset.ga === 'land' ? L.cost : x.dataset.ga === 'x10' ? 10 : 1;
-    x.disabled = gaBusy || adBusy || d.tix < cost || (x.dataset.ga === 'land' && (d.guest || !L.left));
+    const cost = x.dataset.ga === 'land' ? L.cost : x.dataset.ga === 'skin' ? (SK ? SK.cost : 20) : x.dataset.ga === 'x10' ? 10 : 1;
+    x.disabled = gaBusy || adBusy || d.tix < cost || (x.dataset.ga === 'land' && (d.guest || !L.left)) || (x.dataset.ga === 'skin' && !SK);
   });
   $('#gaOdds').innerHTML = `<p style="margin:8px 0 4px"><b>🎰 X ガチャ</b>（🎫1枚で1回）</p>
     <table class="ga-tbl">${(g.x || []).map(x => `<tr><td>${fmt(x.amt)} X</td><td>${x.p}%</td></tr>`).join('')}</table>
     <p style="margin:4px 0">平均 約${fmt(g.ev)} X</p>
     <p style="margin:10px 0 4px"><b>🏞 国有地ガチャ</b>（🎫${fmt(L.cost)}枚で1回）</p>
     <table class="ga-tbl"><tr><td>当たり：国が売っている土地を1筆（建物ごと）</td><td>${L.p}%</td></tr><tr><td>はずれ：${fmt(L.miss)} X</td><td>${Math.round((100 - L.p) * 1000) / 1000}%</td></tr></table>
-    <p class="muted" style="margin:4px 0 0">当たる土地は、いま国が時価で売っている ${fmt(L.left)}筆から1つ（どれも同じ確率）。府県庁・役所・学校・病院などの国の建物は出ません。当たった土地は、そのままあなたのものになります。ガチャの X は国が発行します（所得には入りません）。</p>`;
+    <p class="muted" style="margin:4px 0 0">当たる土地は、いま国が時価で売っている ${fmt(L.left)}筆から1つ（どれも同じ確率）。府県庁・役所・学校・病院などの国の建物は出ません。当たった土地は、そのままあなたのものになります。ガチャの X は国が発行します（所得には入りません）。</p>`
+    + (SK ? `<p style="margin:10px 0 4px"><b>👕 スキンガチャ</b>（🎫${fmt(SK.cost)}枚で1回）</p>
+    <table class="ga-tbl">${(SK.list || []).map(x => `<tr><td><span class="ga-rare ${esc(x.rare)}">${esc(x.rare)}</span>${esc(x.name)}</td><td>${x.p}%</td></tr>`).join('')}</table>
+    <p class="muted" style="margin:4px 0 0">もう持っている見た目が出たら、チケットを ${fmt(SK.dup)}枚 もどします。見た目は 国土の 3D の「🚶 歩く」で着られます（ほかの人にも見えます）。</p>
+    ${(SK.list || []).filter(x => x.credit).map(x => `<p class="muted" style="margin:4px 0 0">${esc(x.name)}：${esc(x.credit)}</p>`).join('')}` : '');
   $('#gaLog').innerHTML = (d.log || []).length ? d.log.map(r => `<div class="ga-lr"><span class="muted">${esc(new Date(r.at_ms).toLocaleString(LANG === 'ja' ? 'ja-JP' : undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>
-      <span>${r.kind === 'land' ? '🏞 国有地' : r.cost >= 10 ? '🎰 10連' : '🎰 1回'}</span><b>${r.land ? `<span translate="no">${esc(r.land.addr)}</span>` : `+${fmt(r.x)} X`}</b></div>`).join('')
+      <span>${r.kind === 'land' ? '🏞 国有地' : r.kind === 'skin' ? '👕 スキン' : r.cost >= 10 ? '🎰 10連' : '🎰 1回'}</span><b>${r.skin ? `${esc(r.skin.name)}${r.skin.dup ? `（🎫+${fmt(r.skin.back)}）` : ''}` : r.land ? `<span translate="no">${esc(r.land.addr)}</span>` : `+${fmt(r.x)} X`}</b></div>`).join('')
     : '<p class="muted" style="margin:8px 0 0">まだ引いていません</p>';
 }
 $('#adGo').onclick = async () => {
@@ -5582,7 +5604,7 @@ function adShowH5() {
 $$('#vGacha [data-ga]').forEach(b => b.onclick = () => gaPull(b.dataset.ga));
 async function gaPull(k) {
   if (gaBusy || adBusy || !GA) return;
-  const kind = k === 'land' ? 'land' : 'x', times = k === 'x10' ? 10 : 1;
+  const kind = k === 'land' ? 'land' : k === 'skin' ? 'skin' : 'x', times = k === 'x10' ? 10 : 1;
   gaBusy = true; gaDraw();
   const box = $('#gaRes'); box.classList.remove('hidden'); box.innerHTML = '<p class="ga-spin">🎰 抽選中…</p>';
   box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -5596,7 +5618,14 @@ async function gaPull(k) {
 function gaShow(r) {
   const box = $('#gaRes');
   let h;
-  if (r.kind === 'land') {
+  if (r.kind === 'skin') {
+    const k = r.skin || {};
+    h = `<div class="ga-big ${k.rare === 'SR' ? 'win' : ''}">👕 ${esc(k.name)}</div>
+      <img class="ga-skimg" src="map/skins/thumbs/${esc(k.code)}.webp?v=${MAPV}" alt="" onerror="this.style.display='none'">
+      <p style="margin:6px 0 2px"><span class="ga-rare ${esc(k.rare)}">${esc(k.rare)}</span>${k.dup ? `もう持っていたので 🎫${fmt(k.back)}枚 もどりました` : '新しい見た目が当たりました！'}</p>
+      ${k.credit ? `<p class="small muted" style="margin:2px 0 6px">${esc(k.credit)}</p>` : ''}
+      <button class="btn main" data-gawalk>🚶 この見た目で 街を歩く</button>`;
+  } else if (r.kind === 'land') {
     h = r.land ? `<div class="ga-big win">🏞 当たり！</div><p style="margin:6px 0 2px"><b translate="no">${esc(r.land.addr)}</b></p>
         <p class="small" style="margin:0">${fmt(r.land.m2)}㎡・時価 ${fmt(r.land.val)} X${r.land.bld ? '・建物つき' : ''}</p>
         <p class="small muted" style="margin:4px 0 8px">もう、あなたの土地です。</p><button class="btn main" data-gamap>🗺 地図で見る</button>`
@@ -5609,6 +5638,14 @@ function gaShow(r) {
   if (r.later > 0) h += `<p class="small muted" style="margin:8px 0 0">ゲストの所持金は 40,000 X までなので、${fmt(r.later)} X は本登録したときにわたします。</p>`;
   box.innerHTML = h;
   const m = box.querySelector('[data-gamap]'); if (m) m.onclick = () => mapSpot(r.land.x, r.land.y);
+  const w = box.querySelector('[data-gawalk]'); if (w) w.onclick = async () => { try { await call('av_set', { p_code: r.skin.code }); } catch (e) { toast(e.message); return; } mapWalk(); };
+}
+// 国土の地図を 3D にして、自分の人で歩く（DB の更新118）
+async function mapWalk() {
+  go('vCorp', 'map');
+  const t0 = Date.now();
+  while (Date.now() - t0 < 20000 && !(window.MapApp && MapApp.state && MapApp.state.open && MapApp.state.wrap)) await sleep(120);
+  if (window.MapApp && MapApp.walk) MapApp.walk();
 }
 // 国土の地図をひらいて、その区画を出す（区画の座標）
 async function mapSpot(x, y) {
@@ -5963,10 +6000,10 @@ const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
 // 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
-const MAPV = '178';
+const MAPV = '179';
 const STAGE = 'Pre';   // 正式公開の前（Pre）。名前のよこと、バージョンの表記に出す。正式公開のときは '' にする
 document.querySelectorAll('.kz-stage').forEach(e => { e.textContent = STAGE; e.hidden = !STAGE; });
-const DBV = 117;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）
+const DBV = 118;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）
 { const e = document.getElementById('verLogin'); if (e) e.textContent = 'v' + MAPV + (STAGE ? ' ' + STAGE : ''); }   // バージョン表記（ログインの画面）
 // バージョン表記（設定 → プロフィール）：画面の版・サーバーに入っている DB の更新の番号。管理者には、サーバーの更新がまだのとき知らせる
 async function verShow() {
@@ -6814,13 +6851,16 @@ async function adAdsLoad(set) {
     <div class="row"><span class="small" style="width:8em">国有地の当たり</span><input class="inp grow" id="gaLp" type="number" min="0" max="10000" inputmode="numeric" value="${Number(d.gacha_land_p)}" style="margin:0"><span class="small">/ 1万（50＝0.5%）</span></div>
     <div class="row"><span class="small" style="width:8em">国有地の枚数</span><input class="inp grow" id="gaLc" type="number" min="1" max="1000" inputmode="numeric" value="${Number(d.gacha_land_cost)}" style="margin:0"><span class="small">枚</span></div>
     <div class="row"><span class="small" style="width:8em">はずれの X</span><input class="inp grow" id="gaLm" type="number" min="0" max="1000000" inputmode="numeric" value="${Number(d.gacha_land_miss)}" style="margin:0"><span class="small">X</span></div>
+    ${d.gacha_skin_cost != null ? `<div class="row"><span class="small" style="width:8em">スキンガチャ</span><input class="inp grow" id="gaSc" type="number" min="1" max="1000" inputmode="numeric" value="${Number(d.gacha_skin_cost)}" style="margin:0"><span class="small">枚</span></div>
+    <div class="row"><span class="small" style="width:8em">持っていたら</span><input class="inp grow" id="gaSd" type="number" min="0" max="1000" inputmode="numeric" value="${Number(d.gacha_skin_dup)}" style="margin:0"><span class="small">枚もどす</span></div>` : ''}
     <div class="row" style="margin-top:6px"><button class="btn main s" id="adSave">保存</button></div>
     <div class="row" style="margin-top:10px"><span class="small" style="width:8em">ためしに自分へ</span><input class="inp grow" id="adSelf" type="number" min="1" max="1000" inputmode="numeric" value="10" style="margin:0"><button class="btn s" id="adSelfGo">🎫 わたす</button></div>
     <p class="muted small" style="margin:4px 0 0">いまの自分のチケット ${fmt(d.my_tix)}枚。ガチャの X は国が新しく発行します。広告のボタンは、config.js の ads に AdSense の番号を入れると出ます${ADS.client ? '' : '（いまは番号なし）'}。</p>`;
   $('#adSave').onclick = async () => {
     try {
       await adAdsLoad({ ad_day: Number($('#adDay').value), ad_tix: Number($('#adTix').value), ad_guest: $('#adGuest').checked,
-        gacha_x: $('#gaX').value.trim(), gacha_land_p: Number($('#gaLp').value), gacha_land_cost: Number($('#gaLc').value), gacha_land_miss: Number($('#gaLm').value) });
+        gacha_x: $('#gaX').value.trim(), gacha_land_p: Number($('#gaLp').value), gacha_land_cost: Number($('#gaLc').value), gacha_land_miss: Number($('#gaLm').value),
+        ...($('#gaSc') ? { gacha_skin_cost: Number($('#gaSc').value), gacha_skin_dup: Number($('#gaSd').value) } : {}) });
       toast('保存しました');
     } catch (e) { toast(e.message); }
   };

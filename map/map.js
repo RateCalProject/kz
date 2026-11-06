@@ -1912,6 +1912,14 @@ function frame() {
   requestAnimationFrame(frame);
 }
 // 惰性（t61）：指をはなしたあと、少しすべる。S.glide = {vx, vy（マス/ms）, t}
+// 街を歩く（DB の更新118）：map/walk.js（3D をひらいて「🚶 歩く」をおしたときに読む）
+let walkP = null;
+function walkLib() {
+  if (window.Walk) return Promise.resolve(window.Walk);
+  if (walkP) return walkP;
+  walkP = new Promise((ok, ng) => { const e = document.createElement('script'); e.src = 'map/walk.js?v=' + (typeof MAPV !== 'undefined' ? MAPV : ''); e.onload = () => ok(window.Walk); e.onerror = () => { walkP = null; ng(new Error('walk')); }; document.head.appendChild(e); });
+  return walkP;
+}
 function glideStep() {
   const g = S.glide; if (!g) return;
   const t = now(), dt = Math.min(48, t - g.t); g.t = t;
@@ -3569,7 +3577,7 @@ function build(root) {
     <canvas class="mp-cv"></canvas><canvas class="mp-cvr"></canvas>
     <div class="mp-top">
       <div class="mp-topb"><select class="mp-as" title="だれの名前で"></select>
-      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-lay="track" title="非電化はオレンジ・単線はむらさきの点線">非電化・単線</button><button data-lay="run" title="列車・バスの走行位置">🚃 走行</button><button data-lay="wxmap" title="天気図（等圧線・高気圧と低気圧・雨と雪・気温）">🌤 天気図</button><button data-lay="jam" title="道路の混みぐあい（オレンジ 混雑・赤 渋滞・黒 通行止め）" hidden>🚗 渋滞</button><button data-lay="er" title="救急車（いま出ているもの）" hidden>🚑 救急</button><button data-lay="snowz" title="雪の地域（雪国・豪雪地帯・特別豪雪地帯。雪の対策の補助金）">❄ 雪の地域</button><button data-lay="elev" title="高低差（標高を色で。北西から光を当てた陰つき）">⛰ 高低差</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button><button data-sunm title="日のあたり：時刻どおり（朝・昼・夕方・夜）か、昼モード（いつも昼。編集しやすい）"></button><button data-v3 title="ななめから立体に見る">🗻 3D</button><button data-v3x hidden title="横に回す向きを反対にする（2本指でひねる・右ドラッグ）">⇄ 左右反転</button><button data-v3e hidden title="自分の土地に 自販機・ベンチ・植木などを置く">🧰 小物</button><button data-v3u title="地上をうすくして、トンネル・地下駅・地下街を見る・引く（2D・3D）">⛏ 地下</button><button data-v3p hidden title="名前・ボタンを ぜんぶ消して 3D の写真を撮る（✕ で もどる）">📷 フォト</button></div>
+      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-lay="track" title="非電化はオレンジ・単線はむらさきの点線">非電化・単線</button><button data-lay="run" title="列車・バスの走行位置">🚃 走行</button><button data-lay="wxmap" title="天気図（等圧線・高気圧と低気圧・雨と雪・気温）">🌤 天気図</button><button data-lay="jam" title="道路の混みぐあい（オレンジ 混雑・赤 渋滞・黒 通行止め）" hidden>🚗 渋滞</button><button data-lay="er" title="救急車（いま出ているもの）" hidden>🚑 救急</button><button data-lay="snowz" title="雪の地域（雪国・豪雪地帯・特別豪雪地帯。雪の対策の補助金）">❄ 雪の地域</button><button data-lay="elev" title="高低差（標高を色で。北西から光を当てた陰つき）">⛰ 高低差</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button><button data-sunm title="日のあたり：時刻どおり（朝・昼・夕方・夜）か、昼モード（いつも昼。編集しやすい）"></button><button data-v3 title="ななめから立体に見る">🗻 3D</button><button data-v3x hidden title="横に回す向きを反対にする（2本指でひねる・右ドラッグ）">⇄ 左右反転</button><button data-v3e hidden title="自分の土地に 自販機・ベンチ・植木などを置く">🧰 小物</button><button data-v3u title="地上をうすくして、トンネル・地下駅・地下街を見る・引く（2D・3D）">⛏ 地下</button><button data-v3p hidden title="名前・ボタンを ぜんぶ消して 3D の写真を撮る（✕ で もどる）">📷 フォト</button><button data-v3w hidden title="自分の人を出して 街を歩く（ほかの人も見える）">🚶 歩く</button></div>
       <span class="mp-addr" translate="no" hidden></span>
     </div>
     <div class="mp-zoom"><button data-find title="さがす">🔍</button><button data-full title="大きく">⤢</button><button data-zin>＋</button><button data-zout>－</button><button data-home title="瑠璃市役所">⌂</button><button data-opt title="地図の設定">⚙</button></div>
@@ -3679,7 +3687,19 @@ function build(root) {
     v3p.onclick = () => p3(true);
     S.wrap.addEventListener('pointerdown', () => { if (!S.v3photo) return; px._dim = px.classList.contains('mp-dim'); pDim(); }, true);
     px.onclick = ev => { ev.stopPropagation(); if (px._dim) { px._dim = false; return; } p3(false); };
-    v3.onclick = async () => { if (S.v3) { p3(false); m3Close(); } else { await m3Open(); if (S.v3 && window.m3Ug) window.m3Ug(!!S.v3u); } v3.classList.toggle('on', !!S.v3); b25.hidden = !!S.v3; sunm.hidden = !!S.v3; v3x.hidden = !S.v3; v3e.hidden = !S.v3 || !lookOn(); v3p.hidden = !S.v3; if (!S.v3) e3(false); S.dirty = true; optSync(); }; }
+    const v3w = S.wrap.querySelector('[data-v3w]');   // 街を歩く（DB の更新118。map/walk.js をはじめて使うときに読む）
+    v3.onclick = async () => { if (S.v3) { p3(false); m3Close(); } else { await m3Open(); if (S.v3 && window.m3Ug) window.m3Ug(!!S.v3u); } v3.classList.toggle('on', !!S.v3); b25.hidden = !!S.v3; sunm.hidden = !!S.v3; v3x.hidden = !S.v3; v3e.hidden = !S.v3 || !lookOn(); v3p.hidden = !S.v3; v3w.hidden = !S.v3; if (!S.v3) { e3(false); v3w.classList.remove('on'); } S.dirty = true; optSync(); };
+    const w3 = async on => {
+      if (!on) { if (window.Walk) window.Walk.stop(); return; }
+      if (!S.v3) await v3.onclick();
+      if (!S.v3) return;
+      if (S.v3u) u3(false); if (S.v3edit) e3(false); p3(false);   // 地下ビュー・小物・フォトは やめる
+      let Wk; try { Wk = await walkLib(); } catch (e) { toast(T('読みこめませんでした。通信を たしかめてください')); return; }
+      Wk.onChange(o => v3w.classList.toggle('on', !!o));
+      await Wk.start();
+    };
+    v3w.onclick = () => w3(!(window.Walk && window.Walk.on()));
+    S.walkGo = w3; }
   S.wrap.querySelector('[data-full]').onclick = () => { S.wrap.classList.toggle('mp-full'); resize(); };
   S.wrap.querySelector('[data-find]').onclick = () => openFind();   // さがす（t59）
   S.wrap.querySelector('.mp-wx').onclick = () => { const [x, y] = wxCenter(); openWx(x, y); };   // 天気（t62）
@@ -10465,5 +10485,5 @@ function showCert(r) {
 }
 window.MapInt = { sunNow, MQ, q, LITE, liteNeed, EDEC, B64I, bldShift, S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runOff, runIsSel, runName, runDest, showTrain, showSta, runFollow, pfZ, runRef };   // 3D（map3d.js）が使う
 window.MapApp = { open, pause, state: S, spline, setCam, roLoad: f => { roLoad(f); S.dirty = true; }, jamList: () => openJamList(), erList: () => openErList(), jamAt: L => layAt('jam', L, 3), erAt: L => layAt('er', L, 2.5), landReqs: () => openLandReqs(), xfers: () => openXfers(), cars: () => openCars(), goto: (x, y) => homeGo(x, y), thru: () => openThru(), bld: id => openBld(id), sc: () => openSC(),
-  slots: L => (L && L.st ? openSlots(Number(L.st)) : openSlotList()), unko: L => openUnko(L && L.id ? Number(L.id) : 0), bldAt: L => { if (L && L.cx != null) homeGo(Number(L.cx), Number(L.cy)); }, lic: L => { if (L && /申請があります/.test(L.body || '')) LIC.tab = 'rev'; openLic(); }, snow: () => openSnow(), find: () => openFind(), jm: id => openJuumin(id), wxMap: () => wxMapOn() };
+  slots: L => (L && L.st ? openSlots(Number(L.st)) : openSlotList()), unko: L => openUnko(L && L.id ? Number(L.id) : 0), bldAt: L => { if (L && L.cx != null) homeGo(Number(L.cx), Number(L.cy)); }, lic: L => { if (L && /申請があります/.test(L.body || '')) LIC.tab = 'rev'; openLic(); }, snow: () => openSnow(), find: () => openFind(), jm: id => openJuumin(id), wxMap: () => wxMapOn(), walk: () => (S.walkGo ? S.walkGo(true) : null) };
 })();
