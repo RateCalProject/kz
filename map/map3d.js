@@ -219,6 +219,7 @@ function m3Frame() {
   m3SigTick();   // 信号の灯（t64b）
   m3UgPass();   // 地下ビュー（DB の更新109）：地面・建物・道路を すかす
   m3Cam();
+  if (M3.pp) m3PropNear2(false);   // 近くの 小物を こまかく（t69）
   M3.r.render(M3.sc, M3.cam);
   m3Labels();   // 建物の名前（t61）
   if (Math.abs(m3Surf(M3.tx, M3.ty) - M3.gy) > 0.002) M3.dirty = true;
@@ -228,6 +229,7 @@ function m3RunFrame() {
   if (!M3.on || !M3.r) return;
   if (M3.walk) { try { M3.walk.step(); } catch (e) { console.error(e); } m3Cam(); }   // 街を歩く（DB の更新118）
   if (M3.pn) m3PropNear(false);   // 近くの物を こまかく（t68）
+  if (M3.pp) m3PropNear2(false);   // 近くの 小物を こまかく（t69）
   if (M3.nearQ) { try { m3Runs(M3.nearQ); } catch (e) { console.error(e); } }
   m3SigTick();
   M3.r.render(M3.sc, M3.cam);
@@ -1243,6 +1245,58 @@ function m3PropNear(force) {
     }
   }
 }
+// 近くの 小物を こまかく（t69）：街を歩いているとき、カメラから 35m（はなれるのは 40m）までの 小物（24こまで）を lod 3 の形に。
+//   ふつうの形（M3.pp の 組）は 頂点を 1点に つぶして かくし（もとの値は とっておく）、こまかい形は 別の組（gn）に 作りなおす
+function m3PropNear2(force) {
+  const PP = M3.pp; if (!PP || !M3.cam) return;
+  const on = !!M3.walk, c = M3.cam.position;
+  if (!force && on === PP.on && (!on || Math.hypot(c.x - PP.cx, c.z - PP.cz) < 0.06)) return;
+  PP.on = on; PP.cx = c.x; PP.cz = c.z;
+  const want = new Set();
+  if (on) {
+    const cand = [];
+    for (const e of PP.list) { const d = Math.hypot(e.o.x - c.x, e.o.y - c.z); if (d < (PP.near.has(e) ? 0.8 : 0.7)) cand.push([d, e]); }
+    cand.sort((a, b) => a[0] - b[0]);
+    for (let i = 0; i < cand.length && i < 24; i++) want.add(cand[i][1]);
+  }
+  if (!force && want.size === PP.near.size && [...want].every(e => PP.near.has(e))) return;
+  const span = new Map(), mark = (k, a, b) => { const r = span.get(k); if (r) { r[0] = Math.min(r[0], a); r[1] = Math.max(r[1], b); } else span.set(k, [a, b]); };
+  for (const e of PP.near) if (!want.has(e) && e.bk) {   // はなれた：もとに もどす
+    for (const [k, a, b] of e.rg) { const m = PP.mesh.get(k), bk = e.bk.get(k); if (!m || !bk) continue; m.geometry.attributes.position.data.array.set(bk, a); mark(k, a, b); }
+    e.bk = null;
+  }
+  for (const e of want) if (!e.bk) {   // 近づいた：ふつうの形を かくす
+    e.bk = new Map();
+    for (const [k, a, b] of e.rg) {
+      const m = PP.mesh.get(k); if (!m) continue;
+      const A = m.geometry.attributes.position.data.array; e.bk.set(k, A.slice(a, b));
+      for (let q = a + 11; q < b; q += 11) { A[q] = A[a]; A[q + 1] = A[a + 1]; A[q + 2] = A[a + 2]; }
+      mark(k, a, b);
+    }
+  }
+  for (const [k, [a, b]] of span) {   // 書きかえた はんいだけ 送る（前の 送っていない はんいと あわせる）
+    const ib = PP.mesh.get(k).geometry.attributes.position.data, ur = ib.updateRange;
+    if (ur.count >= 0) { const e0 = Math.min(ur.offset, a), e1 = Math.max(ur.offset + ur.count, b); ur.offset = e0; ur.count = e1 - e0; } else { ur.offset = a; ur.count = b - a; }
+    ib.needsUpdate = true;
+  }
+  PP.near = want;
+  m3Clear(PP.gn);
+  const AR = m3ArchNow(), T3 = M3.T; if (!AR || !want.size) return;
+  // こまかい形は 小物ごとに 作って とっておき（e.b3。60m より はなれたら すてる）、質感ごとに つなげて メッシュに（作りなおしを 軽く）
+  for (const e of PP.list) if (e.b3 && !want.has(e) && Math.hypot(e.o.x - c.x, e.o.y - c.z) > 1.2) e.b3 = null;
+  const acc = new Map();
+  for (const e of want) {
+    if (!e.b3) { const B = new AR.Builder(); AR.buildProp(B, e.o, e.gy, { lod: 3 }); e.b3 = new Map(); for (const [k, bf] of B.bk) if (bf.n) e.b3.set(k, bf.a.slice(0, bf.n)); }
+    for (const [k, a] of e.b3) { let L = acc.get(k); if (!L) acc.set(k, L = []); L.push(a); }
+  }
+  for (const [k, L] of acc) {
+    const A = new Float32Array(L.reduce((n, a) => n + a.length, 0)); let o = 0; for (const a of L) { A.set(a, o); o += a.length; }
+    const ib = new T3.InterleavedBuffer(A, 11), g = new T3.BufferGeometry();
+    g.setAttribute('position', new T3.InterleavedBufferAttribute(ib, 3, 0)); g.setAttribute('normal', new T3.InterleavedBufferAttribute(ib, 3, 3));
+    g.setAttribute('color', new T3.InterleavedBufferAttribute(ib, 3, 6)); g.setAttribute('uv', new T3.InterleavedBufferAttribute(ib, 2, 9));
+    const me = new T3.Mesh(g, AR.matOf(T3, k)); me.userData.m3a = k; PP.gn.add(me);
+  }
+}
 // 信号の灯：組0 は 青 0〜17秒・黄 17〜20秒・赤 20〜40秒、組1 は その反対（赤 0〜20・青 20〜37・黄 37〜40）
 const M3_LAMP = [[0.12, 0.95, 0.62], [1, 0.78, 0.12], [1, 0.16, 0.12]], M3_LAMP_OFF = [0.13, 0.14, 0.15];
 function m3SigTick(force) {
@@ -1440,14 +1494,25 @@ function m3Blds(v) {
   for (const k of Object.keys(W)) mkMesh(W[k], M3.tex[k], M3.grpB);
   mkMesh(RF, null, M3.grpB);
   // 小物（t65・DB の更新103）：近くだけ（遠いと見えないので描かない）。タップ用に まん中の点を おぼえる
-  M3.propHit = [];
-  if (AB && AR.buildProp) for (const pr of (it.props ? it.props.values() : [])) {
+  //   小物は 別の組に（t69）：歩いているとき、すぐ近くの小物は もっと こまかい形（lod 3）に とりかえる（m3PropNear2。ふつうの形は 頂点を つぶして かくす）
+  M3.propHit = []; M3.pp = null;
+  const PB = AB && AR.buildProp ? new AR.Builder() : null, PL = [];
+  if (PB) for (const pr of (it.props ? it.props.values() : [])) {
     if (pr.x < v.x0 || pr.x > v.x1 || pr.y < v.y0 || pr.y > v.y1 || Math.hypot(M3.d, Math.hypot(pr.x - v.cx, pr.y - v.cy) - G5 * 0.5) > 9) continue;
-    const gy = m3Surf(pr.x, pr.y), top = AR.buildProp(AB, pr, gy, { lod: Math.hypot(M3.d, Math.hypot(pr.x - v.cx, pr.y - v.cy)) < 5 ? 2 : 1 });
+    const gy = m3Surf(pr.x, pr.y), mk0 = PB.mark(), top = AR.buildProp(PB, pr, gy, { lod: Math.hypot(M3.d, Math.hypot(pr.x - v.cx, pr.y - v.cy)) < 5 ? 2 : 1 });
+    const rg = []; for (const [k, n1] of PB.mark()) { const n0 = mk0.get(k) || 0; if (n1 > n0) rg.push([k, n0, n1]); }   // 質感ごとの 頂点の はんい（11 ずつ）
+    PL.push({ o: pr, gy, rg, bk: null });
     M3.propHit.push({ x: pr.x, y: (gy + top) / 2, z: pr.y, o: pr });
   }
   if (ugs.length) try { m3Ugm(T3, AB, ugs, v); } catch (e) { console.error(e); }   // 地下街（DB の更新109）：地上の出入口・地下ビューでは 中も
   if (AB) { const t1 = performance.now(); M3.nBv = AR.flush(T3, AB, M3.grpB); M3.tBf = performance.now() - t1; }   // 建物の型（t65）：質感ごとのメッシュに
+  if (PB && PL.length) {
+    const g = new T3.Group(), gn = new T3.Group(); M3.grpB.add(g, gn);
+    AR.flush(T3, PB, g);
+    const mesh = new Map(); for (const m of g.children) mesh.set(m.userData.m3a, m);
+    M3.pp = { list: PL, mesh, gn, near: new Set(), on: null, cx: NaN, cz: NaN };
+    m3PropNear2(true);
+  }
   // 道路・線路：地面の少し上に帯で（道のはば・地形の面にそって。t64）
   //   地面（G）・縦断のない線：帯の左右のはしも 地形の面にそって（坂を横ぎっても うまらない）。縦断があれば その高さより下にしない（盛土は すそを地面まで）
   //   高架・橋（V・B）：縦断の高さに。1.5マスごとに はしら。トンネル（T）：描かない

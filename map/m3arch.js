@@ -507,6 +507,7 @@ A.matOf = (T3, key) => {
   const tx = new T3.CanvasTexture(cv); tx.wrapS = tx.wrapT = T3.RepeatWrapping; tx.anisotropy = A.aniso || 4;
   const op = { map: tx, vertexColors: true, side: T3.DoubleSide };
   if (e.o.alpha) op.alphaTest = 0.5;
+  if (e.o.front) op.side = T3.FrontSide;   // おもてだけ（うらと おもての 2まいで 両がわ。木の 葉の 板：光の 向きを 外に そろえる。t69）
   if (e.o.tr) { op.transparent = true; op.opacity = e.o.op || 0.5; op.depthWrite = false; }
   const M = e.o.shiny ? new T3.MeshPhongMaterial(Object.assign(op, { specular: new T3.Color(e.o.shiny), shininess: e.o.sh || 40 })) : new T3.MeshLambertMaterial(op);
   if (e.o.po) Object.assign(M, { polygonOffset: true, polygonOffsetFactor: e.o.po, polygonOffsetUnits: e.o.po });

@@ -170,6 +170,28 @@ function disc(B, m, cx, y, cz, r, n, c, dn, rot = 0, U) {
     tr(B, m, [cx, y, cz], a, b, nn, c, U ? [...uv(cx, cz), ...uv(a[0], a[2]), ...uv(b[0], b[2])] : null); }
 }
 
+// 棒の列（点 → 点）。o：{ cap（はしを ふさぐ）, rot }
+function pipe(B, m, pts, r, n, c, o = {}) { for (let i = 0; i + 1 < pts.length; i++) bar(B, m, pts[i], pts[i + 1], r, r, n, c, { rot: o.rot, cap: o.cap ? (i === 0 ? 'a' : '') + (i === pts.length - 2 ? 'b' : '') : '' }); }
+// 2次の曲線の 点の列（a → c。取っ手 b。k こに 分ける）
+function qpts(a, b, c, k) { const o = []; for (let i = 0; i <= k; i++) { const t = i / k, u = 1 - t; o.push([a[0] * u * u + 2 * b[0] * u * t + c[0] * t * t, a[1] * u * u + 2 * b[1] * u * t + c[1] * t * t, a[2] * u * u + 2 * b[2] * u * t + c[2] * t * t]); } return o; }
+// わっか（タイヤなど）：まん中 c・軸 ax（長さ 1）・半径 R・太さ r・まわり n・断面 k
+function torus(B, m, c, ax, R, r, n, k, col0) {
+  const ref = Math.abs(ax[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0], e1 = nrm(crs(ref, ax)), e2 = crs(ax, e1);
+  const P = (i, j) => { const t = i / n * TAU, s = j / k * TAU, d = add(sc(e1, Math.cos(t)), sc(e2, Math.sin(t))), nn = add(sc(d, Math.cos(s)), sc(ax, Math.sin(s))); return [add(c, add(sc(d, R), sc(nn, r))), nn]; };
+  for (let i = 0; i < n; i++) for (let j = 0; j < k; j++) {
+    const [p0, n0] = P(i, j), [p1, n1] = P(i + 1, j), [p2, n2] = P(i + 1, j + 1), [p3, n3] = P(i, j + 1);
+    qd(B, m, p0, p1, p2, p3, add(add(n0, n1), add(n2, n3)), col0, null, [n0, n1, n2, n3]);
+  }
+}
+// たての まるい板（まん中 (cx, cy)・面 z・半径 r。+z 向き。back なら -z 向き）
+function vdisc(B, m, cx, cy, z, r, n, c, back) {
+  for (let i = 0; i < n; i++) { const t0 = i / n * TAU, t1 = (i + 1) / n * TAU; tr(B, m, [cx, cy, z], [cx + Math.cos(t0) * r, cy + Math.sin(t0) * r, z], [cx + Math.cos(t1) * r, cy + Math.sin(t1) * r, z], [0, 0, back ? -1 : 1], c); }
+}
+// だ円の 平らな板（地面の すりへった あと など）
+function edisc(B, m, cx, y, cz, rx, rz, n, c) {
+  for (let i = 0; i < n; i++) { const t0 = i / n * TAU, t1 = (i + 1) / n * TAU; tr(B, m, [cx, y, cz], [cx + Math.cos(t0) * rx, y, cz + Math.sin(t0) * rz], [cx + Math.cos(t1) * rx, y, cz + Math.sin(t1) * rz], [0, 1, 0], c); }
+}
+
 /* ---------- 質感 ---------- */
 const T = (k, w, h, f, o) => A.tex('q:' + k, w, h, f, o);
 // 角の まるい 四角・まる
@@ -456,13 +478,48 @@ const TA = () => T('a', 512, 512, (g, w, h, R) => {
   // いすの わき（0.5 × 0.9 m。うしろ が 左）
   at(2, 3, 1, () => { const { L } = mk(s / 0.5, s / 0.9, 0.9), c = '#eeeeee', z = v => v + 0.25;
     L([[z(0.2), 0], [z(0.18), 0.45]], 0.03, c); L([[z(-0.21), 0], [z(-0.18), 0.45], [z(-0.22), 0.88]], 0.032, c); L([[z(0.2), 0.45], [z(-0.18), 0.45]], 0.03, c); L([[z(0.19), 0.16], [z(-0.2), 0.16]], 0.02, c); });
+  // くさり（(3,3) の 左 1/4：たてに 輪 6つ。正面の 輪と 横向きの 輪を かわるがわる。ブランコ。lod 3）
+  at(3, 3, 0.25, () => {
+    const w = s * 0.25, lh = s / 6;
+    for (let k = 0; k < 6; k++) {
+      const cy = (k + 0.5) * lh;
+      if (k % 2 === 0) { g.strokeStyle = '#eeeeee'; g.lineWidth = Math.max(1.5, w * 0.17); g.beginPath(); g.ellipse(w / 2, cy, w * 0.3, lh * 0.6, 0, 0, TAU); g.stroke(); }
+      else { g.fillStyle = '#d8d8d8'; g.fillRect(w / 2 - w * 0.09, cy - lh * 0.66, w * 0.18, lh * 1.32); }
+    }
+  });
 }, { alpha: true });
+// 葉の 小枝（すかし・おもてだけ。128）：灰色の 葉が むらがる。頂点の色で 緑・桜の色に そめる（lod 3 の 木）
+const TL = () => T('lf', 128, 128, (g, w, h, R) => {
+  g.clearRect(0, 0, w, h);
+  const u = w / 128;
+  for (let k = 0; k < 120; k++) {
+    const a = R() * TAU, d = Math.sqrt(R()), x = w / 2 + Math.cos(a) * d * w * 0.42, y = h / 2 + Math.sin(a) * d * h * 0.43, v = Math.round(130 + R() * 120 - d * 35);
+    ell(g, x, y, u * (5 + R() * 4.5), u * (2.2 + R() * 1.8), `rgb(${v},${v},${v})`, R() * PI);
+  }
+}, { alpha: true, front: true });
+const UL = [0.01, 0.01, 0.99, 0.01, 0.99, 0.99, 0.01, 0.99];
 // ます の uv（すかし）
 const UA = {
   bikeA: [0 + EU, 0.75 + EU, 0.5 - EU, 0.75 + EU, 0.5 - EU, 1 - EU, 0 + EU, 1 - EU], bikeB: [0 + EU, 0.5 + EU, 0.5 - EU, 0.5 + EU, 0.5 - EU, 0.75 - EU, 0 + EU, 0.75 - EU],
   bikeF: [0 + EU, 0.25 + EU, 0.5 - EU, 0.25 + EU, 0.5 - EU, 0.5 - EU, 0 + EU, 0.5 - EU], fence: [0 + EU, 0 + EU, 0.5 - EU, 0 + EU, 0.5 - EU, 0.25 - EU, 0 + EU, 0.25 - EU],
-  bskt: cu(2, 0), bench: cu(3, 0), ladder: cu(2, 1), rail: cu(3, 1), mesh: cu(2, 2), net: cu(3, 2), chair: cu(2, 3)
+  bskt: cu(2, 0), bench: cu(3, 0), ladder: cu(2, 1), rail: cu(3, 1), mesh: cu(2, 2), net: cu(3, 2), chair: cu(2, 3), chain: cu(3, 3, 0, 0, 0.25, 1)
 };
+// 葉の 小枝の 板（lod 3 の 木）：だ円体（まん中 c・半径 rx, ry, rz）の まわりに k まい（上の ほうに 多く）。
+//   板は 外向きから 少し かたむける。光の 向き（法線）は 外向き（ふんわり）。sz：板の はば（m）
+function leafCards(B, c, rx, ry, rz, k, col0, R, sz) {
+  const ml = TL();
+  for (let i = 0; i < k; i++) {
+    const y = Math.min(1, -0.35 + R() * 1.35), th = R() * TAU, rr = Math.sqrt(Math.max(0, 1 - y * y)), d0 = [Math.cos(th) * rr, y, Math.sin(th) * rr], f = 0.86 + R() * 0.14;
+    const p = [c[0] + d0[0] * rx * f, c[1] + d0[1] * ry * f, c[2] + d0[2] * rz * f], n = nrm([d0[0] / rx, d0[1] / ry, d0[2] / rz]);
+    const tn = nrm(add(n, [(R() - 0.5) * 1.4, (R() - 0.5) * 1.0, (R() - 0.5) * 1.4]));   // 板の 向き（外向きから かたむける）
+    const t1 = nrm(Math.abs(tn[1]) < 0.95 ? crs([0, 1, 0], tn) : [1, 0, 0]), t2 = crs(tn, t1), a = R() * TAU;
+    const uu = add(sc(t1, Math.cos(a)), sc(t2, Math.sin(a))), vv = crs(tn, uu), w = sz * (0.8 + R() * 0.4) / 2, h = w * 1.33;
+    const P = (i2, j2) => add(p, add(sc(uu, i2 * w), sc(vv, j2 * h)));
+    const cc = mul(col0, 0.82 + R() * 0.3);
+    qd(B, ml, P(-1, -1), P(1, -1), P(1, 1), P(-1, 1), tn, cc, UL, [n, n, n, n]);                       // おもて
+    qd(B, ml, P(-1, -1), P(1, -1), P(1, 1), P(-1, 1), sc(tn, -1), cc, flipU(UL), [n, n, n, n]);         // うら（同じ 外向きの 光）
+  }
+}
 
 /* ---------- 小物 ---------- */
 const CONC = [0.7, 0.69, 0.66];   // コンクリート
@@ -486,6 +543,20 @@ A.prop('vend', { n: '自動販売機', col: true, cols: VC, build(B, P) {
   const cb = mix(c, WH, 0.12), bx0 = 0.32, bx1 = 0.74, bz0 = 0.0, bz1 = 0.36, bh = 0.85;
   box(B, 'c', bx0, bx1, yb - 0.06, bh, bz0, bz1, cb, 'blrt', {}, {}, { t: mul(cb, 0.88) });
   vf(B, mo, bx0, bz1, bx1, bz1, yb - 0.06, bh, cb, UO.bin);
+  if (lod < 3) return;
+  // すぐ近く（lod 3。歩いているとき）：見本の下の ボタン（3段 × 9）・取り出し口の わくと ふた・お金を入れる 面の でっぱり・返却レバー・かどの まるみ・回収箱の 口
+  const bt = [0.93, 0.95, 0.98], fr = mul(c, 0.8);
+  for (let r = 0; r < 3; r++) {
+    const yc = dy1 - (0.014 + r * 0.224 + 0.224 * 0.78 + 0.029) / 0.7 * (dy1 - dy0);
+    for (let k = 0; k < 9; k++) { const xc = dx0 + 0.014 + (k + 0.5) * (0.872 / 9); box(B, 'c', xc - 0.022, xc + 0.022, yc - 0.007, yc + 0.007, dz, dz + 0.011, bt, 'flrtu'); }
+  }
+  for (const [a, b2, y0, y1] of [[-0.695, -0.065, 0.355, 0.375], [-0.695, -0.065, 0.125, 0.145], [-0.695, -0.675, 0.145, 0.355], [-0.085, -0.065, 0.145, 0.355]]) box(B, 'c', a, b2, y0, y1, z1, z1 + 0.02, fr, 'flrtu');
+  qd(B, 'c', [-0.672, 0.352, z1 + 0.004], [-0.088, 0.352, z1 + 0.004], [-0.088, 0.165, z1 + 0.028], [-0.672, 0.165, z1 + 0.028], [0, -0.3, 1], [0.16, 0.17, 0.18]);   // 取り出し口の ふた（くもった 黒）
+  box(B, 'c', -0.06, 0.23, 0.388, 0.95, z1, z1 + 0.012, mul(c, 0.9), 'lrtu');
+  vf(B, mo, -0.06, z1 + 0.012, 0.23, z1 + 0.012, 0.388, 0.95, c, cu(1, 0, 0.68, 0.03, 0.97, 0.63));   // お金を入れる面（少し 前へ）
+  box(B, 'c', 0.12, 0.18, 0.73, 0.8, z1 + 0.012, z1 + 0.03, [0.33, 0.35, 0.36], 'flrtu');                                        // 返却レバー
+  for (const [x, z] of [[x0, z1], [x1, z1], [x0, z0], [x1, z0]]) bar(B, 'c', [x, yb, z], [x, H, z], 0.012, 0.012, 4, mul(c, 0.86));   // かど
+  for (const xh of [0.4334, 0.6266]) { bar(B, 'c', [xh, 0.72, bz1], [xh, 0.72, bz1 + 0.014], 0.075, 0.075, 12, [0.7, 0.71, 0.7]); vdisc(B, 'c', xh, 0.72, bz1 + 0.015, 0.058, 12, [0.1, 0.11, 0.12]); }
 } });
 
 // ベンチ（1.8 m・板 3枚＋背の板 2枚・鉄の わき）。色は 板（木の色は 木目・金属の色は ぬり）
@@ -495,7 +566,19 @@ A.prop('bench', { n: 'ベンチ', col: true, cols: BC, build(B, P) {
   const lod = P.lod, c = pcol(P, BC[0]), wood = woody(c), m = wood ? TO() : 'c', U = wood ? UO.wd : null, ma = TA();
   const XL = 0.9, uvS = U ? { t: cu(2, 1, 0, 0.2, 1, 0.35), f: cu(2, 1, 0, 0.35, 1, 0.42), b: cu(2, 1, 0, 0.35, 1, 0.42) } : {};
   const tilt = 0.26, up = [0, Math.cos(tilt), -Math.sin(tilt)], fw = [0, Math.sin(tilt), Math.cos(tilt)];
-  for (const x of [-0.8, 0.8]) qd(B, ma, [x, 0, -0.36], [x, 0, 0.36], [x, 0.9, 0.36], [x, 0.9, -0.36], [Math.sign(x), 0, 0], WH, UA.bench);   // わき（鋳物）
+  if (lod >= 3) {   // すぐ近く（lod 3）：わきの 鋳物を 形に（前の脚・ひじかけ・うしろの脚と背・座の うけ・まるい すじかい・足）と、板の ねじ
+    const ic = [0.22, 0.225, 0.23];
+    for (const x of [-0.8, 0.8]) {
+      const p = (z, y) => [x, y, z];
+      pipe(B, 'c', [p(0.22, 0), p(0.22, 0.63)], 0.025, 6, ic);
+      pipe(B, 'c', [p(0.31, 0.64), p(0.1, 0.655), p(-0.2, 0.66)], 0.022, 6, ic, { cap: 1 });
+      pipe(B, 'c', [p(-0.27, 0), p(-0.19, 0.4), p(-0.31, 0.87)], 0.025, 6, ic, { cap: 1 });
+      pipe(B, 'c', [p(0.25, 0.405), p(-0.2, 0.385)], 0.02, 5, ic);
+      pipe(B, 'c', qpts(p(0.22, 0.1), p(0, 0.34), p(-0.24, 0.1), 5), 0.015, 5, ic);
+      box(B, 'c', x - 0.03, x + 0.03, 0, 0.025, 0.16, 0.28, ic); box(B, 'c', x - 0.03, x + 0.03, 0, 0.025, -0.33, -0.21, ic);
+      for (const [z, y] of [[0.17, 0.4365], [0.04, 0.4295], [-0.09, 0.4215]]) disc(B, 'c', x, y, z, 0.009, 6, [0.3, 0.3, 0.31]);   // ねじ
+    }
+  } else for (const x of [-0.8, 0.8]) qd(B, ma, [x, 0, -0.36], [x, 0, 0.36], [x, 0.9, 0.36], [x, 0.9, -0.36], [Math.sign(x), 0, 0], WH, UA.bench);   // わき（鋳物）
   if (lod < 2) {
     box(B, m, -XL, XL, 0.38, 0.435, -0.17, 0.23, c, 'fblrt', uvS);
     obb(B, m, [0, 0.66, -0.25], [XL, 0, 0], sc(up, 0.14), sc(fw, 0.02), c, 'fbt', U ? { f: cu(2, 1, 0, 0, 1, 0.34), b: cu(2, 1, 0, 0, 1, 0.34) } : {});
@@ -504,7 +587,7 @@ A.prop('bench', { n: 'ベンチ', col: true, cols: BC, build(B, P) {
   [[0.17, 0.435], [0.04, 0.428], [-0.09, 0.42]].forEach(([z, y], i) => box(B, m, -XL, XL, y - 0.035, y, z - 0.058, z + 0.058, c, 'fblrt', U ? { t: cu(2, 1, 0, i / 6, 1, i / 6 + 0.14), f: cu(2, 1, 0, i / 6 + 0.14, 1, i / 6 + 0.16), b: cu(2, 1, 0, i / 6 + 0.14, 1, i / 6 + 0.16) } : {}));
   [[0.55, -0.205], [0.72, -0.25]].forEach(([y, z], i) => obb(B, m, [0, y, z], [XL, 0, 0], sc(up, 0.05), sc(fw, 0.016), c, 'fbtulr', U ? { f: cu(2, 1, 0, 0.5 + i / 6, 1, 0.64 + i / 6), b: cu(2, 1, 0, 0.5 + i / 6, 1, 0.64 + i / 6) } : {}));
   const fc = [0.24, 0.245, 0.25];
-  for (const x of [-0.8, 0.8]) { bar(B, 'c', [x, -0.1, 0.22], [x, 0.63, 0.22], 0.026, 0.026, 4, fc, { rot: PI / 4 }); bar(B, 'c', [x, -0.1, -0.275], [x, 0.4, -0.19], 0.026, 0.026, 4, fc, { rot: PI / 4 }); }
+  if (lod < 3) for (const x of [-0.8, 0.8]) { bar(B, 'c', [x, -0.1, 0.22], [x, 0.63, 0.22], 0.026, 0.026, 4, fc, { rot: PI / 4 }); bar(B, 'c', [x, -0.1, -0.275], [x, 0.4, -0.19], 0.026, 0.026, 4, fc, { rot: PI / 4 }); }
 } });
 
 // プランター（木の箱 0.9 × 0.4 m・花の かたまり 3つ）
@@ -513,7 +596,16 @@ A.prop('planter', { n: 'プランター', col: false, build(B, P) {
   box(B, mo, -X, X, -0.06, H, -Z, Z, wc, 'fblr', { f: cu(2, 1, 0, 0, 1, 0.5), b: cu(2, 1, 0, 0, 1, 0.5), l: cu(2, 1, 0, 0.5, 0.45, 1), r: cu(2, 1, 0, 0.5, 0.45, 1) });
   qd(B, 'c', [-X, H - 0.04, Z], [X, H - 0.04, Z], [X, H - 0.04, -Z], [-X, H - 0.04, -Z], [0, 1, 0], [0.3, 0.23, 0.17]);   // 土
   if (P.lod < 2) { blob(B, mo, 0, H - 0.04, 0, 0.46, 0.24, 0.19, 5, 1, WH, { uv: UO.fl, bot: 0, kb: 0.7 }); return; }
-  [[-0.25, 0.01, 0.22, 0.2], [0.03, -0.02, 0.24, 0.24], [0.28, 0.02, 0.19, 0.18]].forEach(([x, z, r, h], i) =>
+  if (P.lod >= 3) {   // すぐ近く（lod 3）：葉の かたまり 5つ（こまかく）・その上に 花（1〜2色）・箱の かどの 柱
+    const bl = [[-0.3, 0.02, 0.17, 0.19], [-0.1, -0.05, 0.19, 0.22], [0.1, 0.04, 0.2, 0.24], [0.3, -0.02, 0.16, 0.18], [0.0, 0.06, 0.15, 0.16]];
+    bl.forEach(([x, z, r, h], i) => blob(B, mo, x, H - 0.06, z, r, h, 0.16, 10, 3, WH, { uv: UO.fl, bot: 0, jt: 0.14, R, kb: 0.6, rot: i * 1.3, seed: i * 31 + 5 }));
+    const FC = ['#d8383c', '#f2c53a', '#f7f4ec', '#8a5cc4', '#ef8fb0', '#ef8a2c', '#c7457a', '#e85a8c'], c1 = A.pick(R, FC), c2 = R() < 0.5 ? c1 : A.pick(R, FC);
+    for (let k = 0; k < 26; k++) {
+      const [x, z, r, h] = bl[k % bl.length], a = R() * TAU, f = Math.sqrt(R()) * 0.82, fx = x + Math.cos(a) * r * f, fz = z + Math.sin(a) * 0.16 * f, fy = H - 0.06 + h * Math.sqrt(1 - f * f) * 0.96;
+      blob(B, 'c', fx, fy, fz, 0.028, 0.018, 0.028, 5, 1, mul(k % 3 ? c1 : c2, 0.95 + R() * 0.1), { bot: 0.4, kb: 0.75, rot: R() * TAU });
+    }
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(B, 'c', sx * X - 0.025, sx * X + 0.025, -0.06, H + 0.02, sz * Z - 0.025, sz * Z + 0.025, mul(wc, 0.8));
+  } else [[-0.25, 0.01, 0.22, 0.2], [0.03, -0.02, 0.24, 0.24], [0.28, 0.02, 0.19, 0.18]].forEach(([x, z, r, h], i) =>
     blob(B, mo, x, H - 0.06, z, r, h, 0.175, 7, 2, WH, { uv: UO.fl, bot: 0, jt: 0.16, R, kb: 0.62, rot: i * 1.7, seed: i * 31 }));
   // 箱の ふちの 木（上）
   for (const [a, b] of [[[-X, -Z], [X, -Z]], [[X, -Z], [X, Z]], [[X, Z], [-X, Z]], [[-X, Z], [-X, -Z]]]) { const d = nrm([b[0] - a[0], 0, b[1] - a[1]]), o = [d[2], 0, -d[0]], t = 0.035;
@@ -525,15 +617,37 @@ A.prop('shrub', { n: '植木', col: false, build(B, P) {
   const mo = TO(), R = P.rng, lc = [0.84, 0.95, 0.84];
   disc(B, 'c', 0, 0.012, 0.08, 0.8, 8, [0.3, 0.26, 0.21]);
   if (P.lod < 2) { blob(B, mo, 0, 0.04, 0, 0.72, 0.7, 0.66, 6, 2, lc, { uv: UO.lf, bot: 0, kb: 0.6 }); return; }
-  blob(B, mo, -0.06, 0.36, -0.05, 0.6, 0.44, 0.55, 8, 3, lc, { uv: UO.lf, bot: 0.5, jt: 0.09, R, kb: 0.5, seed: 1 });
-  blob(B, mo, 0.5, 0.2, 0.32, 0.36, 0.27, 0.33, 6, 2, mul(lc, 0.96), { uv: UO.lf, bot: 0.5, jt: 0.1, R, kb: 0.5, rot: 0.4, seed: 2 });
-  blob(B, mo, -0.52, 0.17, 0.36, 0.31, 0.24, 0.29, 6, 2, mul(lc, 1.04), { uv: UO.lf, bot: 0.5, jt: 0.1, R, kb: 0.5, rot: 1.1, seed: 3 });
+  const k3 = P.lod >= 3;   // すぐ近く（lod 3）：こまかく・小さな かたまりを 足して ふちを でこぼこに・まわりの 石
+  blob(B, mo, -0.06, 0.36, -0.05, 0.6, 0.44, 0.55, k3 ? 13 : 8, k3 ? 4 : 3, lc, { uv: UO.lf, bot: 0.5, jt: 0.09, R, kb: 0.5, seed: 1 });
+  blob(B, mo, 0.5, 0.2, 0.32, 0.36, 0.27, 0.33, k3 ? 9 : 6, k3 ? 3 : 2, mul(lc, 0.96), { uv: UO.lf, bot: 0.5, jt: 0.1, R, kb: 0.5, rot: 0.4, seed: 2 });
+  blob(B, mo, -0.52, 0.17, 0.36, 0.31, 0.24, 0.29, k3 ? 9 : 6, k3 ? 3 : 2, mul(lc, 1.04), { uv: UO.lf, bot: 0.5, jt: 0.1, R, kb: 0.5, rot: 1.1, seed: 3 });
+  if (!k3) return;
+  for (let i = 0; i < 6; i++) {
+    const a = i / 6 * TAU + R() * 0.6, rr2 = 0.45 + R() * 0.15, x = -0.06 + Math.cos(a) * rr2, z = -0.05 + Math.sin(a) * rr2 * 0.9, h = 0.3 + R() * 0.2;
+    blob(B, mo, x, h, z, 0.2 + R() * 0.08, 0.16 + R() * 0.06, 0.2 + R() * 0.08, 7, 2, mul(lc, 0.94 + R() * 0.12), { uv: UO.lf, bot: 0.4, jt: 0.14, R, kb: 0.5, rot: a, seed: 10 + i });
+  }
+  for (let i = 0; i < 9; i++) { const a = i / 9 * TAU + R() * 0.3, x = 0.08 + Math.cos(a) * 0.76, z = 0.08 + Math.sin(a) * 0.76;
+    blob(B, mo, x, 0.0, z, 0.07 + R() * 0.04, 0.05 + R() * 0.03, 0.06 + R() * 0.03, 6, 1, [0.7, 0.69, 0.66], { uv: UO.st, bot: 0, kb: 0.7, rot: R() * TAU }); }
 } });
 
 // 木（庭の木：幹が 2つに わかれて、大きな 葉の かたまりに 小さな かたまり 2つ。高さ 4.8m）
 A.prop('tree', { n: '木', col: false, build(B, P) {
   const mo = TO(), R = P.rng, bc = [0.56, 0.5, 0.44], ang = R() * TAU, k = (a, r) => [Math.cos(ang + a) * r, Math.sin(ang + a) * r];
   if (P.lod < 2) { bar(B, mo, [0, -0.1, 0], [0.04, 2.3, 0], 0.12, 0.08, 3, bc, { uv: UO.bark }); blob(B, mo, 0, 3.0, 0, 1.6, 1.6, 1.55, 6, 2, WH, { uv: UO.lf, bot: 0.4, R, jt: 0.12, kb: 0.5 }); return; }
+  if (P.lod >= 3) {   // すぐ近く（lod 3）：根もと・枝が 葉の かたまり（10こ）へ のびる・かたまりは こまかく
+    bar(B, mo, [0, -0.1, 0], [0.03, 1.8, 0.02], 0.14, 0.09, 9, bc, { uv: UO.bark, rep: 3 });
+    for (let i = 0; i < 4; i++) { const a = ang + i * TAU / 4 + 0.4; bar(B, mo, [Math.cos(a) * 0.04, 0.32, Math.sin(a) * 0.04], [Math.cos(a) * 0.42, -0.06, Math.sin(a) * 0.42], 0.075, 0.025, 5, mul(bc, 0.95), { uv: UO.bark }); }
+    const CL = [[0.02, 4.1, 0, 0.95]];
+    for (let i = 0; i < 6; i++) { const a = ang + i / 6 * TAU + (R() - 0.5) * 0.4, d = 0.95 + R() * 0.3; CL.push([Math.cos(a) * d, 3.0 + (R() - 0.5) * 0.7, Math.sin(a) * d, 0.78 + R() * 0.2]); }
+    for (let i = 0; i < 3; i++) { const a = ang + i / 3 * TAU + 0.9, d = 0.6 + R() * 0.2; CL.push([Math.cos(a) * d, 2.45 + R() * 0.25, Math.sin(a) * d, 0.62 + R() * 0.12]); }
+    bar(B, mo, [0.03, 1.75, 0.02], [0.02, 3.6, 0], 0.08, 0.035, 5, bc, { uv: UO.bark });
+    for (const [x, y, z] of CL.slice(1)) if (R() < 0.8) bar(B, mo, [0.03, 1.6 + R() * 0.3, 0.02], [x * 0.72, y - 0.3, z * 0.72], 0.06, 0.022, 5, bc, { uv: UO.bark });
+    CL.forEach(([x, y, z, r], i) => {
+      blob(B, mo, x, y, z, r * 0.9, r * 0.78, r * 0.9, 12, 4, mul(WH, 0.92 + R() * 0.14), { uv: UO.lf, bot: 0.5, R, jt: 0.13, lb: 0.1, kb: 0.42, rot: R() * TAU, seed: 20 + i, tw: 1, f: 0.45 });
+      leafCards(B, [x, y, z], r * 0.9, r * 0.78, r * 0.9, 10, [0.44, 0.6, 0.31], R, 0.75);   // ふちの 葉（すかし）
+    });
+    return;
+  }
   bar(B, mo, [0, -0.1, 0], [0.03, 1.8, 0.02], 0.13, 0.09, 6, bc, { uv: UO.bark, rep: 2 });
   const b1 = k(0, 0.7), b2 = k(2.7, 0.65);
   bar(B, mo, [0.03, 1.65, 0.02], [b1[0], 2.95, b1[1]], 0.07, 0.04, 4, bc, { uv: UO.bark });
@@ -547,6 +661,25 @@ A.prop('tree', { n: '木', col: false, build(B, P) {
 A.prop('sakura', { n: '桜の木', col: false, build(B, P) {
   const mo = TO(), R = P.rng, bc = [0.4, 0.36, 0.35], ang = R() * TAU;
   if (P.lod < 2) { bar(B, mo, [0, -0.1, 0], [0.05, 2.6, 0], 0.19, 0.12, 3, bc, { uv: UO.bark }); blob(B, mo, 0, 3.4, 0, 3.0, 1.75, 2.8, 6, 2, WH, { uv: UO.sk, bot: 0.35, R, jt: 0.1, kb: 0.5 }); return; }
+  if (P.lod >= 3) {   // すぐ近く（lod 3）：根もと・3本の枝から 小枝・花の かたまり 10こ（平たく）
+    bar(B, mo, [0, -0.1, 0], [0.06, 1.3, 0.03], 0.24, 0.18, 9, bc, { uv: UO.bark, rep: 3 });
+    for (let i = 0; i < 4; i++) { const a = ang + i * TAU / 4 + 0.7; bar(B, mo, [Math.cos(a) * 0.08, 0.35, Math.sin(a) * 0.08], [Math.cos(a) * 0.55, -0.06, Math.sin(a) * 0.55], 0.11, 0.035, 5, mul(bc, 0.95), { uv: UO.bark }); }
+    const CL = [[0, 4.2, 0, 1.45]];
+    [0, 2.1, 4.2].forEach((a, i) => {
+      const r = 1.7 + R() * 0.3, e = [Math.cos(ang + a) * r, 2.95 + R() * 0.3, Math.sin(ang + a) * r];
+      bar(B, mo, [0.06, 1.2, 0.03], e, 0.14, 0.06, 6, bc, { uv: UO.bark, rot: i });
+      for (const da of [-0.45, 0.45]) {
+        const r2 = r + 0.5 + R() * 0.3, f = [Math.cos(ang + a + da) * r2, 3.3 + R() * 0.3, Math.sin(ang + a + da) * r2];
+        bar(B, mo, e, f, 0.06, 0.022, 4, bc, { uv: UO.bark }); CL.push([f[0], f[1] + 0.25, f[2], 1.05 + R() * 0.2]);
+      }
+      CL.push([e[0] * 0.85, e[1] + 0.6, e[2] * 0.85, 1.2 + R() * 0.2]);
+    });
+    CL.forEach(([x, y, z, r], i) => {
+      blob(B, mo, x, y, z, r * 0.92, r * 0.52, r * 0.92, 13, 4, mul(WH, 0.95 + R() * 0.1), { uv: UO.sk, bot: 0.45, R, jt: 0.1, lb: 0.12, kb: 0.55, rot: R() * TAU, seed: 30 + i, tw: 1, f: 0.42 });
+      leafCards(B, [x, y, z], r * 0.92, r * 0.52, r * 0.92, 10, [1.3, 1.1, 1.16], R, 0.8);   // ふちの 花（すかし）
+    });
+    return;
+  }
   bar(B, mo, [0, -0.1, 0], [0.06, 1.3, 0.03], 0.22, 0.17, 5, bc, { uv: UO.bark, rep: 2 });
   [0, 2.1, 4.2].forEach((a, i) => { const r = 1.7 + R() * 0.3; bar(B, mo, [0.06, 1.2, 0.03], [Math.cos(ang + a) * r, 2.95 + R() * 0.3, Math.sin(ang + a) * r], 0.13, 0.06, 3, bc, { uv: UO.bark, rot: i }); });
   blob(B, mo, 0, 3.6, 0, 3.3, 1.4, 3.1, 10, 3, WH, { uv: UO.sk, bot: 0.45, R, jt: 0.1, lb: 0.16, kb: 0.55, rot: ang, seed: 9, tw: 1, f: 0.42 });
@@ -559,8 +692,17 @@ const BKC = ['#c9ccce', '#eeeeec', '#2a2b2d', '#2c3b5a', '#7a2a2c', '#6d7350', '
 function bike(B, x, z0, c, v, lod, bk) {
   const ma = TA(), zr = 0.95 + z0, zf = zr - 1.8, L = u => zr - u;   // u：うしろからの m（前は -z）
   const card = (dx, uv, cc) => qd(B, ma, [x + dx, 0, zr], [x + dx, 0, zf], [x + dx, 1.12, zf], [x + dx, 1.12, zr], [1, 0, 0], cc, uv);
-  card(0.008, v ? UA.bikeB : UA.bikeA, WH); card(-0.008, UA.bikeF, c);
+  card(0.008, v ? UA.bikeB : UA.bikeA, WH); if (lod < 3) card(-0.008, UA.bikeF, c);
   if (lod < 2) return;
+  if (lod >= 3) {   // すぐ近く（lod 3）：タイヤ・ハブ・フレームの パイプを 形に（絵の フレームの かわり）
+    const tc = [0.11, 0.11, 0.12], sv = [0.78, 0.8, 0.81], ay = 0.33, Q = (u, y) => [x, y, L(u)];
+    for (const u of [0.36, 1.46]) { torus(B, 'c', Q(u, ay), [1, 0, 0], 0.314, 0.024, 14, 3, tc); bar(B, 'c', [x - 0.045, ay, L(u)], [x + 0.045, ay, L(u)], 0.022, 0.022, 5, sv); }
+    pipe(B, 'c', qpts(Q(1.31, 0.8), Q(1.0, 0.27), Q(0.79, 0.29), 4), 0.03, 5, c);   // メインの パイプ（下へ まがる）
+    pipe(B, 'c', [Q(0.8, 0.28), Q(0.66, 0.79)], 0.026, 5, c);                         // シートの パイプ
+    pipe(B, 'c', [Q(0.8, 0.28), Q(0.36, 0.33)], 0.016, 4, c); pipe(B, 'c', [Q(0.67, 0.74), Q(0.36, 0.33)], 0.014, 4, c);   // うしろの 三角
+    pipe(B, 'c', [Q(1.3, 0.78), Q(1.34, 0.94)], 0.03, 6, c);                          // ヘッド
+    pipe(B, 'c', [Q(1.31, 0.79), Q(1.39, 0.55), Q(1.46, 0.33)], 0.017, 4, sv);       // フォーク
+  }
   vf(B, 'c', x - 0.28, L(1.13), x + 0.28, L(1.13), 0.99, 1.02, [0.72, 0.74, 0.75]);                                              // ハンドル
   box(B, ma, x - 0.17, x + 0.17, 0.7, 0.95, L(1.8), L(1.48), bk, 'fblr', { f: UA.bskt, b: UA.bskt, l: UA.bskt, r: UA.bskt });       // 前かご
   qd(B, 'c', [x - 0.08, 0.945, L(0.78)], [x + 0.08, 0.945, L(0.78)], [x + 0.08, 0.945, L(0.52)], [x - 0.08, 0.945, L(0.52)], [0, 1, 0], [0.17, 0.17, 0.18]);   // サドル
@@ -571,7 +713,10 @@ function bike(B, x, z0, c, v, lod, bk) {
 A.prop('bikes', { n: '自転車置き場', col: false, build(B, P) {
   const lod = P.lod, R = P.rng, ma = TA(), RW = 1.25, rz = -0.78, rc = [0.64, 0.66, 0.67];
   box(B, 'c', -RW, RW, -0.05, 0.05, rz - 0.12, rz + 0.12, rc);
-  if (lod >= 2) for (const s0 of [-1, 1]) qd(B, ma, [s0 < 0 ? -RW : 0, 0.05, rz], [s0 < 0 ? 0 : RW, 0.05, rz], [s0 < 0 ? 0 : RW, 0.4, rz], [s0 < 0 ? -RW : 0, 0.4, rz], [0, 0, 1], rc, UA.rail);
+  if (lod >= 3) {   // すぐ近く（lod 3）：ラックの パイプ（上の 横・たて）
+    bar(B, 'c', [-RW, 0.385, rz], [RW, 0.385, rz], 0.018, 0.018, 6, rc, { cap: 'ab' });
+    for (let k = 0; k <= 12; k++) { const x = -RW + 0.03 + (2 * RW - 0.06) * k / 12; bar(B, 'c', [x, 0.05, rz], [x, 0.385, rz], 0.009, 0.009, 4, rc); }
+  } else if (lod >= 2) for (const s0 of [-1, 1]) qd(B, ma, [s0 < 0 ? -RW : 0, 0.05, rz], [s0 < 0 ? 0 : RW, 0.05, rz], [s0 < 0 ? 0 : RW, 0.4, rz], [s0 < 0 ? -RW : 0, 0.4, rz], [0, 0, 1], rc, UA.rail);
   const xs = [-0.93, -0.31, 0.31, 0.93], skip = lod >= 2 && R() < 0.5 ? Math.floor(R() * 4) : -1;
   xs.forEach((x, i) => { const c = A.pick(R, BKC), v = R() < 0.3 ? 1 : 0, dz = (R() - 0.5) * 0.1, bk = R() < 0.6 ? [0.2, 0.2, 0.21] : [0.78, 0.8, 0.81]; if (i !== skip) bike(B, x, dz, c, v, lod, bk); });
 } });
@@ -598,15 +743,27 @@ A.prop('lantern', { n: '石灯籠', col: false, build(B, P) {
     tr(B, mo, [0, 1.45, 0], a0, a1, [0, -1, 0], mul(c, 0.85));
     tr(B, mo, b0, b1, [0, 1.75, 0], [Math.sin(tm), 1.4, Math.cos(tm)], c, [st[0], st[1], st[2], st[3], (st[0] + st[2]) / 2, st[5]]);
   }
-  blob(B, mo, 0, 1.8, 0, 0.09, 0.15, 0.09, 6, 2, c, { uv: st, bot: 0.5, kb: 0.8 });                                     // 宝珠
+  blob(B, mo, 0, 1.8, 0, 0.09, 0.15, 0.09, lod >= 3 ? 10 : 6, lod >= 3 ? 4 : 2, c, { uv: st, bot: 0.5, kb: 0.8 });     // 宝珠
+  if (lod < 3) return;
+  // すぐ近く（lod 3）：反花（基礎の上の ふくらみ）・竿の 節・火袋の 窓の わく（前と うしろ）・笠の かどの 蕨手・宝珠の 下の 請花
+  prism(B, mo, 0, 0, 12, 0.29, 0.17, 0.2, 0.27, c, { uv: st });
+  for (const [y, r] of [[0.53, 0.112], [0.585, 0.121], [0.64, 0.112]]) bar(B, mo, [0, y - 0.018, 0], [0, y + 0.018, 0], r, r, 10, c, { uv: st });
+  const ap = 0.2 * Math.cos(PI / 6), fw = mul(c, 1.04);
+  for (const sz of [1, -1]) {
+    const za = sz > 0 ? ap : -ap - 0.012, zb = za + 0.012;
+    box(B, mo, -0.06, -0.05, 1.181, 1.405, za, zb, fw, 'fblrt', { f: st, b: st }); box(B, mo, 0.05, 0.06, 1.181, 1.405, za, zb, fw, 'fblrt', { f: st, b: st });
+    box(B, mo, -0.05, 0.05, 1.386, 1.405, za, zb, fw, 'fbtu', { f: st, b: st }); box(B, mo, -0.05, 0.05, 1.181, 1.2, za, zb, fw, 'fbtu', { f: st, b: st });
+  }
+  for (let i = 0; i < 6; i++) { const t = rt + i / 6 * TAU; blob(B, mo, Math.sin(t) * 0.46, 1.6, Math.cos(t) * 0.46, 0.035, 0.04, 0.035, 6, 2, c, { uv: st, bot: 0.6, kb: 0.8 }); }
+  prism(B, mo, 0, 0, 10, 0.05, 0.085, 1.645, 1.69, c, { uv: st });
 } });
 
 // お地蔵さん（石の 台に 立つ 地蔵。赤い よだれかけと 帽子。うしろと 横の 板・前の 柱 2本・木の 切妻屋根の 小さな お堂）
 A.prop('jizo', { n: 'お地蔵さん', col: false, build(B, P) {
   const mo = TO(), lod = P.lod, s0 = [0.66, 0.65, 0.61], red = [0.8, 0.16, 0.13], wd = [0.6, 0.47, 0.35], wdk = [0.36, 0.29, 0.23], st = UO.st;
   box(B, mo, -0.25, 0.25, -0.1, 0.24, -0.19, 0.19, s0, 'fblrt', { f: st, b: st, l: st, r: st, t: st });                    // 台石
-  bar(B, mo, [0, 0.24, 0], [0, 0.76, 0], 0.15, 0.112, lod >= 2 ? 6 : 4, s0, { uv: st });                                 // からだ
-  const bib = lod >= 2 ? 4 : 1, a0 = -1.05, a1 = 1.05, Pb = (t, r, y) => [Math.sin(t) * r, y, Math.cos(t) * r], yb = t => 0.5 + 0.09 * Math.abs(t) / a1;   // よだれかけ（前。下は まるく）
+  bar(B, mo, [0, 0.24, 0], [0, 0.76, 0], 0.15, 0.112, lod >= 3 ? 10 : lod >= 2 ? 6 : 4, s0, { uv: st });                // からだ
+  const bib = lod >= 3 ? 8 : lod >= 2 ? 4 : 1, a0 = -1.05, a1 = 1.05, Pb = (t, r, y) => [Math.sin(t) * r, y, Math.cos(t) * r], yb = t => 0.5 + 0.09 * Math.abs(t) / a1;   // よだれかけ（前。下は まるく）
   for (let i = 0; i < bib; i++) { const t0 = a0 + (a1 - a0) * i / bib, t1 = a0 + (a1 - a0) * (i + 1) / bib, tm = (t0 + t1) / 2, r0 = y => 0.112 + (0.775 - y) * 0.2;
     qd(B, 'c', Pb(t0, r0(yb(t0)), yb(t0)), Pb(t1, r0(yb(t1)), yb(t1)), Pb(t1, 0.112, 0.775), Pb(t0, 0.112, 0.775), [Math.sin(tm), 0.3, Math.cos(tm)], red); }
   // お堂
@@ -620,11 +777,27 @@ A.prop('jizo', { n: 'お地蔵さん', col: false, build(B, P) {
     for (const sx of [-1, 1]) qd(B, 'c', [sx * XR, ye - th, ze], [sx * XR, yr - th, zr], [sx * XR, yr, zr], [sx * XR, ye, ze], [sx, 0, 0], wdk);
   }
   if (lod < 2) return;
-  blob(B, mo, 0, 0.87, 0.008, 0.102, 0.112, 0.098, 6, 2, s0, { uv: st, bot: 0.75, kb: 0.75 });                            // あたま
-  blob(B, 'c', 0, 0.912, -0.018, 0.106, 0.078, 0.104, 6, 2, red, { bot: 0, kb: 0.7, tw: 1 });                                 // 帽子（毛糸）
+  const k3 = lod >= 3;
+  blob(B, mo, 0, 0.87, 0.008, 0.102, 0.112, 0.098, k3 ? 10 : 6, k3 ? 3 : 2, s0, { uv: st, bot: 0.75, kb: 0.75 });            // あたま
+  blob(B, 'c', 0, 0.912, -0.018, 0.106, 0.078, 0.104, k3 ? 10 : 6, k3 ? 3 : 2, red, { bot: 0, kb: 0.7, tw: 1 });             // 帽子（毛糸）
   vf(B, mo, X, 0.02, X, Z0, -0.05, H, wd, cu(2, 1, 0, 0, 0.6, 1)); vf(B, mo, -X, Z0, -X, 0.02, -0.05, H, wd, cu(2, 1, 0.4, 0, 1, 1));   // 横の 板
   for (const sx of [-1, 1]) bar(B, 'c', [sx * (X - 0.03), -0.05, Z1 - 0.03], [sx * (X - 0.03), H, Z1 - 0.03], 0.04, 0.04, 4, wdk, { rot: PI / 4 });   // 前の 柱
   B.top = Math.max(B.top, yr);
+  if (!k3) return;
+  // すぐ近く（lod 3）：帽子の ぼんぼり・合わせた 手・お供え（竹の 花立て 2つ・湯のみ）・屋根の 板の すじ
+  blob(B, 'c', 0, 0.99, -0.018, 0.032, 0.03, 0.032, 6, 2, mul(red, 1.05), { bot: 0.8, kb: 0.75 });
+  blob(B, mo, 0, 0.6, 0.15, 0.032, 0.056, 0.03, 6, 2, s0, { uv: st, bot: 0.8, kb: 0.8 });
+  for (const sx of [-1, 1]) {
+    const x = sx * 0.19;
+    bar(B, 'c', [x, 0.24, 0.12], [x, 0.37, 0.12], 0.024, 0.024, 8, [0.47, 0.58, 0.33], { cap: 'b' });
+    blob(B, mo, x, 0.4, 0.12, 0.06, 0.07, 0.055, 6, 2, [0.85, 0.95, 0.8], { uv: UO.lf, bot: 0.6, kb: 0.6, rot: sx });
+    blob(B, 'c', x + 0.012, 0.455, 0.13, 0.026, 0.022, 0.026, 6, 1, sx > 0 ? [0.95, 0.8, 0.2] : [0.62, 0.36, 0.78], { bot: 0.5, kb: 0.8 });
+  }
+  bar(B, 'c', [0, 0.24, 0.168], [0, 0.276, 0.168], 0.018, 0.021, 8, [0.93, 0.92, 0.88], { cap: 'a' }); disc(B, 'c', 0, 0.271, 0.168, 0.019, 8, [0.5, 0.56, 0.28]);
+  for (let sg = -1; sg <= 1; sg += 2) {
+    const ze = sg > 0 ? Z1 + 0.18 : Z0 - 0.14, ye = H - 0.04;
+    for (const f of [0.33, 0.66]) { const y = ye + (yr - ye) * f + 0.008, z = ze + (zr - ze) * f; bar(B, 'c', [-XR, y, z], [XR, y, z], 0.007, 0.007, 4, mul(wdk, 0.75)); }
+  }
 } });
 
 // 小さな祠（石の 基壇 2段・木の 社（流造り：前の 屋根が 長い）・銅板の 屋根・千木と 鰹木）
@@ -648,6 +821,19 @@ A.prop('hokora', { n: '小さな祠', col: false, build(B, P) {
   bar(B, 'c', [-XR - 0.02, yr + 0.015, zr], [XR + 0.02, yr + 0.015, zr], 0.035, 0.035, 4, mul(rf, 0.85), { rot: PI / 4, cap: 'ab' });   // 棟
   for (const sx of [-1, 1]) for (const d of [-1, 1]) strip(B, 'c', [sx * (XR - 0.01), yr - 0.07, zr + d * 0.12], [sx * (XR - 0.01), yr + 0.2, zr - d * 0.09], 0.045, [sx, 0, 0], mul(rf, 0.9));   // 千木
   for (const x of [-0.13, 0.13]) bar(B, 'c', [x, yr + 0.06, zr - 0.11], [x, yr + 0.06, zr + 0.11], 0.034, 0.034, 4, mul(rf, 0.8), { rot: PI / 4 });   // 鰹木
+  if (lod < 3) return;
+  // すぐ近く（lod 3）：石段・しめ縄（前）と 紙垂・お供えの 台（三方）と 湯のみ・おもち
+  box(B, mo, -0.32, 0.32, -0.1, 0.05, 0.45, 0.66, mul(s0, 0.97), 'fblrt', su);
+  const ry = t => Y1 - 0.03 - 0.06 * Math.sin(t * PI), rope = [];
+  for (let i = 0; i <= 8; i++) rope.push([-X - 0.02 + (2 * X + 0.04) * i / 8, ry(i / 8), Z1 + 0.035]);
+  pipe(B, 'c', rope, 0.016, 6, [0.82, 0.73, 0.48]);
+  for (const x of [-0.13, 0.13]) {
+    const y0 = ry((x + X + 0.02) / (2 * X + 0.04)) - 0.012, z = Z1 + 0.04, zz = [[x, y0], [x + 0.022, y0 - 0.03], [x - 0.004, y0 - 0.06], [x + 0.022, y0 - 0.09], [x + 0.002, y0 - 0.12]];
+    for (let i = 0; i + 1 < zz.length; i++) strip(B, 'c', [zz[i][0], zz[i][1], z], [zz[i + 1][0], zz[i + 1][1], z], 0.02, [0, 0, 1], [0.97, 0.97, 0.95]);
+  }
+  box(B, 'c', -0.06, 0.06, 0.44, 0.49, 0.215, 0.275, [0.86, 0.78, 0.6]);
+  bar(B, 'c', [-0.025, 0.49, 0.245], [-0.025, 0.52, 0.245], 0.013, 0.016, 8, [0.95, 0.95, 0.93], { cap: 'a' });
+  blob(B, 'c', 0.03, 0.49, 0.245, 0.022, 0.02, 0.022, 6, 2, [0.97, 0.97, 0.95], { bot: 0.2, kb: 0.85 });
 } });
 
 // 外の いす（カフェの いす：木の 座面と 背・鉄の わき）。cx, cz：まん中・fx, fz：正面の 向き
@@ -657,6 +843,15 @@ function chair(B, cx, cz, fx, fz, lod) {
   const up = [-fx * 0.12, 0.99, -fz * 0.12];
   obb(B, mo, Pp(0, -0.215, 0.74), [rx * 0.2, 0, rz * 0.2], sc(up, 0.12), [fx * 0.012, 0, fz * 0.012], wc, 'fb', { f: cu(2, 1, 0, 0.3, 1, 0.75), b: cu(2, 1, 0, 0.3, 1, 0.75) });
   if (lod < 2) return;
+  if (lod >= 3) {   // すぐ近く（lod 3）：わきの 鉄を 形に（前の脚・うしろの脚と 背の柱・座の わく・下の 横棒）
+    for (const u of [-0.19, 0.19]) {
+      pipe(B, 'c', [Pp(u, 0.2, 0), Pp(u, 0.18, 0.45)], 0.012, 4, fc);
+      pipe(B, 'c', [Pp(u, -0.21, 0), Pp(u, -0.18, 0.45), Pp(u, -0.22, 0.88)], 0.012, 4, fc);
+      pipe(B, 'c', [Pp(u, 0.2, 0.44), Pp(u, -0.18, 0.44)], 0.01, 4, fc);
+      pipe(B, 'c', [Pp(u, 0.19, 0.16), Pp(u, -0.2, 0.16)], 0.008, 4, fc);
+    }
+    return;
+  }
   for (const u of [-0.2, 0.2]) qd(B, ma, Pp(u, -0.25, 0), Pp(u, 0.25, 0), Pp(u, 0.25, 0.9), Pp(u, -0.25, 0.9), [rx, 0, rz], fc, UA.chair);
 }
 // パラソルと テーブル（まるい テーブル・いす 2つ・8枚はぎの パラソル。色は パラソル）
@@ -666,6 +861,15 @@ A.prop('parasol', { n: 'パラソルとテーブル', col: true, cols: PC, build
   const Pt = (i, r, y) => { const t = i / n * TAU + PI / 8; return [Math.sin(t) * r, y, Math.cos(t) * r]; };
   for (let i = 0; i < n; i++) {   // 布（三角 8枚）と たれ
     const a = Pt(i, R0, ye), b = Pt(i + 1, R0, ye), tm = (i + 0.5) / n * TAU + PI / 8, out = [Math.sin(tm) * 0.4, 1, Math.cos(tm) * 0.4];
+    if (lod >= 3) {   // すぐ近く（lod 3）：骨の あいだの 布が すこし さがる・たれの すそも なみに
+      const T0 = [0, ya, 0], m2 = [(a[0] + b[0]) / 2 * 0.985, ye - 0.05, (a[2] + b[2]) / 2 * 0.985], md = (p, q, dy) => [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2 + dy, (p[2] + q[2]) / 2];
+      const ha = md(T0, a, 0), hb = md(T0, b, 0), hm = md(T0, m2, -0.012);
+      for (const [p, q, r] of [[T0, ha, hm], [T0, hm, hb], [ha, a, m2], [ha, m2, hm], [hm, m2, b], [hm, b, hb]]) tr(B, 'c', p, q, r, out, c);
+      for (const [p, q] of [[a, m2], [m2, b]]) qd(B, 'c', [p[0], p[1] - 0.13, p[2]], [q[0], q[1] - 0.13, q[2]], q, p, [Math.sin(tm), 0, Math.cos(tm)], ce);
+      bar(B, 'c', [0, ya - 0.022, 0], [a[0] * 0.99, ye - 0.012, a[2] * 0.99], 0.007, 0.007, 3, [0.86, 0.86, 0.84]);                   // 骨
+      bar(B, 'c', [0, 1.72, 0], [a[0] * 0.5, (ya + ye) / 2 - 0.035, a[2] * 0.5], 0.006, 0.006, 3, [0.86, 0.86, 0.84]);               // ささえ
+      continue;
+    }
     tr(B, 'c', a, b, [0, ya, 0], out, c);
     if (lod >= 2) qd(B, 'c', [a[0], ye - 0.13, a[2]], [b[0], ye - 0.13, b[2]], b, a, [Math.sin(tm), 0, Math.cos(tm)], ce);
   }
@@ -675,6 +879,15 @@ A.prop('parasol', { n: 'パラソルとテーブル', col: true, cols: PC, build
   prism(B, 'c', 0, 0, 4, 0.3, 0.27, -0.05, 0.03, [0.3, 0.31, 0.32], { rot: PI / 4 }); bar(B, 'c', [0, 0.03, 0], [0, 0.7, 0], 0.05, 0.045, 4, [0.3, 0.31, 0.32], { rot: PI / 4 });   // 台の 脚
   prism(B, mo, 0, 0, 8, 0.46, 0.46, 0.69, 0.72, [0.6, 0.45, 0.31], { uv: cu(2, 1, 0, 0, 1, 0.08), rot: PI / 8 });
   chair(B, 0.78, 0.08, -1, 0, lod); chair(B, -0.78, -0.08, 1, 0, lod);
+  if (lod < 3) return;
+  // すぐ近く（lod 3）：ポールの ろくろ・てっぺんの 玉・テーブルの カップ 2つ
+  bar(B, 'c', [0, 1.68, 0], [0, 1.76, 0], 0.035, 0.035, 8, [0.86, 0.86, 0.84], { cap: 'ab' });
+  blob(B, 'c', 0, ya + 0.1, 0, 0.03, 0.04, 0.03, 6, 2, [0.86, 0.86, 0.84], { bot: 0.8, kb: 0.8 });
+  for (const [x, z] of [[0.2, 0.1], [-0.2, -0.1]]) {
+    disc(B, 'c', x, 0.724, z, 0.06, 10, [0.95, 0.95, 0.93]);
+    bar(B, 'c', [x, 0.724, z], [x, 0.79, z], 0.03, 0.036, 10, [0.96, 0.96, 0.94], { cap: 'a' });
+    disc(B, 'c', x, 0.78, z, 0.033, 10, [0.3, 0.19, 0.12]);
+  }
 } });
 
 // すべり台（はしご → 台（高さ 1.5m・手すり）→ ステンレスの すべり面。色は わく）
@@ -682,18 +895,29 @@ const SLC = ['#d0483c', '#e2b23a', '#3f72b0', '#4f8f4f', '#e07c34'];
 A.prop('slide', { n: 'すべり台', col: true, cols: SLC, build(B, P) {
   const lod = P.lod, c = pcol(P, SLC[0]), ma = TA(), ss = [0.8, 0.82, 0.84], hp = 1.5, z0 = -0.95, z1 = -0.25, X = 0.33;
   box(B, 'c', -X, X, hp - 0.08, hp, z0, z1, mul(c, 0.9), 'fblrtu');                                                               // 台
-  for (const sx of [-1, 1]) qd(B, ma, [sx * X, lod >= 2 ? hp : 0, z0], [sx * X, lod >= 2 ? hp : 0, z1], [sx * X, hp + 0.75, z1], [sx * X, hp + 0.75, z0], [sx, 0, 0], c, UA.rail);   // 横の 手すり
-  qd(B, ma, [-0.3, 0, -1.62], [0.3, 0, -1.62], [0.3, hp, z0], [-0.3, hp, z0], [0, 0.4, -1], c, UA.ladder);                          // はしご
+  if (lod >= 3) {   // すぐ近く（lod 3）：横の 手すりと はしごの 段を パイプに
+    for (const sx of [-1, 1]) {
+      const x = sx * X;
+      bar(B, 'c', [x, hp + 0.72, z0], [x, hp + 0.72, z1], 0.024, 0.024, 8, c); bar(B, 'c', [x, hp + 0.38, z0], [x, hp + 0.38, z1], 0.016, 0.016, 6, c);
+      for (let k = 1; k <= 4; k++) { const z = z0 + (z1 - z0) * k / 5; bar(B, 'c', [x, hp, z], [x, hp + 0.72, z], 0.012, 0.012, 6, c); }
+    }
+    for (let k = 0; k < 6; k++) { const t = 0.125 + k * 0.165, y = hp * (1 - t), z = z0 + (-1.62 - z0) * t; bar(B, 'c', [-0.3, y, z], [0.3, y, z], 0.018, 0.018, 6, c); }
+  } else {
+    for (const sx of [-1, 1]) qd(B, ma, [sx * X, lod >= 2 ? hp : 0, z0], [sx * X, lod >= 2 ? hp : 0, z1], [sx * X, hp + 0.75, z1], [sx * X, hp + 0.75, z0], [sx, 0, 0], c, UA.rail);   // 横の 手すり
+    qd(B, ma, [-0.3, 0, -1.62], [0.3, 0, -1.62], [0.3, hp, z0], [-0.3, hp, z0], [0, 0.4, -1], c, UA.ladder);                        // はしご
+  }
   // すべり面（台の前 → 下へ → 平らな おわり）・横の かべ
   const S = [[z1, hp], [1.7, 0.36], [2.15, 0.3]], w = 0.23;
   for (let i = 0; i < 2; i++) { const [za, ya] = S[i], [zb, yb] = S[i + 1];
     qd(B, 'c', [-w, ya, za], [w, ya, za], [w, yb, zb], [-w, yb, zb], [0, 1, 0], ss);
     if (lod >= 2) for (const sx of [-1, 1]) qd(B, 'c', [sx * w, ya, za], [sx * w, yb, zb], [sx * w, yb + 0.15, zb], [sx * w, ya + 0.15, za], [sx, 0, 0], [0.9, 0.91, 0.92]); }
   if (lod < 2) return;
-  for (const sx of [-1, 1]) for (const z of [z0, z1]) bar(B, 'c', [sx * X, -0.1, z], [sx * X, hp + 0.75, z], 0.035, 0.035, 4, c, { rot: PI / 4 });   // 柱
-  bar(B, 'c', [-X, hp + 0.72, z1], [X, hp + 0.72, z1], 0.03, 0.03, 4, c, { rot: PI / 4 });                                       // 入口の 横の棒
-  for (const sx of [-1, 1]) bar(B, 'c', [sx * 0.3, -0.08, -1.64], [sx * 0.3, hp + 0.05, z0 + 0.02], 0.025, 0.025, 4, c, { rot: PI / 4 });   // はしごの 柱
-  bar(B, 'c', [0, -0.1, 1.55], [0, 0.42, 1.55], 0.035, 0.035, 4, c, { rot: PI / 4 });                                            // すべり面の 足
+  const np = lod >= 3 ? 8 : 4;   // パイプの まわり（lod 3 は まるく）
+  for (const sx of [-1, 1]) for (const z of [z0, z1]) bar(B, 'c', [sx * X, -0.1, z], [sx * X, hp + 0.75, z], 0.035, 0.035, np, c, { rot: PI / 4, cap: lod >= 3 ? 'b' : '' });   // 柱
+  bar(B, 'c', [-X, hp + 0.72, z1], [X, hp + 0.72, z1], 0.03, 0.03, np, c, { rot: PI / 4 });                                      // 入口の 横の棒
+  for (const sx of [-1, 1]) bar(B, 'c', [sx * 0.3, -0.08, -1.64], [sx * 0.3, hp + 0.05, z0 + 0.02], 0.025, 0.025, np, c, { rot: PI / 4 });   // はしごの 柱
+  bar(B, 'c', [0, -0.1, 1.55], [0, 0.42, 1.55], 0.035, 0.035, np, c, { rot: PI / 4 });                                           // すべり面の 足
+  if (lod >= 3) for (const sx of [-1, 1]) pipe(B, 'c', S.map(([z, y]) => [sx * w, y + 0.15, z]), 0.022, 6, [0.88, 0.89, 0.9], { cap: 1 });   // すべり面の ふちの まるみ
 } });
 
 // ブランコ（2人乗り：A形の 鉄の わく・上の はり・くさり・板の いす・前と うしろの 安全さく。色は わく）
@@ -706,14 +930,29 @@ A.prop('swing', { n: 'ブランコ', col: true, cols: SWC, build(B, P) {
     for (const sx of [-1, 1]) qd(B, 'c', [sx * 0.7 - 0.22, 0.44, 0.09], [sx * 0.7 + 0.22, 0.44, 0.09], [sx * 0.7 + 0.22, 0.44, -0.09], [sx * 0.7 - 0.22, 0.44, -0.09], [0, 1, 0], seat);
     return;
   }
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) bar(B, 'c', [sx * X, -0.1, sz * zf], [sx * X, H, 0], 0.04, 0.04, 4, c, { rot: PI / 4 });   // 足
-  bar(B, 'c', [-X - 0.12, H + 0.02, 0], [X + 0.12, H + 0.02, 0], 0.05, 0.05, 4, c, { rot: PI / 4, cap: 'ab' });                // はり
+  const k3 = lod >= 3, np = k3 ? 8 : 4;   // すぐ近く（lod 3）：まるい パイプ・くさりの 輪・つりかね・安全さくを パイプに・いすの下の すりへった 土
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) bar(B, 'c', [sx * X, -0.1, sz * zf], [sx * X, H, 0], 0.04, 0.04, np, c, { rot: PI / 4 });   // 足
+  bar(B, 'c', [-X - 0.12, H + 0.02, 0], [X + 0.12, H + 0.02, 0], 0.05, 0.05, np, c, { rot: PI / 4, cap: 'ab' });               // はり
+  const chc = [0.62, 0.64, 0.66];
   for (const sx of [-1, 1]) {
     const x = sx * 0.72;
     box(B, 'c', x - 0.23, x + 0.23, 0.4, 0.44, -0.09, 0.09, seat);                                                                  // いす
-    for (const d of [-0.2, 0.2]) for (const nn of [[0, 0, 1], [1, 0, 0]]) strip(B, 'c', [x + d, H - 0.02, 0], [x + d, 0.44, 0], 0.018, nn, [0.62, 0.64, 0.66]);   // くさり
+    for (const d of [-0.2, 0.2]) {
+      if (!k3) { for (const nn of [[0, 0, 1], [1, 0, 0]]) strip(B, 'c', [x + d, H - 0.02, 0], [x + d, 0.44, 0], 0.018, nn, chc); continue; }   // くさり
+      const cx = x + d, top = H - 0.03, L = (top - 0.44) / 6, q = 0.017;
+      for (let k = 0; k < 6; k++) { const ya = top - k * L, yb = ya - L;
+        qd(B, ma, [cx - q, yb, 0], [cx + q, yb, 0], [cx + q, ya, 0], [cx - q, ya, 0], [0, 0, 1], chc, UA.chain);
+        qd(B, ma, [cx, yb, -q], [cx, yb, q], [cx, ya, q], [cx, ya, -q], [1, 0, 0], chc, UA.chain); }
+      bar(B, 'c', [cx, H - 0.04, 0], [cx, H + 0.075, 0], 0.014, 0.014, 6, mul(chc, 0.9));                                            // つりかね
+      bar(B, 'c', [cx, 0.43, -0.012], [cx, 0.43, 0.012], 0.02, 0.02, 6, mul(seat, 1.3));                                              // いすの 金具
+    }
   }
-  for (const z of [-1.95, 1.95]) qd(B, ma, [-1.6, 0, z], [1.6, 0, z], [1.6, 0.68, z], [-1.6, 0.68, z], [0, 0, Math.sign(z)], fence, UA.fence);   // 安全さく
+  if (!k3) { for (const z of [-1.95, 1.95]) qd(B, ma, [-1.6, 0, z], [1.6, 0, z], [1.6, 0.68, z], [-1.6, 0.68, z], [0, 0, Math.sign(z)], fence, UA.fence); return; }   // 安全さく
+  for (const z of [-1.95, 1.95]) {
+    for (const x of [-1.55, 0, 1.55]) bar(B, 'c', [x, -0.05, z], [x, 0.64, z], 0.025, 0.025, 6, fence, { cap: 'b' });
+    for (const y of [0.62, 0.3]) bar(B, 'c', [-1.55, y, z], [1.55, y, z], 0.022, 0.022, 6, fence);
+  }
+  for (const sx of [-1, 1]) edisc(B, 'c', sx * 0.72, 0.006, 0, 0.3, 0.6, 12, [0.46, 0.39, 0.31]);
 } });
 
 // ゴミ置き場（コンクリートの 台・うしろと 横に あみの さく・前の 柱・ゴミぶくろ・カラスよけネット・文字なしの 札）
@@ -723,8 +962,14 @@ A.prop('gomi', { n: 'ゴミ置き場', col: false, build(B, P) {
   const y0 = lod >= 2 ? 0.05 : 0;
   vf(B, ma, X, Z0, -X, Z0, y0, H, mc, UA.mesh); vf(B, ma, X, Z1, X, Z0, y0, H, mc, UA.mesh); vf(B, ma, -X, Z0, -X, Z1, y0, H, mc, UA.mesh);
   // ゴミぶくろ（白と 黄色の 半とうめい。上は しばった 口）
+  const k3 = lod >= 3;   // すぐ近く（lod 3）：ふくろを ふやす（こまかく・口の むすび目）・さくの 上の わく・うしろの 柱・ネットの おもり
   const bags = lod >= 2 ? [[-0.5, -0.15, 0.3], [0.05, -0.2, 0.34], [0.52, -0.1, 0.3], [-0.2, 0.2, 0.27]] : [[-0.3, -0.05, 0.36], [0.35, -0.1, 0.33]];
-  bags.forEach(([x, z, r], i) => blob(B, 'c', x, y0 + r * 0.7, z, r * (0.9 + R() * 0.2), r, r * 0.85, lod >= 2 ? 5 : 5, lod >= 2 ? 2 : 1, A.pick(R, [[0.93, 0.93, 0.9], [0.95, 0.9, 0.62], [0.9, 0.93, 0.95]]), { bot: 0.6, jt: 0.08, R, kb: 0.7, rot: i }));
+  if (k3) bags.push([0.36, 0.22, 0.25], [-0.62, 0.2, 0.22], [0.66, 0.26, 0.2]);
+  bags.forEach(([x, z, r], i) => {
+    const bc2 = A.pick(R, [[0.93, 0.93, 0.9], [0.95, 0.9, 0.62], [0.9, 0.93, 0.95]]);
+    blob(B, 'c', x, y0 + r * 0.7, z, r * (0.9 + R() * 0.2), r, r * 0.85, k3 ? 8 : 5, k3 ? 3 : lod >= 2 ? 2 : 1, bc2, { bot: 0.6, jt: k3 ? 0.11 : 0.08, R, kb: 0.7, rot: i });
+    if (k3) blob(B, 'c', x + 0.01, y0 + r * 1.68, z, 0.045, 0.05, 0.04, 5, 2, mul(bc2, 0.97), { bot: 0.7, jt: 0.15, R, kb: 0.75, rot: i });
+  });
   // カラスよけネット（ふくろに かぶせる）
   const ny = y0 + 0.68, nz0 = Z0 + 0.08, nz1 = Z1 - 0.02, nx = X - 0.1, rx = 0.45, rzc = -0.02;
   qd(B, ma, [-nx, y0 + 0.02, nz1], [nx, y0 + 0.02, nz1], [rx, ny, rzc], [-rx, ny, rzc], [0, 0.6, 1], nc, UA.net);
@@ -734,16 +979,32 @@ A.prop('gomi', { n: 'ゴミ置き場', col: false, build(B, P) {
     for (const sx of [-1, 1]) bar(B, 'c', [sx * X, -0.1, Z1], [sx * X, H + 0.02, Z1], 0.028, 0.028, 4, mul(mc, 0.85), { rot: PI / 4 });   // 前の 柱
     vf(B, 'c', -0.22, Z0 + 0.02, 0.22, Z0 + 0.02, H - 0.32, H - 0.05, [0.94, 0.94, 0.92]); vf(B, 'c', -0.22, Z0 + 0.025, 0.22, Z0 + 0.025, H - 0.11, H - 0.05, [0.24, 0.55, 0.36]);   // 札（文字なし）
   }
+  if (!k3) return;
+  const fk = mul(mc, 0.85);
+  pipe(B, 'c', [[-X, H, Z1], [-X, H, Z0], [X, H, Z0], [X, H, Z1]], 0.016, 4, fk);
+  for (const sx of [-1, 1]) bar(B, 'c', [sx * X, -0.1, Z0], [sx * X, H + 0.02, Z0], 0.028, 0.028, 4, fk, { rot: PI / 4 });
+  bar(B, 'c', [-nx, y0 + 0.03, nz1], [nx, y0 + 0.03, nz1], 0.014, 0.014, 4, mul(nc, 0.6));
 } });
 
 // のぼり旗（水を入れる 黒い台・白い ポール・上の 横棒・旗 0.6 × 1.8m（少し なびく。まん中は 明るい 無地））。色は 旗
 const NC = ['#c8322d', '#2f62a6', '#e2b021', '#2f8a4a', '#e8e6df', '#d9672a', '#7a3f8a'];
 A.prop('nobori', { n: 'のぼり旗', col: true, cols: NC, build(B, P) {
   const lod = P.lod, c = pcol(P, NC[0]), mo = TO(), pc = [0.9, 0.9, 0.88], U = UO.flag;
-  box(B, 'c', -0.19, 0.19, -0.06, 0.2, -0.16, 0.16, [0.2, 0.21, 0.22], lod >= 2 ? 'fblrt' : 'fblr');
-  bar(B, 'c', [0, 0.2, 0], [0, 2.86, 0], 0.014, 0.012, lod >= 2 ? 4 : 3, pc, { rot: PI / 4 });
+  if (lod >= 3) {   // すぐ近く（lod 3）：水を入れる 台（まるみ・ふた）・ポールの 玉
+    prism(B, 'c', 0, 0, 8, 0.21, 0.185, -0.06, 0.2, [0.2, 0.21, 0.22], { top: true });
+    bar(B, 'c', [0.08, 0.2, 0.06], [0.08, 0.23, 0.06], 0.035, 0.03, 8, [0.26, 0.27, 0.28], { cap: 'b' });
+    blob(B, 'c', 0, 2.875, 0, 0.021, 0.021, 0.021, 6, 2, pc, { bot: 1, kb: 0.8 });
+  } else box(B, 'c', -0.19, 0.19, -0.06, 0.2, -0.16, 0.16, [0.2, 0.21, 0.22], lod >= 2 ? 'fblrt' : 'fblr');
+  bar(B, 'c', [0, 0.2, 0], [0, 2.86, 0], 0.014, 0.012, lod >= 3 ? 6 : lod >= 2 ? 4 : 3, pc, { rot: PI / 4 });
   const x0 = 0.025, x1 = 0.625, y0 = 0.9, y1 = 2.72, W = lod >= 2 ? [0, 0.04, -0.015, 0.035] : [0, 0], n = lod >= 2 ? 3 : 1;
   if (lod >= 2) bar(B, 'c', [0, y1 + 0.015, 0], [x1 + 0.03, y1 + 0.015, 0], 0.008, 0.008, 3, pc);
+  if (lod >= 3) {   // 旗：6 × 4 に 分けて なびかせる（ポールから はなれるほど・上は 横棒に そう）
+    const wv = (u, v) => 0.045 * Math.sin(u * 4.2 + v * 1.3 + 0.6) * u * (1 - 0.75 * v), tu = u => U[0] + (U[2] - U[0]) * u, tv = v => U[1] + (U[5] - U[1]) * v;
+    const Q = (u, v) => [x0 + (x1 - x0) * u, y0 + (y1 - y0) * v, wv(u, v)];
+    for (let i = 0; i < 6; i++) for (let j = 0; j < 4; j++) { const ua = i / 6, ub = (i + 1) / 6, va = j / 4, vb = (j + 1) / 4;
+      qd(B, mo, Q(ua, va), Q(ub, va), Q(ub, vb), Q(ua, vb), [0, 0, 1], c, [tu(ua), tv(va), tu(ub), tv(va), tu(ub), tv(vb), tu(ua), tv(vb)]); }
+    return;
+  }
   for (let i = 0; i < n; i++) {
     const a = x0 + (x1 - x0) * i / n, b = x0 + (x1 - x0) * (i + 1) / n, u0 = U[0] + (U[2] - U[0]) * i / n, u1 = U[0] + (U[2] - U[0]) * (i + 1) / n;
     qd(B, mo, [a, y0, W[i]], [b, y0 + 0.01 * i, W[i + 1]], [b, y1, W[i + 1]], [a, y1, W[i]], [0, 0, 1], c, [u0, U[1], u1, U[1], u1, U[5], u0, U[5]]);
@@ -752,11 +1013,15 @@ A.prop('nobori', { n: 'のぼり旗', col: true, cols: NC, build(B, P) {
 
 // 外灯（公園の あかり：コンクリートの 台・こい灰色の ポール・乳白の まるい あかり（明るく）と かさ。高さ 3.9m）
 A.prop('lamp', { n: '外灯', col: false, build(B, P) {
-  const lod = P.lod, pc = [0.3, 0.31, 0.32], gl = [1.22, 1.21, 1.16], n = lod >= 2 ? 8 : 4;
-  if (lod >= 2) { box(B, 'c', -0.17, 0.17, -0.1, 0.08, -0.17, 0.17, CONC); bar(B, 'c', [0, 0.08, 0], [0, 0.42, 0], 0.085, 0.072, 6, pc); }
-  bar(B, 'c', [0, -0.05, 0], [0, 3.32, 0], 0.068, 0.045, lod >= 2 ? 6 : 4, pc);
+  const lod = P.lod, pc = [0.3, 0.31, 0.32], gl = [1.22, 1.21, 1.16], n = lod >= 3 ? 12 : lod >= 2 ? 8 : 4;
+  if (lod >= 2) { box(B, 'c', -0.17, 0.17, -0.1, 0.08, -0.17, 0.17, CONC); bar(B, 'c', [0, 0.08, 0], [0, 0.42, 0], 0.085, 0.072, lod >= 3 ? 10 : 6, pc); }
+  bar(B, 'c', [0, -0.05, 0], [0, 3.32, 0], 0.068, 0.045, lod >= 3 ? 10 : lod >= 2 ? 6 : 4, pc);
   if (lod >= 2) bar(B, 'c', [0, 3.3, 0], [0, 3.37, 0], 0.1, 0.13, n, pc);
-  bar(B, 'c', [0, 3.37, 0], [0, 3.76, 0], 0.15, 0.15, n, gl);
+  if (lod >= 3) {   // すぐ近く（lod 3）：まるい あかり・台の 点検の とびら・てっぺんの 玉
+    blob(B, 'c', 0, 3.565, 0, 0.165, 0.198, 0.165, 12, 4, gl, { bot: 1, kb: 1 });
+    box(B, 'c', -0.035, 0.035, 0.16, 0.33, 0.066, 0.083, mul(pc, 1.18), 'flrtu');
+    blob(B, 'c', 0, 3.95, 0, 0.026, 0.03, 0.026, 6, 2, pc, { bot: 0.5, kb: 0.8 });
+  } else bar(B, 'c', [0, 3.37, 0], [0, 3.76, 0], 0.15, 0.15, n, gl);
   const p = (t, r, y) => [Math.sin(t) * r, y, Math.cos(t) * r];
   for (let i = 0; i < n; i++) { const t0 = i / n * TAU, t1 = (i + 1) / n * TAU, tm = (t0 + t1) / 2;
     tr(B, 'c', p(t0, 0.21, 3.75), p(t1, 0.21, 3.75), [0, 3.92, 0], [Math.sin(tm), 1.2, Math.cos(tm)], pc);
@@ -776,7 +1041,12 @@ A.prop('sign', { n: '看板', col: true, cols: SGC, build(B, P) {
     pl(-W + 0.07, W - 0.07, 0.22, 0.86, 0.011, inn);
     if (lod < 2) continue;
     pl(-W + 0.07, W - 0.07, 0.7, 0.76, 0.015, c); pl(-W + 0.07, -W + 0.2, 0.3, 0.42, 0.015, mix(c, WH, 0.4));
-    for (const x of [-W + 0.012, W - 0.012]) bar(B, 'c', Pp(x, -0.08, 0), Pp(x, 0.11, 0), 0.012, 0.012, 3, fr);   // 足
+    for (const x of [-W + 0.012, W - 0.012]) bar(B, 'c', Pp(x, -0.08, 0), Pp(x, 0.11, 0), 0.012, 0.012, lod >= 3 ? 6 : 3, fr);   // 足
+    if (lod >= 3) {   // すぐ近く（lod 3）：アルミの わくの パイプ・足の ゴム
+      const e = [Pp(-W + 0.01, 0.1, 0.004), Pp(W - 0.01, 0.1, 0.004), Pp(W - 0.01, 1, 0.004), Pp(-W + 0.01, 1, 0.004)];
+      pipe(B, 'c', [...e, e[0]], 0.011, 4, fr);
+      for (const x of [-W + 0.012, W - 0.012]) { const p = Pp(x, -0.08, 0); box(B, 'c', x - 0.018, x + 0.018, p[1] - 0.01, p[1] + 0.025, p[2] - 0.02, p[2] + 0.02, [0.15, 0.15, 0.16]); }
+    }
   }
   if (lod < 2) return;
   bar(B, 'c', [-W - 0.01, H - 0.01, 0], [W + 0.01, H - 0.01, 0], 0.03, 0.03, 4, fr, { rot: PI / 4, cap: 'ab' });                 // 上の ちょうつがい
@@ -801,6 +1071,14 @@ A.prop('shed', { n: '物置', col: true, cols: SHC, build(B, P) {
   if (lod < 2) return;
   for (const sx of [-1, 1]) qd(B, 'c', [sx * rx, yf - 0.09, zf], [sx * rx, yk - 0.06, zk], [sx * rx, yk, zk], [sx * rx, yf, zf], [sx, 0, 0], rc);
   vf(B, mo, -X + 0.081, Z1 + 0.016, 0.027, Z1 + 0.016, yb + (hf - yb) * 0.04, hf - (hf - yb) * 0.075, c, cu(2, 2, 0.045, 0.075, 0.515, 0.96));   // 前の とびら
+  if (lod < 3) return;
+  // すぐ近く（lod 3）：とびらの 取っ手・上と下の レール・屋根の すじ・うしろの 雨どい・かどの 柱
+  const hk = [0.28, 0.28, 0.27], hy0 = yb + (1 - 0.57) * (hf - yb), hy1 = yb + (1 - 0.43) * (hf - yb);
+  box(B, 'c', 0.063, 0.117, hy0, hy1, Z1, Z1 + 0.016, hk, 'flrtu'); box(B, 'c', -0.108, -0.054, hy0, hy1, Z1 + 0.016, Z1 + 0.032, hk, 'flrtu');
+  box(B, 'c', -X, X, hf - 0.1, hf - 0.07, Z1, Z1 + 0.034, mul(c, 0.82), 'flrtu'); box(B, 'c', -X, X, yb, yb + 0.04, Z1, Z1 + 0.03, mul(c, 0.7), 'flrtu');
+  for (let k = 0; k < 7; k++) { const x = -rx + 0.12 + (2 * rx - 0.24) * k / 6; bar(B, 'c', [x, yf + 0.012, zf - 0.02], [x, yk + 0.012, zk + 0.02], 0.011, 0.011, 4, mul(rc, 1.1), { rot: PI / 4 }); }
+  bar(B, 'c', [-rx, yk - 0.035, zk - 0.03], [rx, yk - 0.035, zk - 0.03], 0.03, 0.03, 6, mul(rc, 0.9), { cap: 'ab' });
+  for (const [x, z] of [[-X, Z1], [X, Z1], [-X, Z0], [X, Z0]]) bar(B, 'c', [x, yb, z], [x, z > 0 ? hf : hb, z], 0.016, 0.016, 4, mul(c, 0.88), { rot: PI / 4 });
 } });
 
 // 犬小屋（木の 小屋：板の かべ・アーチの 入口・切妻の 屋根（色）・名札（文字なし）・ステンレスの 水入れ）。色は 屋根
@@ -822,6 +1100,14 @@ A.prop('doghouse', { n: '犬小屋', col: true, cols: DHC, build(B, P) {
   }
   if (lod < 2) return;
   vf(B, 'c', -0.09, Z1 + 0.012, 0.09, Z1 + 0.012, H + 0.05, H + 0.13, [0.95, 0.93, 0.88]);                                           // 名札
-  bar(B, 'c', [0.3, -0.01, 0.74], [0.3, 0.07, 0.74], 0.085, 0.11, 6, [0.82, 0.84, 0.86]); disc(B, 'c', 0.3, 0.06, 0.74, 0.1, 6, [0.42, 0.5, 0.58]);   // 水入れ
+  const k3 = lod >= 3;
+  bar(B, 'c', [0.3, -0.01, 0.74], [0.3, 0.07, 0.74], 0.085, 0.11, k3 ? 12 : 6, [0.82, 0.84, 0.86]); disc(B, 'c', 0.3, 0.06, 0.74, 0.1, k3 ? 12 : 6, [0.42, 0.5, 0.58]);   // 水入れ
+  if (!k3) return;
+  // すぐ近く（lod 3）：屋根の 板の すじ・棟・ほねの おもちゃ
+  for (const sx of [-1, 1]) for (const f of [0.3, 0.6]) { const x = sx * ex * (1 - f), y = ey + (yr - ey) * f + 0.012; bar(B, 'c', [x, y, zk], [x, y, zf], 0.007, 0.007, 4, mul(c, 0.75)); }
+  bar(B, 'c', [0, yr + 0.004, zk - 0.01], [0, yr + 0.004, zf + 0.01], 0.022, 0.022, 6, mul(c, 0.85), { cap: 'ab' });
+  const bx = 0.02, bz = 0.72, bw = [0.95, 0.93, 0.87];
+  bar(B, 'c', [bx - 0.055, 0.016, bz], [bx + 0.055, 0.016, bz + 0.01], 0.011, 0.011, 6, bw);
+  for (const [dx, dz] of [[-0.06, -0.015], [-0.06, 0.015], [0.06, -0.005], [0.06, 0.025]]) blob(B, 'c', bx + dx, 0.016, bz + dz, 0.017, 0.016, 0.017, 6, 2, bw, { bot: 1, kb: 0.8 });
 } });
 })();

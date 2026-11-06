@@ -605,6 +605,7 @@ function zoom(f) { if (!W) return; W.cd = clamp(W.cd / f, 1.4, 30); }
 const WHO = new Map();   // しるし → { n, c, l, v }
 const r4 = v => Math.round(v * 1e4) / 1e4;
 const v122 = () => ((MI && MI.S && MI.S.dbv) || 0) >= 122;   // サーバーの更新122 のあと（しゃがむ・ジャンプ・持ち物・チャットを ほかの人に）
+const v124 = () => ((MI && MI.S && MI.S.dbv) || 0) >= 124;   // サーバーの更新124 のあと（フレンドを 街歩きに よぶ）
 const mvSt = m => m === 1 || m === 2 || m === 4;   // 進んでいる うごき
 function stepArgs(m) {
   const known = [];
@@ -834,13 +835,24 @@ const CSS = `
 .wk-foot span{flex:1;font-size:12px;color:#667}
 .wk-foot button{border:1px solid rgba(0,0,0,.18);background:#fff;border-radius:10px;padding:7px 10px;font-weight:700;font-size:12.5px}
 .mp-wrap.mp-walk .mp-wx{bottom:150px}
+.wk-ask{position:absolute;inset:0;background:rgba(10,14,20,.3);z-index:8;display:flex;align-items:center;justify-content:center}
+.wk-ask .wk-spawn{position:static;transform:none}
+.wk-spawn button[data-sp-i] i{background:#c98a10}
+.wk-spawn small{display:block;font-size:12px;color:#667;margin:-4px 0 10px;line-height:1.4}
+.wk-inv{display:block;pointer-events:auto;margin-top:5px;border:0;border-radius:9px;background:rgba(255,255,255,.93);color:#1d2330;font-size:12px;font-weight:800;padding:4px 9px;cursor:pointer}
+.wk-inv[hidden]{display:none}
+.wk-fr{display:flex;align-items:center;gap:8px;padding:7px 2px;border-bottom:1px solid rgba(0,0,0,.08)}
+.wk-fr span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}
+.wk-fr small{color:#667;font-weight:400;margin-left:6px;font-size:11px}
+.wk-fr button{border:0;border-radius:10px;background:#1f5fbf;color:#fff;font-weight:800;font-size:12.5px;padding:6px 12px;flex:none}
+.wk-fr button:disabled{opacity:.5}
 `;
 function hudMake() {
   if (!document.getElementById('wkCss')) { const s = document.createElement('style'); s.id = 'wkCss'; s.textContent = CSS; document.head.appendChild(s); }
   const S = MI.S, h = document.createElement('div');
   h.className = 'wk-hud';
   const pc = !!(window.matchMedia && window.matchMedia('(pointer: fine)').matches);   // パソコン：キーの説明
-  h.innerHTML = `<div class="wk-info"><span data-wk-n>🚶 歩いています</span><small data-wk-s></small><button class="wk-cr" data-wk-cr hidden></button>${pc ? '<small class="wk-keys">Q 走る・Shift しゃがむ・スペース ジャンプ・E 持ち物・Z チャット</small>' : ''}</div>
+  h.innerHTML = `<div class="wk-info"><span data-wk-n>🚶 歩いています</span><small data-wk-s></small><button class="wk-cr" data-wk-cr hidden></button>${pc ? '<small class="wk-keys">Q 走る・Shift しゃがむ・スペース ジャンプ・E 持ち物・Z チャット</small>' : ''}<button class="wk-inv" data-wk-inv ${v124() ? '' : 'hidden'}>👋 フレンドを よぶ</button></div>
     <div class="wk-stick" data-wk-stick title="うごく（いっぱいに たおすと 走る）"><i></i></div>
     <div class="wk-btns"><button data-wk-chat title="チャット（Z・/）">💬</button><button data-wk-x title="歩くのをやめる">✕</button>
       <button data-wk-item title="持ち物（E）">🎒</button><button data-wk-look title="見た目">👕</button>
@@ -871,7 +883,8 @@ function hudMake() {
   tap('[data-wk-item]', () => wheelOpen(!W.wheel, false));
   tap('[data-wk-chat]', () => chatOpen(!W.chat.open));
   tap('[data-wk-look]', () => pickOpen());
-  tap('[data-wk-x]', () => stop());
+  tap('[data-wk-x]', async () => { if (await ask()) stop(); });   // やめる前に たしかめる（t69）
+  tap('[data-wk-inv]', () => invOpen());
   h.querySelector('[data-wk-cr]').onclick = () => { W.crOpen = !W.crOpen; W.hudT = 0; hudTick(now()); };
   // チャットの入力：Enter で送る（日本語の変換中は 送らない）・Esc で とじる
   const inp = h.querySelector('.wk-say input');
@@ -942,21 +955,97 @@ function wheelKeyUp(ts) {   // E を はなした：おしていたら（0.25秒
   const x = W.wheel.L[W.wheel.sel]; if (x) itemPick(x.id); else wheelOpen(false);
 }
 
-/* ---------- 歩きはじめる場所（t68）：3つから えらぶ（数字の キーでも） ---------- */
-function spawnPick() {
+/* ---------- 歩きはじめる場所（t68）：3つから えらぶ（数字の キーでも）。フレンドに よばれていたら その人の近くも（DB の更新124） ---------- */
+function cssOn() { if (!document.getElementById('wkCss')) { const st = document.createElement('style'); st.id = 'wkCss'; st.textContent = CSS; document.head.appendChild(st); } }
+function spawnPick(inv) {   // inv：とどいている 招待 [{ i, n }]。こたえ：SPAWN の番号・{ i }（招待）・null（やめる）
   return new Promise(ok => {
-    const S = MI.S, d = document.createElement('div');
-    if (!document.getElementById('wkCss')) { const st = document.createElement('style'); st.id = 'wkCss'; st.textContent = CSS; document.head.appendChild(st); }
+    const S = MI.S, d = document.createElement('div'), L = (inv || []).slice(0, 5), n0 = SPAWN.length;
+    cssOn();
     d.className = 'wk-spawn';
-    d.innerHTML = `<b>${esc2(tt('🚶 どこから 歩きますか？'))}</b>${SPAWN.map((x, i) => `<button data-sp="${i}"><i>${i + 1}</i><span>${esc2(tt(x.n))}</span></button>`).join('')}<button data-sp-x>${esc2(tt('やめる'))}</button>`;
+    d.innerHTML = `<b>${esc2(tt('🚶 どこから 歩きますか？'))}</b>${SPAWN.map((x, i) => `<button data-sp="${i}"><i>${i + 1}</i><span>${esc2(tt(x.n))}</span></button>`).join('')}`
+      + (L.length ? `<small>${esc2(tt('👋 フレンドに よばれています（10分まで）'))}</small>` + L.map((x, j) => `<button data-sp-i="${j}"><i>${n0 + j + 1}</i><span>${esc2(tt('👋 ' + x.n + 'さんの 近く'))}</span></button>`).join('') : '')
+      + `<button data-sp-x>${esc2(tt('やめる'))}</button>`;
     S.wrap.appendChild(d);
     const done = v => { clearInterval(iv); window.removeEventListener('keydown', kd, true); d.remove(); ok(v); };
     const iv = setInterval(() => { if (!M3.on || !MI.S.v3) done(null); }, 500);   // 3D を とじた
-    const kd = e => { if (/^Digit[1-9]$/.test(e.code) && SPAWN[Number(e.code.slice(5)) - 1]) { e.preventDefault(); done(Number(e.code.slice(5)) - 1); } else if (e.code === 'Escape') done(null); };
+    const pickN = k => k < n0 ? k : L[k - n0] ? { i: L[k - n0].i } : null;
+    const kd = e => { const k = /^Digit[1-9]$/.test(e.code) ? Number(e.code.slice(5)) - 1 : -1; if (k >= 0 && pickN(k) != null) { e.preventDefault(); done(pickN(k)); } else if (e.code === 'Escape') done(null); };
     window.addEventListener('keydown', kd, true);
     d.querySelectorAll('[data-sp]').forEach(b => b.onclick = () => done(Number(b.dataset.sp)));
+    d.querySelectorAll('[data-sp-i]').forEach(b => b.onclick = () => done({ i: L[Number(b.dataset.spI)].i }));
     d.querySelector('[data-sp-x]').onclick = () => done(null);
   });
+}
+// 招待（DB の更新124）→ よんだ人の いまの位置（10分まで・その人が 歩いているときだけ）
+async function joinPos(i) {
+  try {
+    const r = await rpc('av_join', { p_i: i });
+    if (r && isFinite(r.x) && isFinite(r.y)) return { n: '👋 ' + (r.n || '') + 'さんの 近く', x: +r.x, y: +r.y, f: isFinite(r.f) ? +r.f : null, fr: true };
+  } catch (e) { if (typeof toast === 'function') toast(e.message); }
+  return null;
+}
+// 歩いているときに 招待の通知を おした：その人の近くへ
+async function join(i) {
+  if (!W || !i) return false;
+  const SP = await joinPos(i);
+  if (!SP || !W) return false;
+  W.x = SP.x; W.y = SP.y; W.f = SP.f != null ? SP.f : M3.surf(SP.x, SP.y); W.fv = 0; W.air = false;
+  M3.tx = SP.x; M3.ty = SP.y; M3.glide = null; M3.dirty = true; MI.S.dirty = true;
+  W.spawn = { x: SP.x, y: SP.y, n: SP.n, f: SP.f, fr: true, until: now() + 20000 };
+  W.ixKey = null;   // 足もとの表を 作りなおして、近くの 歩けるところに 立つ
+  MI.hint('📍 ' + tt(SP.n) + ' …');
+  return true;
+}
+// フレンドを よぶ（DB の更新124）：よんだ人に 通知が とどく。10分のあいだ、その人は 自分の近くから 歩きはじめられる
+async function invOpen() {
+  if (!W || !W.hud) return;
+  const p = W.hud.querySelector('.wk-pick');
+  if (!p.hidden && p.dataset.k === 'inv') { p.hidden = true; return; }
+  const head = `<div class="wk-ph"><b>👋 フレンドを よぶ</b><button data-wk-pc title="とじる">✕</button></div>`;
+  const shut = () => { const x = p.querySelector('[data-wk-pc]'); if (x) x.onclick = () => { p.hidden = true; }; };
+  p.dataset.k = 'inv'; p.hidden = false;
+  p.innerHTML = head + '<p class="wk-cred">読みこんでいます…</p>'; shut();
+  let L;
+  try { const r = await rpc('friend_list'); L = (r && r.friends) || []; }
+  catch (e) { if (W && !p.hidden && p.dataset.k === 'inv') { p.innerHTML = head + `<p class="wk-cred">${esc2(e.message)}</p>`; shut(); } return; }
+  if (!W || p.hidden || p.dataset.k !== 'inv') return;
+  p.innerHTML = head + '<p class="wk-cred" style="margin:0 0 6px">よんだ人に 通知が とどきます。10分のあいだ、あなたの近くから 歩きはじめられます（あなたが 歩いているときだけ）。</p>'
+    + (L.length ? L.map(f => `<div class="wk-fr"><span>${esc2(f.nickname)}<small>ID ${esc2(f.uid)}</small></span><button data-fr="${esc2(f.uid)}">よぶ</button></div>`).join('')
+                : '<p class="wk-cred">フレンドが まだ いません（メインの「フレンド」から 申請できます）</p>');
+  shut();
+  p.querySelectorAll('[data-fr]').forEach(b => b.onclick = async () => {
+    if (!W) return;
+    if (!W.me || !W.me.k) { if (typeof toast === 'function') toast(tt('いまは よべません（ほかの人と つながっていません）')); return; }
+    b.disabled = true;
+    try { const r = await rpc('av_invite', { p_k: W.me.k, p_to: b.dataset.fr }); b.textContent = tt('よんだ'); if (typeof toast === 'function') toast(tt('👋 ' + ((r && r.n) || '') + 'さんを よびました')); }
+    catch (e) { b.disabled = false; if (typeof toast === 'function') toast(e.message); }
+  });
+}
+// やめる前に たしかめる（t69）：1・Enter やめる／2・Esc つづける
+let askP = null, askEnd = null;
+function ask() {
+  if (!W || !MI) return Promise.resolve(true);
+  if (askP) return askP;
+  askP = new Promise(ok => {
+    cssOn();
+    const bg = document.createElement('div');
+    bg.className = 'wk-ask';
+    bg.innerHTML = `<div class="wk-spawn"><b>${esc2(tt('🚶 歩くのを やめますか？'))}</b><button data-ak="1"><i>1</i><span>${esc2(tt('やめる'))}</span></button><button data-ak="0"><i>2</i><span>${esc2(tt('つづける'))}</span></button></div>`;
+    MI.S.wrap.appendChild(bg);
+    if (W) { W.keys = {}; W.stick.on = false; W.stick.x = W.stick.y = 0; }   // たしかめているあいだは とまる
+    const done = v => { window.removeEventListener('keydown', kd, true); window.removeEventListener('keyup', ku, true); bg.remove(); askP = askEnd = null; ok(v); };
+    const kd = e => {
+      e.stopPropagation();
+      if (e.code === 'Digit1' || e.code === 'Numpad1' || e.key === 'Enter') { e.preventDefault(); done(true); }
+      else if (e.code === 'Digit2' || e.code === 'Numpad2' || e.code === 'Escape') { e.preventDefault(); done(false); }
+    };
+    const ku = e => e.stopPropagation();
+    window.addEventListener('keydown', kd, true); window.addEventListener('keyup', ku, true);
+    bg.onclick = e => { if (e.target === bg) done(false); };
+    bg.querySelectorAll('[data-ak]').forEach(b => b.onclick = () => done(b.dataset.ak === '1'));
+    askEnd = done;
+  });
+  return askP;
 }
 // 建物の前に 立つ：建物の まん中から 外へ さがして、いちばん近い 道路・ホームなどの面（たてものの外）。建物のほうを向く
 function onWalk(x, y) {
@@ -973,10 +1062,12 @@ function onWalk(x, y) {
 }
 function spawnPlace() {
   const sp = W.spawn; if (!sp || !W.ix) return;
-  for (let r = 0.2; r <= 3.2; r += 0.1) for (let k = 0; k < 48; k++) {   // 10m〜160m・48の向き
+  // 建物の前：10m〜160m・48の向き（道路などの上）。フレンドの近く（DB の更新124）：2m から（地面の上でも よい。その人と 同じ高さ）
+  const r0 = sp.fr ? 0.04 : 0.2;
+  for (let r = r0; r <= 3.2; r += sp.fr && r < 0.4 ? 0.03 : 0.1) for (let k = 0; k < 48; k++) {
     const a = k * Math.PI * 2 / 48, x = sp.x + Math.sin(a) * r, y = sp.y + Math.cos(a) * r;
-    if (blocked(x, y) || !onWalk(x, y)) continue;
-    const g = groundAt(x, y, M3.surf(x, y) + 2 * U, false); if (g == null) continue;
+    if (blocked(x, y) || (!sp.fr && !onWalk(x, y))) continue;
+    const g = groundAt(x, y, sp.fr && sp.f != null ? Math.max(sp.f + 0.5 * U, M3.surf(x, y) + 0.3 * U) : M3.surf(x, y) + 2 * U, false); if (g == null) continue;
     W.x = x; W.y = y; W.f = g; W.fv = 0;
     W.h = Math.atan2(sp.x - x, sp.y - y); M3.yaw = W.h + Math.PI;   // 建物のほうを向く（カメラは うしろ）
     M3.tx = x; M3.ty = y;
@@ -1003,12 +1094,13 @@ function hudTick(t) {
 }
 function pickOpen() {
   const p = W.hud.querySelector('.wk-pick');
-  if (!p.hidden) { p.hidden = true; return; }
-  p.hidden = false; pickDraw();
-  if (!CAT || CAT.off || now() - (CAT.t || 0) > 20000) catLoad(true).then(() => { if (CAT) CAT.t = now(); if (W && !p.hidden) pickDraw(); });
+  if (!p.hidden && p.dataset.k === 'look') { p.hidden = true; return; }
+  p.dataset.k = 'look'; p.hidden = false; pickDraw();
+  if (!CAT || CAT.off || now() - (CAT.t || 0) > 20000) catLoad(true).then(() => { if (CAT) CAT.t = now(); if (W && !p.hidden && p.dataset.k === 'look') pickDraw(); });
 }
 function pickDraw() {
   const p = W.hud.querySelector('.wk-pick'), me = CAT.me || { c: 'base', l: {} }, cur = skinOf(me.c), l = me.l || {};
+  if (p.dataset.k !== 'look') return;
   const own = s => s.code === 'base' || s.n > 0, have = CAT.list.filter(own).length;
   p.innerHTML = `<div class="wk-ph"><b>👕 見た目</b><button data-wk-pc title="とじる">✕</button></div>
     ${CAT.off ? '<p class="small" style="margin:0 0 8px;color:#667">見た目をえらぶのは、サーバーの更新のあとで使えます（いまは 髪とはだの色だけ この端末に）</p>' : ''}
@@ -1055,7 +1147,7 @@ function avSelf() {
 }
 
 /* ---------- はじめる・やめる ---------- */
-async function start() {
+async function start(o) {   // o：{ inv（フレンドの 招待の番号。DB の更新124） }
   M3 = window.m3State; MI = window.MapInt;
   if (!M3 || !M3.on || !MI) return false;
   if (W) return true;
@@ -1065,18 +1157,29 @@ async function start() {
   if (!M3.on) { MI.hint(''); return false; }
   if (CAT && CAT.soon && CAT.soon.walk && !CAT.admin) { MI.hint(''); if (typeof toast === 'function') toast(tt('🚶 街を歩くのは もうすぐ できるようになります（カミングスーン）')); return false; }   // 準備中（DB の更新121）
   MI.hint('');
-  // 歩きはじめる場所（t68）：瑠璃府庁前・美東区役所前・蛍石県庁前 から えらぶ
+  // 歩きはじめる場所（t68）：瑠璃府庁前・美東区役所前・蛍石県庁前 から えらぶ。フレンドに よばれていたら（DB の更新124）その人の近く
   if (spawnBusy) return false;
   spawnBusy = true;
-  let si = null; try { si = await spawnPick(); } finally { spawnBusy = false; }
-  if (si == null || !M3.on || W) return !!W;
-  const SP = SPAWN[si];
+  let SP = null;
+  try {
+    if (o && o.inv && v124()) SP = await joinPos(o.inv);   // 招待の通知から：そのまま その人の近くへ
+    if (!SP) {
+      let inv = [];
+      if (v124()) { try { const r = await rpc('av_invites'); if (Array.isArray(r)) inv = r; } catch (e) { inv = []; } }
+      if (!M3.on || W) return !!W;
+      const si = await spawnPick(inv);
+      if (si == null || !M3.on || W) return !!W;
+      if (typeof si === 'object') { SP = await joinPos(si.i); if (!SP) return false; }
+      else SP = SPAWN[si];
+    }
+  } finally { spawnBusy = false; }
+  if (!SP || !M3.on || W) return !!W;
   M3.tx = SP.x; M3.ty = SP.y; M3.glide = null; M3.dirty = true; MI.S.dirty = true;
   W = { x: SP.x, y: SP.y, f: 0, fv: 0, h: M3.yaw + Math.PI, pitch: 0.32, cd: 4.5, d0: M3.d, t: now(), keys: {}, stick: { x: 0, y: 0, on: false }, runOn: false, crOn: false, cr: false, air: false, item: 0,
         others: new Map(), net: { busy: false, next: 0, sent: 0, st: -1, err: 0, off: false }, me: null, lv: 0, ix: null, blk: null, ixAt: [Infinity, Infinity], ixKey: null, near: 0,
-        chat: { since: 0, log: [], mute: new Set(), open: false, busy: false, sel: null }, spawn: { x: SP.x, y: SP.y, n: SP.n, until: now() + 20000 } };
+        chat: { since: 0, log: [], mute: new Set(), open: false, busy: false, sel: null }, spawn: { x: SP.x, y: SP.y, n: SP.n, f: SP.f, fr: !!SP.fr, until: now() + 20000 } };
   MI.hint('📍 ' + tt(SP.n) + ' …');
-  W.f = M3.surf(W.x, W.y);
+  W.f = SP.fr && SP.f != null ? SP.f : M3.surf(W.x, W.y);
   M3.d = 1.2; M3.glide = null; M3.dirty = true; MI.S.dirty = true;
   avSelf();
   hudMake();
@@ -1094,6 +1197,7 @@ async function start() {
 }
 function stop(fromClose) {
   if (!W) return;
+  if (askEnd) askEnd(false);   // たしかめる画面が出ていたら とじる
   const w = W;
   netLeave(w);
   clearInterval(w.refresh);
@@ -1111,6 +1215,6 @@ function stop(fromClose) {
   if (onChange) onChange(false);
 }
 
-window.Walk = { start, stop, on: () => !!W, dbg: () => (W ? { x: W.x, y: W.y, f: W.f, ix: W.ix ? { n: W.ix.tri.length / 9, ms: W.ix.ms } : null, blk: W.blk ? W.blk.size : 0, others: W.others.size, ol: [...W.others.values()].map(o => [o.m, o.it || 0, !!o.say]), me: !!(W.me && W.me.k), item: W.item, cr: !!W.cr, air: !!W.air } : null), cat: catLoad, onChange: f => { onChange = f; }, mmd: mmdLoad, mkBase: (look, hl) => { T3 = T3 || window.THREE; return mkBase(look, hl); }, poseBase,
+window.Walk = { start, stop, ask, join, on: () => !!W, dbg: () => (W ? { x: W.x, y: W.y, f: W.f, ix: W.ix ? { n: W.ix.tri.length / 9, ms: W.ix.ms } : null, blk: W.blk ? W.blk.size : 0, others: W.others.size, ol: [...W.others.values()].map(o => [o.m, o.it || 0, !!o.say]), me: !!(W.me && W.me.k), item: W.item, cr: !!W.cr, air: !!W.air } : null), cat: catLoad, onChange: f => { onChange = f; }, mmd: mmdLoad, mkBase: (look, hl) => { T3 = T3 || window.THREE; return mkBase(look, hl); }, poseBase,
   mkMMD: e => { T3 = T3 || window.THREE; return mkMMD(e); }, poseMMD, poseAv, ITEMS, HAIR, SKIN };
 })();

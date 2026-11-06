@@ -3705,16 +3705,18 @@ function build(root) {
     S.wrap.addEventListener('pointerdown', () => { if (!S.v3photo) return; px._dim = px.classList.contains('mp-dim'); pDim(); }, true);
     px.onclick = ev => { ev.stopPropagation(); if (px._dim) { px._dim = false; return; } p3(false); };
     const v3w = S.wrap.querySelector('[data-v3w]');   // 街を歩く（DB の更新118。map/walk.js をはじめて使うときに読む）
-    v3.onclick = async () => { if (S.v3) { p3(false); m3Close(); } else { await m3Open(); if (S.v3 && window.m3Ug) window.m3Ug(!!S.v3u); } v3.classList.toggle('on', !!S.v3); b25.hidden = !!S.v3; sunm.hidden = !!S.v3; v3x.hidden = !S.v3; v3e.hidden = !S.v3 || !lookOn(); v3p.hidden = !S.v3; v3w.hidden = !S.v3; v3w.textContent = walkSoon() ? T('🚶 歩く（もうすぐ）') : T('🚶 歩く'); if (!S.v3) { e3(false); v3w.classList.remove('on'); } S.dirty = true; optSync(); };
-    const w3 = async on => {
-      if (!on) { if (window.Walk) window.Walk.stop(); return; }
+    v3.onclick = async () => { if (S.v3 && window.Walk && window.Walk.on() && window.Walk.ask && !(await window.Walk.ask())) return;   // 歩いているときは たしかめる（t69）
+      if (S.v3) { p3(false); m3Close(); } else { await m3Open(); if (S.v3 && window.m3Ug) window.m3Ug(!!S.v3u); } v3.classList.toggle('on', !!S.v3); b25.hidden = !!S.v3; sunm.hidden = !!S.v3; v3x.hidden = !S.v3; v3e.hidden = !S.v3 || !lookOn(); v3p.hidden = !S.v3; v3w.hidden = !S.v3; v3w.textContent = walkSoon() ? T('🚶 歩く（もうすぐ）') : T('🚶 歩く'); if (!S.v3) { e3(false); v3w.classList.remove('on'); } S.dirty = true; optSync(); };
+    const w3 = async (on, o) => {   // o：{ inv（フレンドの 招待の番号。DB の更新124） }
+      if (!on) { if (window.Walk && window.Walk.on()) { if (window.Walk.ask && !(await window.Walk.ask())) return; window.Walk.stop(); } return; }   // やめる前に たしかめる（t69）
       if (walkSoon()) { toast(T('🚶 街を歩くのは もうすぐ できるようになります（カミングスーン）')); return; }
+      if (window.Walk && window.Walk.on() && S.v3) { if (o && o.inv && window.Walk.join) await window.Walk.join(o.inv); return; }   // 歩いているときに 招待：その人の近くへ
       if (!S.v3) await v3.onclick();
       if (!S.v3) return;
       if (S.v3u) u3(false); if (S.v3edit) e3(false); p3(false);   // 地下ビュー・小物・フォトは やめる
       let Wk; try { Wk = await walkLib(); } catch (e) { toast(T('読みこめませんでした。通信を たしかめてください')); return; }
       Wk.onChange(o => v3w.classList.toggle('on', !!o));
-      await Wk.start();
+      await Wk.start(o || null);
     };
     v3w.onclick = () => w3(!(window.Walk && window.Walk.on()));
     S.walkGo = w3; }
@@ -10504,5 +10506,6 @@ function showCert(r) {
 }
 window.MapInt = { sunNow, MQ, q, LITE, liteNeed, EDEC, B64I, bldShift, S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runOff, runIsSel, runName, runDest, showTrain, showSta, runFollow, pfZ, runRef };   // 3D（map3d.js）が使う
 window.MapApp = { open, pause, state: S, spline, setCam, roLoad: f => { roLoad(f); S.dirty = true; }, jamList: () => openJamList(), erList: () => openErList(), jamAt: L => layAt('jam', L, 3), erAt: L => layAt('er', L, 2.5), landReqs: () => openLandReqs(), xfers: () => openXfers(), cars: () => openCars(), goto: (x, y) => homeGo(x, y), thru: () => openThru(), bld: id => openBld(id), sc: () => openSC(),
-  slots: L => (L && L.st ? openSlots(Number(L.st)) : openSlotList()), unko: L => openUnko(L && L.id ? Number(L.id) : 0), bldAt: L => { if (L && L.cx != null) homeGo(Number(L.cx), Number(L.cy)); }, lic: L => { if (L && /申請があります/.test(L.body || '')) LIC.tab = 'rev'; openLic(); }, snow: () => openSnow(), find: () => openFind(), jm: id => openJuumin(id), wxMap: () => wxMapOn(), walk: () => (S.walkGo ? S.walkGo(true) : null) };
+  slots: L => (L && L.st ? openSlots(Number(L.st)) : openSlotList()), unko: L => openUnko(L && L.id ? Number(L.id) : 0), bldAt: L => { if (L && L.cx != null) homeGo(Number(L.cx), Number(L.cy)); }, lic: L => { if (L && /申請があります/.test(L.body || '')) LIC.tab = 'rev'; openLic(); }, snow: () => openSnow(), find: () => openFind(), jm: id => openJuumin(id), wxMap: () => wxMapOn(), walk: () => (S.walkGo ? S.walkGo(true) : null),
+  walkInv: L => (S.walkGo ? S.walkGo(true, { inv: Number(L && L.i) || 0 }) : null) };   // フレンドの 招待の通知から（DB の更新124）
 })();
