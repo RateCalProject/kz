@@ -39,7 +39,7 @@ async function catLoad(force) {
     const d = await rpc('av_info');
     // 読んでいるあいだに 見た目を変えたら、いまの見た目は そのまま（古い答えで もどさない）
     const me = seq !== lookSeq && CAT && !CAT.off ? CAT.me : (d.me || { c: 'base', l: {} });
-    CAT = { skins: new Map(d.skins.map(s => [s.code, s])), list: d.skins, me, cost: d.cost, dup: d.dup, tix: d.tix };
+    CAT = { skins: new Map(d.skins.map(s => [s.code, s])), list: d.skins, me, cost: d.cost, dup: d.dup, tix: d.tix, admin: !!d.admin, soon: d.soon || null };
   } catch (e) {
     let l = {}; try { l = JSON.parse(localStorage.getItem('kz_walk_look') || '{}') || {}; } catch (e2) {}
     CAT = { skins: new Map([['base', BASE_SKIN]]), list: [BASE_SKIN], me: { c: 'base', l }, off: true };
@@ -510,7 +510,7 @@ function net(t) {
     N.err = now();
     if (/walk_k/.test(msg)) {   // しるしが古い：とりなおす
       if (now() - (N.rk || 0) > 20000) { N.rk = now(); rpc('av_walk_start').then(r => { if (W && r && r.k) W.me = r; }).catch(() => {}); }
-    } else if (/av_step|PGRST202|schema cache|Could not find the function/i.test(msg)) N.off = true;   // サーバーの更新（119）の前
+    } else if (/av_step|PGRST202|schema cache|Could not find the function|カミングスーン/i.test(msg)) N.off = true;   // サーバーの更新（119）の前・準備中（121）
   }).finally(() => {
     N.busy = false;
     // つぎ：自分が うごいている 0.5秒・近くの人が うごいている 0.6秒・近くに人がいる 1.5秒・だれもいない 3秒
@@ -636,7 +636,7 @@ function pickDraw() {
     ${cur.kind === 'base' ? `<div class="wk-cols"><span>髪</span>${HAIR.map((c, i) => `<button class="wk-sw ${(l.h | 0) === i ? 'on' : ''}" data-h="${i}" style="background:${c}" title="髪の色"></button>`).join('')}
       <span>はだ</span>${SKIN.map((c, i) => `<button class="wk-sw ${(l.s | 0) === i ? 'on' : ''}" data-s="${i}" style="background:${c}" title="はだの色"></button>`).join('')}</div>` : ''}
     ${cur.credit ? `<p class="wk-cred">${esc2(cur.name)}：${esc2(cur.credit)}</p>` : ''}
-    <div class="wk-foot"><span>${CAT.off ? '' : `持っている見た目 ${have} / ${CAT.list.length}`}</span>${CAT.off ? '' : `<button data-wk-ga>🎫 スキンガチャ（🎫${esc2(CAT.cost || 20)}）</button>`}</div>`;
+    <div class="wk-foot"><span>${CAT.off ? '' : `持っている見た目 ${have} / ${CAT.list.length}`}</span>${CAT.off ? '' : CAT.soon && CAT.soon.skin && !CAT.admin ? '<button data-wk-ga>🎫 スキンガチャ（カミングスーン）</button>' : `<button data-wk-ga>🎫 スキンガチャ（🎫${esc2(CAT.cost || 20)}）</button>`}</div>`;
   p.querySelector('[data-wk-pc]').onclick = () => { p.hidden = true; };
   p.querySelectorAll('[data-code]').forEach(b => b.onclick = () => {
     const s = skinOf(b.dataset.code);
@@ -681,6 +681,7 @@ async function start() {
   MI.hint('歩く準備をしています…');
   await catLoad();
   if (!M3.on) { MI.hint(''); return false; }
+  if (CAT && CAT.soon && CAT.soon.walk && !CAT.admin) { MI.hint(''); if (typeof toast === 'function') toast(tt('🚶 街を歩くのは もうすぐ できるようになります（カミングスーン）')); return false; }   // 準備中（DB の更新121）
   W = { x: M3.tx, y: M3.ty, f: 0, fv: 0, h: M3.yaw + Math.PI, pitch: 0.32, cd: 4.5, d0: M3.d, t: now(), keys: {}, stick: { x: 0, y: 0, on: false }, runOn: false,
         others: new Map(), net: { busy: false, next: 0, sent: 0, st: -1, err: 0, off: false }, me: null, lv: 0, ix: null, blk: null, ixAt: [Infinity, Infinity], ixKey: null, near: 0 };
   W.f = M3.surf(W.x, W.y);

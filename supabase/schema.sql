@@ -3112,7 +3112,7 @@ language sql stable set search_path = public as $$ select case when _is_admin(u)
 -- 管理 → ゲーム で えらべる準備中のゲーム（DB の更新95）：[キー, 名前]。競艇と競輪は いっしょ（サーバーは boat で見ている）
 create or replace function public._beta_keys() returns jsonb
 language sql immutable as $$
-  select '[["boat","競艇・競輪"],["auction","競り市"],["koikoi","花札こいこい"],["fishing","釣り"],["owner","馬主"],["map","国土（地図）"]]'::jsonb
+  select '[["boat","競艇・競輪"],["auction","競り市"],["koikoi","花札こいこい"],["fishing","釣り"],["owner","馬主"],["map","国土（地図）"],["walk","3D の街を歩く"],["skin","スキンガチャ"]]'::jsonb
 $$;
 -- ゲームの公開のようす（管理者）
 create or replace function public.admin_beta_get() returns jsonb
@@ -15287,16 +15287,17 @@ revoke all on function public._av_me_json(uuid) from public, anon, authenticated
 -- 見た目の表（確率・持っている数）・いまの見た目・スキンガチャの枚数
 create or replace function public.av_info() returns jsonb
 language plpgsql stable security definer set search_path = public as $$
-declare zu uuid := _me_g(); zt numeric;
+declare zu uuid := _me_g(); zt numeric; za boolean := _is_admin(zu); zb text[] := _beta_games();
 begin
   select sum(s.w) into zt from av_skins s where s.enabled and s.w > 0;
   return jsonb_build_object(
     'skins', coalesce((select jsonb_agg(jsonb_build_object('code', s.code, 'name', s.name, 'kind', s.kind, 'rare', s.rare, 'look', s.look, 'file', s.file, 'credit', s.credit,
-               'p', case when s.w > 0 and zt > 0 then round(s.w * 100.0 / zt, 2) end, 'n', coalesce(o.n, 0)) order by s.sort, s.code)
+               'p', case when s.w > 0 and zt > 0 then round(s.w * 100.0 / zt, 2) end, 'n', case when za then greatest(coalesce(o.n, 0), 1) else coalesce(o.n, 0) end) order by s.sort, s.code)   -- 管理者は ぜんぶ持っている（DB の更新121）
              from av_skins s left join av_own o on o.user_id = zu and o.code = s.code where s.enabled), '[]'::jsonb),
     'me', _av_me_json(zu),
     'cost', greatest(1, _ad_cfg('gacha_skin_cost', 20)), 'dup', greatest(0, _ad_cfg('gacha_skin_dup', 5)),
-    'tix', coalesce((select t.n from ad_tix t where t.user_id = zu), 0));
+    'tix', coalesce((select t.n from ad_tix t where t.user_id = zu), 0),
+    'admin', za, 'soon', jsonb_build_object('walk', 'walk' = any(zb), 'skin', 'skin' = any(zb)));   -- 準備中（DB の更新121）
 end $$;
 revoke all on function public.av_info() from public, anon;
 grant execute on function public.av_info() to authenticated;
@@ -15308,7 +15309,7 @@ declare zu uuid := _me_g(); zc text; zh int; zs int;
 begin
   select s.code into zc from av_skins s where s.code = p_code and s.enabled;
   if zc is null then raise exception 'その見た目は ありません'; end if;
-  if zc <> 'base' and not exists (select 1 from av_own o where o.user_id = zu and o.code = zc) then
+  if zc <> 'base' and not _is_admin(zu) and not exists (select 1 from av_own o where o.user_id = zu and o.code = zc) then   -- 管理者は ぜんぶ（DB の更新121）
     raise exception 'その見た目は まだ持っていません（スキンガチャで当たります）';
   end if;
   select case when m.look->>'h' ~ '^[0-5]$' then (m.look->>'h')::int end, case when m.look->>'s' ~ '^[0-3]$' then (m.look->>'s')::int end
@@ -15329,6 +15330,7 @@ create or replace function public.av_walk_start() returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare zu uuid := _me_g(); zk text := substr(replace(gen_random_uuid()::text, '-', ''), 1, 16);
 begin
+  if 'walk' = any(_beta_games()) and not _is_admin(zu) then raise exception '街を歩くのは もうすぐ できるようになります（カミングスーン）'; end if;   -- 準備中（DB の更新121）
   perform pg_advisory_xact_lock(7632, hashtext(zu::text));
   delete from av_walk w where w.at < now() - interval '2 days';
   delete from av_walk w where w.k in (select x.k from av_walk x where x.user_id = zu order by x.at desc offset 4);
@@ -15375,6 +15377,7 @@ begin
   if p_k is null or not exists (select 1 from av_walk w where w.k = p_k and w.user_id = zu and w.at > now() - interval '1 day') then
     raise exception 'walk_k：歩くしるしが古くなりました';
   end if;
+  if coalesce(p_m, 0) >= 0 and 'walk' = any(_beta_games()) and not _is_admin(zu) then raise exception '街を歩くのは もうすぐ できるようになります（カミングスーン）'; end if;   -- 準備中（DB の更新121）
   if coalesce(p_m, 0) < 0 then   -- やめた
     delete from av_pos a where a.k = p_k;
     return jsonb_build_object('o', '[]'::jsonb);
@@ -15448,7 +15451,9 @@ begin
     'log', coalesce((select jsonb_agg(jsonb_build_object('kind', g.kind, 'cost', g.cost, 'x', g.x, 'land', g.detail->'land', 'items', g.detail->'items', 'skin', g.detail->'skin',
                        'at_ms', (extract(epoch from g.at) * 1000)::bigint) order by g.id desc)
                        from (select * from gacha_log where user_id = u order by id desc limit 20) g), '[]'::jsonb),
-    'skin_own', coalesce((select jsonb_object_agg(o.code, o.n) from av_own o where o.user_id = u), '{}'::jsonb));   -- 持っている見た目（DB の更新118）
+    'skin_own', case when _is_admin(u)   -- 持っている見た目（DB の更新118）。管理者は ぜんぶ（DB の更新121）
+                     then coalesce((select jsonb_object_agg(s.code, greatest(coalesce(o.n, 0), 1)) from av_skins s left join av_own o on o.user_id = u and o.code = s.code where s.enabled), '{}'::jsonb)
+                     else coalesce((select jsonb_object_agg(o.code, o.n) from av_own o where o.user_id = u), '{}'::jsonb) end);
 end $$;
 
 create or replace function public.ad_begin() returns jsonb
@@ -15500,6 +15505,7 @@ begin
   elsif p_kind = 'skin' then   -- スキンガチャ（DB の更新118。ゲストも引ける）
     k := 1; cost := greatest(1, _ad_cfg('gacha_skin_cost', 20))::int;
     if not exists (select 1 from av_skins s where s.enabled and s.w > 0) then raise exception 'いまはスキンガチャを引けません'; end if;
+    if 'skin' = any(_beta_games()) and not _is_admin(u) then raise exception 'スキンガチャは もうすぐ 引けるようになります（カミングスーン）'; end if;   -- 準備中（DB の更新121）
   else
     raise exception 'ガチャの種類がちがいます';
   end if;

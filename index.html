@@ -1304,7 +1304,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=69c69302","zh-TW":"zh-TW.js?v=22d9afa9","zh-CN":"zh-CN.js?v=02c8f979","ko":"ko.js?v=de82f880","ko-Hani":"ko-Hani.js?v=9238d577"};
+  window.AX_LANGS = {"en":"en.js?v=0bf98e9f","zh-TW":"zh-TW.js?v=98d16862","zh-CN":"zh-CN.js?v=57df4042","ko":"ko.js?v=8231a33e","ko-Hani":"ko-Hani.js?v=f94c380f"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -1619,6 +1619,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <h3 style="margin-top:0">👕 スキンガチャ</h3>
     <p class="muted small" id="gaSNote" style="margin:0 0 8px"></p>
     <div class="ga-skins" id="gaSkins"></div>
+    <p class="muted" id="gaSCred" style="margin:0 0 8px;font-size:10.5px;line-height:1.45"></p>
     <button class="btn main wide" data-ga="skin" id="gaSkinBtn">1回（🎫20）</button>
   </div>
   <div class="card hidden ga-res" id="gaRes"></div>
@@ -2475,7 +2476,9 @@ const MENU = [
 ];
 const MENU_OF = Object.fromEntries(MENU.map(m => [m[0], m]));
 // まだ公開していないゲーム（サーバーの ME.beta にあるもの）は、一覧では準備中・タブにも出さない（ログインの前は全部かくす）
-const BETA = { vBoat: 'boat', vBike: 'bike', auction: 'auction', koikoi: 'koikoi', vFish: 'fishing', vOwner: 'owner', map: 'map' };
+const BETA = { vBoat: 'boat', vBike: 'bike', auction: 'auction', koikoi: 'koikoi', vFish: 'fishing', vOwner: 'owner', map: 'map', walk: 'walk', skin: 'skin' };
+// 街を歩く・スキンガチャ（DB の更新121）：準備中なら「カミングスーン」（管理者は 使える）。サーバーが 121 より前なら 準備中あつかい
+const soonOf = (k, db) => !(ME && ME.role === 'admin') && (betaHidden(k) || !(db >= 121));
 const betaHidden = id => !!BETA[id] && (!ME.beta || ME.beta.includes(BETA[id]));
 $('#tabs .wrap').innerHTML = MENU.map(m => `<button data-v="${m[0]}" class="${m[0] === 'vHome' ? 'tb-mid' : ''}"><b>${m[2]}</b>${m[1]}${m[0] === 'vHome' ? '<i class="tb-n hidden" id="msgN"></i>' : ''}</button>`).join('');
 function go(v, sub) {
@@ -5218,7 +5221,7 @@ function stCmpDraw() {
    役所 → ヘルプ（t62）：遊び方・やり方（help/help.json。README からつくる）。さがせる（題・中身・ことば。ひらがな・カタカナ・全角半角は同じに）
    役所 → 意見箱（t62）：運営への問い合わせ（support_open）に「【意見箱】」の件名で送る
    ================================================================= */
-const HELP_V = '069e9ae0';
+const HELP_V = '984913b4';
 const HP = { d: null, cat: 'start', q: '' };
 const hpNorm = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
 async function helpLoad() {
@@ -5510,6 +5513,7 @@ function adLoadLib() {
 }
 async function gachaLoad() {
   try { GA = await call('ad_info'); } catch (e) { GA = null; }   // DB の更新49 がまだ
+  if (GA) { try { GA.db = await dbAt(); } catch (e) { GA.db = 0; } }
   gaDraw();
 }
 function gaDraw() {
@@ -5537,17 +5541,19 @@ function gaDraw() {
     : `${L.p}% で、国が売っている土地（いま ${fmt(L.left)}筆・時価 ${fmt(L.lo)}〜${fmt(L.hi)} X）が建物ごと当たる。はずれは ${fmt(L.miss)} X。`;
   $('#gaLandBtn').textContent = `1回（🎫${fmt(L.cost)}）`;
   // スキンガチャ（DB の更新118）：見た目が1つ当たる。国土の 3D の「🚶 歩く」で着る
-  const SK = g.skin || null, own = d.skin_own || {};
+  const SK = g.skin || null, own = d.skin_own || {}, skSoon = !!SK && soonOf('skin', d.db);
   $('#gaSkin').classList.toggle('hidden', !SK);
   if (SK) {
     const L2 = SK.list || [], have = L2.filter(x => own[x.code] > 0).length;
-    $('#gaSNote').textContent = `チケット${fmt(SK.cost)}枚で1回。服（N・R）と MMD のモデル（SR）から1つ当たります。もう持っている見た目が出たら 🎫${fmt(SK.dup)}枚 もどります。当たった見た目は、国土の 3D の「🚶 歩く」で着られます（いま ${fmt(have)} / ${fmt(L2.length)}）。`;
-    $('#gaSkins').innerHTML = L2.map(x => `<div class="ga-sk ${own[x.code] > 0 ? '' : 'no'}"><i class="${esc(x.rare)}">${esc(x.rare)}</i><img src="map/skins/thumbs/${esc(x.code)}.webp?v=${MAPV}" alt="" loading="lazy" onerror="this.style.visibility='hidden'"><small>${esc(x.name)}</small></div>`).join('');
-    $('#gaSkinBtn').textContent = `1回（🎫${fmt(SK.cost)}）`;
+    $('#gaSNote').textContent = skSoon ? 'カミングスーン：もうすぐ 引けるようになります。当たる見た目は こちらです（いまは 見るだけ）。'
+      : `チケット${fmt(SK.cost)}枚で1回。服（N・R）と MMD のモデル（SR）から1つ当たります。もう持っている見た目が出たら 🎫${fmt(SK.dup)}枚 もどります。当たった見た目は、国土の 3D の「🚶 歩く」で着られます（いま ${fmt(have)} / ${fmt(L2.length)}）。`;
+    $('#gaSkins').innerHTML = L2.map(x => `<div class="ga-sk ${own[x.code] > 0 || skSoon ? '' : 'no'}"><i class="${esc(x.rare)}">${esc(x.rare)}</i><img src="map/skins/thumbs/${esc(x.code)}.webp?v=${MAPV}" alt="" loading="lazy" onerror="this.style.visibility='hidden'"><small>${esc(x.name)}</small></div>`).join('');
+    $('#gaSCred').innerHTML = L2.filter(x => x.credit).map(x => `${esc(x.name)}：${esc(x.credit)}`).join('<br>');
+    $('#gaSkinBtn').textContent = skSoon ? 'カミングスーン' : `1回（🎫${fmt(SK.cost)}）`;
   }
   $$('#vGacha [data-ga]').forEach(x => {
     const cost = x.dataset.ga === 'land' ? L.cost : x.dataset.ga === 'skin' ? (SK ? SK.cost : 20) : x.dataset.ga === 'x10' ? 10 : 1;
-    x.disabled = gaBusy || adBusy || d.tix < cost || (x.dataset.ga === 'land' && (d.guest || !L.left)) || (x.dataset.ga === 'skin' && !SK);
+    x.disabled = gaBusy || adBusy || d.tix < cost || (x.dataset.ga === 'land' && (d.guest || !L.left)) || (x.dataset.ga === 'skin' && (!SK || skSoon));
   });
   $('#gaOdds').innerHTML = `<p style="margin:8px 0 4px"><b>🎰 X ガチャ</b>（🎫1枚で1回）</p>
     <table class="ga-tbl">${(g.x || []).map(x => `<tr><td>${fmt(x.amt)} X</td><td>${x.p}%</td></tr>`).join('')}</table>
@@ -5555,7 +5561,7 @@ function gaDraw() {
     <p style="margin:10px 0 4px"><b>🏞 国有地ガチャ</b>（🎫${fmt(L.cost)}枚で1回）</p>
     <table class="ga-tbl"><tr><td>当たり：国が売っている土地を1筆（建物ごと）</td><td>${L.p}%</td></tr><tr><td>はずれ：${fmt(L.miss)} X</td><td>${Math.round((100 - L.p) * 1000) / 1000}%</td></tr></table>
     <p class="muted" style="margin:4px 0 0">当たる土地は、いま国が時価で売っている ${fmt(L.left)}筆から1つ（どれも同じ確率）。府県庁・役所・学校・病院などの国の建物は出ません。当たった土地は、そのままあなたのものになります。ガチャの X は国が発行します（所得には入りません）。</p>`
-    + (SK ? `<p style="margin:10px 0 4px"><b>👕 スキンガチャ</b>（🎫${fmt(SK.cost)}枚で1回）</p>
+    + (SK && !skSoon ? `<p style="margin:10px 0 4px"><b>👕 スキンガチャ</b>（🎫${fmt(SK.cost)}枚で1回）</p>
     <table class="ga-tbl">${(SK.list || []).map(x => `<tr><td><span class="ga-rare ${esc(x.rare)}">${esc(x.rare)}</span>${esc(x.name)}</td><td>${x.p}%</td></tr>`).join('')}</table>
     <p class="muted" style="margin:4px 0 0">もう持っている見た目が出たら、チケットを ${fmt(SK.dup)}枚 もどします。見た目は 国土の 3D の「🚶 歩く」で着られます（ほかの人にも見えます）。</p>
     <p class="muted" style="margin:4px 0 0">見た目は このスキンガチャ（広告のチケット）でだけ 手に入ります。お金では 買えません。</p>
@@ -6001,10 +6007,10 @@ const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
 // 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
-const MAPV = '181';
+const MAPV = '182';
 const STAGE = 'Pre';   // 正式公開の前（Pre）。名前のよこと、バージョンの表記に出す。正式公開のときは '' にする
 document.querySelectorAll('.kz-stage').forEach(e => { e.textContent = STAGE; e.hidden = !STAGE; });
-const DBV = 120;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）
+const DBV = 121;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）
 { const e = document.getElementById('verLogin'); if (e) e.textContent = 'v' + MAPV + (STAGE ? ' ' + STAGE : ''); }   // バージョン表記（ログインの画面）
 // バージョン表記（設定 → プロフィール）：画面の版・サーバーに入っている DB の更新の番号。管理者には、サーバーの更新がまだのとき知らせる
 async function verShow() {

@@ -1913,6 +1913,12 @@ function frame() {
 }
 // 惰性（t61）：指をはなしたあと、少しすべる。S.glide = {vx, vy（マス/ms）, t}
 // 街を歩く（DB の更新118）：map/walk.js（3D をひらいて「🚶 歩く」をおしたときに読む）
+//   管理 → ゲーム で 準備中（DB の更新121）にしたときは 管理者だけ（ふだんは みんな。持っている見た目を 着られる）
+function walkSoon() {
+  const me = typeof ME !== 'undefined' ? ME : null;
+  if (me && me.role === 'admin') return false;
+  return !!(me && Array.isArray(me.beta) && me.beta.includes('walk'));
+}
 let walkP = null;
 function walkLib() {
   if (window.Walk) return Promise.resolve(window.Walk);
@@ -3688,9 +3694,10 @@ function build(root) {
     S.wrap.addEventListener('pointerdown', () => { if (!S.v3photo) return; px._dim = px.classList.contains('mp-dim'); pDim(); }, true);
     px.onclick = ev => { ev.stopPropagation(); if (px._dim) { px._dim = false; return; } p3(false); };
     const v3w = S.wrap.querySelector('[data-v3w]');   // 街を歩く（DB の更新118。map/walk.js をはじめて使うときに読む）
-    v3.onclick = async () => { if (S.v3) { p3(false); m3Close(); } else { await m3Open(); if (S.v3 && window.m3Ug) window.m3Ug(!!S.v3u); } v3.classList.toggle('on', !!S.v3); b25.hidden = !!S.v3; sunm.hidden = !!S.v3; v3x.hidden = !S.v3; v3e.hidden = !S.v3 || !lookOn(); v3p.hidden = !S.v3; v3w.hidden = !S.v3; if (!S.v3) { e3(false); v3w.classList.remove('on'); } S.dirty = true; optSync(); };
+    v3.onclick = async () => { if (S.v3) { p3(false); m3Close(); } else { await m3Open(); if (S.v3 && window.m3Ug) window.m3Ug(!!S.v3u); } v3.classList.toggle('on', !!S.v3); b25.hidden = !!S.v3; sunm.hidden = !!S.v3; v3x.hidden = !S.v3; v3e.hidden = !S.v3 || !lookOn(); v3p.hidden = !S.v3; v3w.hidden = !S.v3; v3w.textContent = walkSoon() ? T('🚶 歩く（もうすぐ）') : T('🚶 歩く'); if (!S.v3) { e3(false); v3w.classList.remove('on'); } S.dirty = true; optSync(); };
     const w3 = async on => {
       if (!on) { if (window.Walk) window.Walk.stop(); return; }
+      if (walkSoon()) { toast(T('🚶 街を歩くのは もうすぐ できるようになります（カミングスーン）')); return; }
       if (!S.v3) await v3.onclick();
       if (!S.v3) return;
       if (S.v3u) u3(false); if (S.v3edit) e3(false); p3(false);   // 地下ビュー・小物・フォトは やめる
