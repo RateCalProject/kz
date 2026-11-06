@@ -890,6 +890,8 @@ function render() {
   if (S.layer.er && !S.v3) drawEr(g, z);
   // 天気図（t62）：雨・雪（または気温）と等圧線。文字の下
   drawWx(g, z, v);
+  // 地下ビュー（2D。⛏ 地下）：地上を暗く うすくして、トンネル・地下駅・地下街を はっきり
+  if (S.v3u && !S.v3) drawUnder(g, it, z, v, roads, rails);
   // 文字（いちばん上）。だいじなものから置き、重なるものはあとから出さない
   drawLabels(g, it, z, v, bs);
   drawWxTop(g, z);   // 等圧線の数字・「高」「低」
@@ -990,6 +992,49 @@ function trackMark(g, s, z) {
   if (!s.el) { g.strokeStyle = 'rgba(255,140,0,.6)'; g.lineWidth = hw + 6; g.setLineDash([]); pathSeg(g, s); g.stroke(); }
   if (!s.dbl) { g.strokeStyle = 'rgba(190,0,170,.85)'; g.lineWidth = Math.max(3, hw * 0.45); g.setLineDash([Math.max(7, z * 0.7), Math.max(5, z * 0.45)]); pathSeg(g, s); g.stroke(); }
   g.setLineDash([]); g.lineCap = 'round';
+}
+// 地下ビュー（2D）：地上を暗く うすくして、トンネル（線路はだいだい・道路は水色）・地下駅・地下街を上に。入口は白い線。近いときは トンネルの深さ
+const segCodeAt = (s, at) => { const st = s.st; if (!st || !s.pf) return 'G'; const c = st[Math.min(st.length - 1, Math.max(0, Math.round(at)))] || 'G'; return c === 'C' ? 'G' : c; };
+function drawUnder(g, it, z, v, roads, rails) {
+  g.save(); screenT(g);
+  g.fillStyle = 'rgba(12,16,24,.68)'; g.fillRect(0, 0, S.W, S.H);
+  g.lineCap = 'round'; g.lineJoin = 'round'; g.setLineDash([]);
+  const wR = s => Math.max(2, (s.q ? 0.52 : s.dbl ? 0.34 : 0.22) * z), wD = s => Math.max(1.6, s.w * z);
+  // 地上の線路・道路（細く うすく。場所の目やす）
+  g.globalAlpha = 0.4; g.strokeStyle = '#9aa3b0';
+  for (const s of roads) if (s.c !== 'lane' || z >= 6) { g.lineWidth = Math.max(0.8, wD(s) * 0.35); segParts(s, 'GVB', () => { pathSeg(g, s); g.stroke(); }); }
+  g.strokeStyle = '#c3c8d2';
+  for (const s of rails) { g.lineWidth = Math.max(1, wR(s) * 0.5); segParts(s, 'GVB', () => { pathSeg(g, s); g.stroke(); }); }
+  g.globalAlpha = 1;
+  // トンネル（ふち → なか）
+  const tun = [...roads, ...rails].filter(s => s.runs && s.runs.some(r => r[2] === 'T'));
+  for (const pass of [0, 1]) for (const s of tun) {
+    const rail = s.k === 'rail', w = rail ? wR(s) : wD(s);
+    g.strokeStyle = pass ? (rail ? '#ffb547' : '#8fd3ff') : (rail ? '#3a2400' : '#0f2b44'); g.lineWidth = pass ? w : w + 3;
+    segParts(s, 'T', () => { pathSeg(g, s); g.stroke(); });
+  }
+  // 入口（トンネルのはしが 線のはしでないところ）
+  if (z >= 1.5) for (const s of tun) segParts(s, 'T', () => {
+    const r = s.rng, P = s.P, n = s.np, w = s.k === 'rail' ? wR(s) : wD(s);
+    for (const [i, j] of [[r[0], r[0] + 1], [r[1], r[1] - 1]]) {
+      if (i === 0 || i === n - 1 || j < 0 || j > n - 1) continue;
+      const dx = P[2 * j] - P[2 * i], dy = P[2 * j + 1] - P[2 * i + 1], L = Math.hypot(dx, dy) || 1, hw = Math.max(6, w * 1.7) / z;
+      g.strokeStyle = '#ffffff'; g.lineWidth = Math.max(2, 0.09 * z);
+      g.beginPath(); g.moveTo(sx(P[2 * i] - dy / L * hw), sy(P[2 * i + 1] + dx / L * hw)); g.lineTo(sx(P[2 * i] + dy / L * hw), sy(P[2 * i + 1] - dx / L * hw)); g.stroke();
+    }
+  });
+  // 地下街・地下駅
+  if (S.ugmOK && z >= 1.5 && it.ugm && it.ugm.size) drawUgm(g, it, z);
+  if (z >= Z_FAR) for (const s of it.stas.values()) if (s.k === 'rail' && s.zl === 'U') drawStation(g, s, z);
+  // トンネルの深さ（地面から。近いとき・トンネルの区間の まん中）
+  if (z >= 3) for (const s of tun) segParts(s, 'T', () => {
+    const r = s.rng, P = s.P, i = Math.floor((r[0] + r[1]) / 2), x = sx(P[2 * i]), y = sy(P[2 * i + 1]);
+    if (x < -40 || y < -20 || x > S.W + 40 || y > S.H + 20 || !s.L) return;
+    const t = tileAt(Math.floor(P[2 * i]), Math.floor(P[2 * i + 1])); if (!t) return;
+    const d = Math.round((/[SRLD]/.test(t.t) ? 0 : Math.max(0, t.e)) - pfZ(s.pf, s.L[i]));
+    if (d >= 1) label(g, T(`地下${d}m`), x, y - (s.k === 'rail' ? wR(s) : wD(s)) / 2 - 9, { size: 10, bold: true, color: s.k === 'rail' ? '#ffe2b0' : '#d4ecff', bg: 'rgba(12,16,24,.85)' });
+  });
+  g.restore();
 }
 // 高さ（t108）：トンネル・地下（点線で うすく。入口に短い線）・高架と橋のかげ
 function drawTunnel(g, s, z) {
@@ -1522,7 +1567,7 @@ function drawStation(g, s, z) {
   const lane = [];   // 番線ごとの［上のはし, はば］
   g.save(); g.translate(x, y); g.rotate(s.a);
   if (s.zl === 'E') { g.fillStyle = 'rgba(0,0,0,.22)'; g.fillRect(-L / 2 - 3, -Wd / 2 - 3, L + 6, Wd + 6); }   // 高架駅のかげ（t108）
-  if (s.zl === 'U') { g.globalAlpha = 0.6; g.setLineDash([5, 3]); }   // 地下駅：うすく・点線
+  if (s.zl === 'U' && !S.v3u) { g.globalAlpha = 0.6; g.setLineDash([5, 3]); }   // 地下駅：うすく・点線（地下ビューでは ふつうに）
   g.fillStyle = '#ffffff'; g.strokeStyle = s.mine ? '#1f5fbf' : '#333'; g.lineWidth = 1.6;
   g.fillRect(-L / 2, -Wd / 2, L, Wd);
   if (pg) {
@@ -3423,7 +3468,7 @@ function build(root) {
     <canvas class="mp-cv"></canvas><canvas class="mp-cvr"></canvas>
     <div class="mp-top">
       <div class="mp-topb"><select class="mp-as" title="だれの名前で"></select>
-      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-lay="track" title="非電化はオレンジ・単線はむらさきの点線">非電化・単線</button><button data-lay="run" title="列車・バスの走行位置">🚃 走行</button><button data-lay="wxmap" title="天気図（等圧線・高気圧と低気圧・雨と雪・気温）">🌤 天気図</button><button data-lay="jam" title="道路の混みぐあい（オレンジ 混雑・赤 渋滞・黒 通行止め）" hidden>🚗 渋滞</button><button data-lay="er" title="救急車（いま出ているもの）" hidden>🚑 救急</button><button data-lay="snowz" title="雪の地域（雪国・豪雪地帯・特別豪雪地帯。雪の対策の補助金）">❄ 雪の地域</button><button data-lay="elev" title="高低差（標高を色で。北西から光を当てた陰つき）">⛰ 高低差</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button><button data-v3 title="ななめから立体に見る">🗻 3D</button><button data-v3x hidden title="横に回す向きを反対にする（2本指でひねる・右ドラッグ）">⇄ 左右反転</button><button data-v3e hidden title="自分の土地に 自販機・ベンチ・植木などを置く">🧰 小物</button><button data-v3u hidden title="地面と建物をすかして、トンネル・地下駅・地下街を見る">⛏ 地下</button><button data-v3p hidden title="名前・ボタンを ぜんぶ消して 3D の写真を撮る（✕ で もどる）">📷 フォト</button></div>
+      <button data-lay="zone">用途地域</button><button data-lay="own" class="on">持ち主</button><button data-lay="track" title="非電化はオレンジ・単線はむらさきの点線">非電化・単線</button><button data-lay="run" title="列車・バスの走行位置">🚃 走行</button><button data-lay="wxmap" title="天気図（等圧線・高気圧と低気圧・雨と雪・気温）">🌤 天気図</button><button data-lay="jam" title="道路の混みぐあい（オレンジ 混雑・赤 渋滞・黒 通行止め）" hidden>🚗 渋滞</button><button data-lay="er" title="救急車（いま出ているもの）" hidden>🚑 救急</button><button data-lay="snowz" title="雪の地域（雪国・豪雪地帯・特別豪雪地帯。雪の対策の補助金）">❄ 雪の地域</button><button data-lay="elev" title="高低差（標高を色で。北西から光を当てた陰つき）">⛰ 高低差</button><button data-b25 title="建物の見えかた（2D・2.5D）"></button><button data-v3 title="ななめから立体に見る">🗻 3D</button><button data-v3x hidden title="横に回す向きを反対にする（2本指でひねる・右ドラッグ）">⇄ 左右反転</button><button data-v3e hidden title="自分の土地に 自販機・ベンチ・植木などを置く">🧰 小物</button><button data-v3u title="地上をうすくして、トンネル・地下駅・地下街を見る・引く（2D・3D）">⛏ 地下</button><button data-v3p hidden title="名前・ボタンを ぜんぶ消して 3D の写真を撮る（✕ で もどる）">📷 フォト</button></div>
       <span class="mp-addr" translate="no" hidden></span>
     </div>
     <div class="mp-zoom"><button data-find title="さがす">🔍</button><button data-full title="大きく">⤢</button><button data-zin>＋</button><button data-zout>－</button><button data-home title="瑠璃市役所">⌂</button><button data-opt title="地図の設定">⚙</button></div>
@@ -3511,7 +3556,8 @@ function build(root) {
     const e3 = on => { S.v3edit = !!on; v3e.classList.toggle('on', S.v3edit); if (S.v3edit) { hint('小物：自分の土地をタップして置く・置いた小物をタップして回す／動かす'); setTimeout(() => hint(''), 4000); } };
     v3e.onclick = () => { if (!S.lookDB && S.lookDB !== null) return toast(T('サーバーの更新のあとで使えます')); e3(!S.v3edit); };
     const v3u = S.wrap.querySelector('[data-v3u]');   // 地下ビュー（DB の更新109）：地面と建物をすかして、トンネル・地下駅・地下街を見る
-    const u3 = on => { S.v3u = !!on; v3u.classList.toggle('on', S.v3u); if (window.m3Ug) window.m3Ug(S.v3u); if (S.v3u) { hint('地下：地面と建物をすかして、トンネル・地下駅・地下街を見ます（もう一度おすと もどります）'); setTimeout(() => hint(''), 4000); } };
+    const u3 = on => { S.v3u = !!on; v3u.classList.toggle('on', S.v3u); if (S.v3 && window.m3Ug) window.m3Ug(S.v3u); S.dirty = true;
+      if (S.v3u) { hint(S.v3 ? '地下：地面と建物をすかして、トンネル・地下駅・地下街を見ます（もう一度おすと もどります）' : '地下：地上をうすくして、トンネル・地下駅・地下街を出します。タップは地下のものが先・線路と道路は「地下」から引けます（もう一度おすと もどります）'); setTimeout(() => hint(''), 5000); } };
     v3u.onclick = () => u3(!S.v3u);
     // フォトモード（t67）：3D の名前・ボタン・天気などを ぜんぶ消して 写真を撮る。画面いっぱいに。右上の ✕ は 2.5秒で消えて、さわると また出る（1回目は 出すだけ）
     const v3p = S.wrap.querySelector('[data-v3p]'), px = S.wrap.querySelector('.mp-photox');
@@ -3528,7 +3574,7 @@ function build(root) {
     v3p.onclick = () => p3(true);
     S.wrap.addEventListener('pointerdown', () => { if (!S.v3photo) return; px._dim = px.classList.contains('mp-dim'); pDim(); }, true);
     px.onclick = ev => { ev.stopPropagation(); if (px._dim) { px._dim = false; return; } p3(false); };
-    v3.onclick = async () => { if (S.v3) { u3(false); p3(false); m3Close(); } else await m3Open(); v3.classList.toggle('on', !!S.v3); b25.hidden = !!S.v3; v3x.hidden = !S.v3; v3e.hidden = !S.v3 || !lookOn(); v3u.hidden = !S.v3; v3p.hidden = !S.v3; if (!S.v3) e3(false); optSync(); }; }
+    v3.onclick = async () => { if (S.v3) { p3(false); m3Close(); } else { await m3Open(); if (S.v3 && window.m3Ug) window.m3Ug(!!S.v3u); } v3.classList.toggle('on', !!S.v3); b25.hidden = !!S.v3; v3x.hidden = !S.v3; v3e.hidden = !S.v3 || !lookOn(); v3p.hidden = !S.v3; if (!S.v3) e3(false); S.dirty = true; optSync(); }; }
   S.wrap.querySelector('[data-full]').onclick = () => { S.wrap.classList.toggle('mp-full'); resize(); };
   S.wrap.querySelector('[data-find]').onclick = () => openFind();   // さがす（t59）
   S.wrap.querySelector('.mp-wx').onclick = () => { const [x, y] = wxCenter(); openWx(x, y); };   // 天気（t62）
@@ -3790,6 +3836,12 @@ function onTap(x, y, px, py) {
 /* ---- 見る ---- */
 async function lookAt(x, y, px, py) {
   if (S.layer.run && px != null) { const o = runHit(px, py); if (o) return showTrain(o.R, o.T); }   // 列車・バス（t62）
+  if (S.v3u && !S.v3) {   // 地下ビュー（2D）：地下駅・地下街・トンネルを先に
+    const us = nearSta(x, y, 14, s => s.k === 'rail' && s.zl === 'U'); if (us) return showSta(us.s);
+    const ug = S.ugmOK && S.cam.z >= 1.5 ? nearUgm(x, y, 8) : null; if (ug) return showUgm(ug, x, y);
+    const ts = nearSeg(x, y, 10, s => !!(s.runs && s.runs.some(r => r[2] === 'T')));
+    if (ts && segCodeAt(ts.s, ts.at) === 'T') return showSeg(ts.s, ts);
+  }
   const st = nearSta(x, y, 14);
   if (st) return showSta(st.s);
   const dp = nearDep(x, y);
@@ -5158,7 +5210,7 @@ function startDraw(kind) {
   if (kind === 'rail') loadThru();
   let mode = kind === 'rail' ? 'arc' : 'free', rad = kind === 'rail' ? 400 : 50;
   try { mode = localStorage.getItem('mp_dm_' + kind) || mode; rad = Number(localStorage.getItem('mp_dr_' + kind)) || rad; } catch (e) {}
-  const st = S.toolState = { kind, mode, rad, ctrl: [], A: null, B: null, curve: [], quote: null, err: null, opts: { dbl: false, elec: false, lanes: admin ? 2 : 1, cls: admin ? 'nat' : 'priv', name: '', hm: 'auto', rack: false, ...specLoad() }, qt: 0, pins: new Map(), psel: null, pv: null };
+  const st = S.toolState = { kind, mode, rad, ctrl: [], A: null, B: null, curve: [], quote: null, err: null, opts: { dbl: false, elec: false, lanes: admin ? 2 : 1, cls: admin ? 'nat' : 'priv', name: '', hm: S.v3u && !S.v3 && S.hgtOK ? 'ug' : 'auto', rack: false, ...specLoad() }, qt: 0, pins: new Map(), psel: null, pv: null };
   S.tapHook = (x, y) => {
     const a = findAttach(kind, x, y);
     if (!st.ctrl.length) { st.ctrl.push(a ? [a.x, a.y] : [x, y]); st.A = a; }
@@ -5654,6 +5706,11 @@ function depSheetRail(h1, h2) {
 
 /* ---- こわす ---- */
 async function delTap(x, y) {
+  if (S.v3u && !S.v3) {   // 地下ビュー（2D）：地下駅・トンネルを先に
+    const us = nearSta(x, y, 14, s => s.mine && s.k === 'rail' && s.zl === 'U'); if (us) return showSta(us.s);
+    const ts = nearSeg(x, y, 10, s => s.mine && !!(s.runs && s.runs.some(r => r[2] === 'T')));
+    if (ts && segCodeAt(ts.s, ts.at) === 'T') return segDel(ts.s);
+  }
   const st = nearSta(x, y, 14); if (st && st.s.mine) return showSta(st.s);
   const dp = nearDep(x, y); if (dp && dp.mine) return showDep(dp);
   const sg = nearSeg(x, y, 10, s => s.mine); if (sg) return segDel(sg.s);
