@@ -24115,8 +24115,9 @@ language sql immutable as $$
   select coalesce(array_agg(u.v order by z.i desc, u.o), '{}') from (select i, p[2 * i - 1] x, p[2 * i] y from generate_series(1, coalesce(array_length(p, 1), 0) / 2) i) z,
     lateral unnest(array[z.x, z.y]) with ordinality u(v, o)
 $$;
--- 2本の線路（分かれ道のない点でつながっている）を1本にする。のこるのは x。駅・車庫・使っているマス・使用料もうつす。だめなら理由を raise
-create or replace function public._mp_seg_join2(xid bigint, yid bigint) returns bigint
+-- 2本の線路（分かれ道のない点でつながっている）を1本にする。のこるのは x。駅・車庫・使っているマス・使用料もうつす。だめなら理由を raise。
+--   p_force（国の強行。DB の更新117）：アプト式のちがい・つなぎ目のきついカーブでも 1本にする
+create or replace function public._mp_seg_join2(xid bigint, yid bigint, p_force boolean default false) returns bigint
 language plpgsql set search_path = public as $$
 declare x mp_segs; y mp_segs; nd bigint; xr boolean; yr boolean; px int[]; py int[]; pm int[]; lx real; jl real; n int; d real; fx real[]; fy real[]; fm real[];
 begin
@@ -24128,7 +24129,7 @@ begin
   if (select count(*) from mp_segs s where s.n0 = nd or s.n1 = nd) <> 2 then raise exception '起点と終点のあいだに分かれ道があるか、線路がつながっていません（分かれ道はまたげません）'; end if;
   if not (x.own_u is not distinct from y.own_u and x.own_c is not distinct from y.own_c and x.gov = y.gov) then raise exception 'ほかの会社の線路にはつなげません'; end if;
   if x.dbl <> y.dbl or x.elec <> y.elec then raise exception '単線と複線、電化と非電化がかわるところは、またげません（線路の設定をそろえてください）'; end if;
-  if x.rack <> y.rack then raise exception 'アプト式とそうでない線路のつなぎ目は、またげません（線路の高さの設定をそろえてください）'; end if;
+  if x.rack <> y.rack and not coalesce(p_force, false) then raise exception 'アプト式とそうでない線路のつなぎ目は、またげません（線路の高さの設定をそろえてください）'; end if;
   if x.elec and x.ps <> y.ps then raise exception '電化方式がかわるところ（デッドセクション）は、またげません'; end if;   -- DB の更新87
   if x.quad <> y.quad then raise exception '複線と複々線がかわるところは、またげません（線路の設定をそろえてください）'; end if;   -- DB の更新86
   if x.gauge <> y.gauge or x.g2 is distinct from y.g2 then raise exception '軌間のちがう線路のつなぎ目は、またげません（「1本にする」で そろえてください）'; end if;   -- DB の更新99
@@ -24145,7 +24146,7 @@ begin
   d := sqrt(((py[1] - px[n - 1]) / 100.0) ^ 2 + ((py[2] - px[n]) / 100.0) ^ 2);
   pm := px || case when d < 0.03 then py[3:] else py end;
   lx := _mp_len(px); jl := lx + case when d < 0.03 then 0 else d end;
-  if _mp_minr(_mp_sub(pm, greatest(0, lx - 1.5), least(_mp_len(pm), lx + 1.5))) < 3 then raise exception 'つなぎ目のカーブがきつすぎて、またげません'; end if;
+  if not coalesce(p_force, false) and _mp_minr(_mp_sub(pm, greatest(0, lx - 1.5), least(_mp_len(pm), lx + 1.5))) < 3 then raise exception 'つなぎ目のカーブがきつすぎて、またげません'; end if;   -- 国の強行（DB の更新117）はまたぐ
   -- 高さ（t108）：縦断もつなぐ（縦断のないほうは地面どおり）
   if x.prof is not null or y.prof is not null then
     fx := case when x.prof is null then _mp_prof_ground(px) when xr then _mp_prof_rev(x.prof, x.len) else x.prof end;
@@ -24199,7 +24200,7 @@ begin
   return null;
 end $$;
 -- 線路を1本にする（駅のホーム・車両基地を、つなぎ目をまたいで作るとき）。1本にした線を返す（mp_area の線と同じ形）
-create or replace function public.mp_seg_join(p_a bigint, p_b bigint) returns jsonb
+create or replace function public.mp_seg_join(p_a bigint, p_b bigint, p_force boolean default false) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); a mp_segs; me_cs int[]; ch bigint[]; m bigint; i int; s mp_segs;
 begin
@@ -24207,18 +24208,18 @@ begin
   select * into a from mp_segs where id = p_a;
   if not found or a.kind <> 'rail' then raise exception '線が見つかりません'; end if;
   me_cs := array(select id from companies where owner = u);
-  if not coalesce(a.own_u = u or a.own_c = any(me_cs), false) then raise exception 'あなたの線ではありません'; end if;
+  if not coalesce(a.own_u = u or a.own_c = any(me_cs) or (a.gov and _is_admin(u)), false) then raise exception 'あなたの線ではありません'; end if;   -- 国の線は管理者（DB の更新117）
   perform _mp_lock(a.own_u, a.own_c);
   m := p_a;
   if p_b is not null and p_b <> p_a then
     ch := _mp_seg_chain(p_a, p_b);
     if ch is null then raise exception '起点と終点のあいだに分かれ道があるか、線路がつながっていません（分かれ道はまたげません）'; end if;
-    for i in 2..array_length(ch, 1) loop m := _mp_seg_join2(m, ch[i]); end loop;
+    for i in 2..array_length(ch, 1) loop m := _mp_seg_join2(m, ch[i], coalesce(p_force, false) and a.gov and _is_admin(u)); end loop;   -- 国の強行（DB の更新117）
     perform _mp_renet(a.own_u, a.own_c); perform _mp_routes_fix(a.own_u, a.own_c, ch);   -- 1本にした線を通る系統だけ（DB の更新94）
   end if;
   select * into s from mp_segs where id = m;
   return jsonb_build_object('id', s.id, 'k', s.kind, 'c', s.cls, 'n', s.name, 'w', s.w, 'l', s.lanes, 'p', to_jsonb(s.pts), 'dbl', s.dbl, 'el', s.elec, 'art', s.art, 'col', s.color,
-    'o', case when s.own_u is not null then 'u:' || s.own_u else 'c:' || s.own_c end, 'mine', true, 'n0', s.n0, 'n1', s.n1, 'v', s.vlim, 'len', round(s.len::numeric, 1), 'ctl', to_jsonb(s.ctl));
+    'o', case when s.gov then 'gov' when s.own_u is not null then 'u:' || s.own_u else 'c:' || s.own_c end, 'mine', true, 'n0', s.n0, 'n1', s.n1, 'v', s.vlim, 'len', round(s.len::numeric, 1), 'ctl', to_jsonb(s.ctl));
 end $$;
 -- 線を引く（p_dry なら見つもりだけ）
 --   p_kind：road / rail。p_cls：道路の種類（人・会社は priv 私道。国は exp nat pref city lane も）
@@ -24487,16 +24488,18 @@ end $$;
 --   電化方式（DB の更新87）：p_ps（0 直流・1 交流50Hz・2 交流60Hz。電化した線だけ。null は いまのまま）。方式を変えるのは 1マス 電化の 0.6倍。
 --   工事費は つくりの倍率 ×（新しい倍率 − いまの倍率。単線 1・複線 dbl_mul・複々線 dbl_mul × 1.7）。はばが広がるところは建物・他人の筆を見る。
 --   複々線・電化方式を変えると、通る系統の時刻（待避・続行・走れるか）を計算しなおす
-create or replace function public.mp_seg_opts(p_id bigint, p_dbl boolean, p_elec boolean, p_name text, p_dry boolean, p_lanes int default null, p_quad boolean default null, p_ps int default null) returns jsonb
+create or replace function public.mp_seg_opts(p_id bigint, p_dbl boolean, p_elec boolean, p_name text, p_dry boolean, p_lanes int default null, p_quad boolean default null, p_ps int default null, p_force boolean default false) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); sg mp_segs; me_cs int[]; ters text[]; amt_ numeric := 0; i int; base numeric; nl int; what text := ''; mul real[]; what2 text; wc int[]; need jsonb;
         nq boolean; nd boolean; m0 numeric; m1 numeric; rid bigint; ne boolean; nps smallint;   -- ne・nps：電化・電化方式（DB の更新87）
+        zfo boolean := false; zfc jsonb := '[]'::jsonb;   -- 国の強行（DB の更新117）
 begin
   perform _mp_ok(u);
   select * into sg from mp_segs where id = p_id for update;
   if not found then raise exception '線が見つかりません'; end if;
   me_cs := array(select id from companies where owner = u);
   if not coalesce(sg.own_u = u or sg.own_c = any(me_cs) or (sg.gov and _is_admin(u)), false) then raise exception 'あなたの線ではありません'; end if;
+  zfo := coalesce(p_force, false) and sg.gov and _is_admin(u);   -- 国の強行（DB の更新117）：はばが建物にかかっても 広げる
   ters := _mp_ters(_mp_tiles(sg.pts));
   if not sg.gov then mul := case when sg.st is null then _mp_cmuls(_mp_tiles(sg.pts), ters) else _mp_st_muls(sg.pts, ters, sg.st, sg.rack) end; end if;   -- 国の工事は無料（t57b）。縦断のある線は つくりの倍率（t108）
   nq := sg.kind = 'rail' and coalesce(p_quad, sg.quad);
@@ -24530,11 +24533,14 @@ begin
   if (sg.kind = 'rail' and ((nd and not sg.dbl) or (nq and not sg.quad))) or (sg.kind = 'road' and nl > sg.lanes) then
     wc := _mp_seg_cells_arr(sg.pts, sg.kind, case when sg.kind = 'rail' then case when nq then 0.8 else 0.5 end else _mp_road_w(sg.cls, nl) end, nd);
     what2 := _mp_bld_hit(wc);
-    if what2 is not null then raise exception '建物のある土地（%）にかかるので、はばを広げられません', left(what2, 60); end if;
+    if what2 is not null then
+      if not zfo then raise exception '建物のある土地（%）にかかるので、はばを広げられません', left(what2, 60); end if;
+      zfc := zfc || jsonb_build_array(jsonb_build_array('wb', left(what2, 60)));
+    end if;
     -- 広げたところが他人の筆にかかるときは、貸出料があるか申請が許可されているときだけ
     need := _mp_land_need(wc, sg.own_u, sg.own_c, sg.gov, _mp_seg_cells_arr(sg.pts, sg.kind, sg.w, sg.dbl));
   end if;
-  if p_dry then return jsonb_build_object('cost', amt_, 'lanes', nl, 'need', need, 'quad', nq, 'ps', nps); end if;
+  if p_dry then return jsonb_build_object('cost', amt_, 'lanes', nl, 'need', need, 'quad', nq, 'ps', nps) || case when zfo then jsonb_build_object('fc', zfc) else '{}'::jsonb end; end if;
   perform _mp_land_stop(need);
   if amt_ > 0 then perform _mp_pay(sg.own_u, sg.own_c, sg.gov, amt_::bigint, sg.kind, case when sg.kind = 'rail' then '線路の' else '道路の' end || what); end if;
   update mp_segs set dbl = case when kind = 'rail' then nd else false end, quad = case when kind = 'rail' then nq else false end,
@@ -24710,15 +24716,17 @@ end $$;
 -- 駅のホームの長さ・番線の数を変える（2026-10-28）。まん中（at）はそのまま。見つもり（p_dry）は工事費・維持費・使用料・許可のいる筆
 --   工事費は、ふえるホーム（番線 × 長さ）の分だけ（駅をつくるときと同じ1mあたりの値段・いまの場所の値段）。小さくしても、もどらない。持ち主（人・会社）がはらう
 --   番線の使いかた（trk）を決めていたら、のこる番線はそのまま、ふえた番線はいつもの決まり。この駅を通る系統の時刻を組みなおす
-create or replace function public.mp_sta_resize(p_id bigint, p_plat int, p_tracks int, p_dry boolean) returns jsonb
+create or replace function public.mp_sta_resize(p_id bigint, p_plat int, p_tracks int, p_dry boolean, p_force boolean default false) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); st mp_stations; sg mp_segs; span real; sub int[]; tiles int[]; pcs int[]; oc int[]; olds int[]; need jsonb; lfee numeric := 0;
         pt record; cost numeric; addc bigint; ntrk jsonb; dflt jsonb; rr bigint; st2 mp_stations;
+        zfo boolean := false; zfc jsonb := '[]'::jsonb;   -- 国の強行（DB の更新117）
 begin
   perform _mp_ok(u);
   select * into st from mp_stations where id = p_id;
   if not found or st.kind <> 'rail' then raise exception '駅が見つかりません'; end if;
   if not _mp_mine(u, st.own_u, st.own_c) then raise exception 'あなたの駅ではありません'; end if;
+  zfo := coalesce(p_force, false) and st.own_u is null and st.own_c is null and _is_admin(u);   -- 国の強行（DB の更新117）：ホームのカーブ・ホームにかかる建物でも
   if not p_dry then
     perform _mp_lock(st.own_u, st.own_c);
     select * into st from mp_stations where id = p_id for update;
@@ -24731,7 +24739,10 @@ begin
   span := p_plat / 50.0;
   if st.at - span / 2 < 0.3 or st.at + span / 2 > sg.len - 0.3 then raise exception 'ホームが線路からはみ出します（いまの線路では、これより長くできません）'; end if;
   sub := _mp_sub(sg.pts, st.at - span / 2, st.at + span / 2);
-  if p_plat > st.plat and _mp_minr(sub) < 8 then raise exception 'ホームはカーブのゆるいところ（半径400m以上）にしか作れません'; end if;
+  if p_plat > st.plat and _mp_minr(sub) < 8 then
+    if not zfo then raise exception 'ホームはカーブのゆるいところ（半径400m以上）にしか作れません'; end if;
+    zfc := zfc || jsonb_build_array(jsonb_build_array('rs', round((_mp_minr(sub) * 50)::numeric)));
+  end if;
   if exists (select 1 from mp_stations t where t.seg = st.seg and t.id <> p_id and abs(t.at - st.at) < (t.plat / 50.0 + span) / 2 + 1)
      or exists (select 1 from mp_depots t where t.seg = st.seg and abs(t.at - st.at) < (span + (_mp_dep_dim(t.kind, t.size))[1]) / 2 + 0.2) then raise exception '近くにほかの駅・車庫があります'; end if;
   tiles := _mp_tiles(sub);
@@ -24743,7 +24754,8 @@ begin
         select pcs[2 * i - 1] x, pcs[2 * i] y from generate_series(1, coalesce(array_length(pcs, 1), 0) / 2) i
         except select olds[2 * i - 1], olds[2 * i] from generate_series(1, coalesce(array_length(olds, 1), 0) / 2) i) z, lateral unnest(array[z.x, z.y]) with ordinality u2(v, o)),
         case when sg.prof is not null then _mp_pz(sg.prof, st.at) end) is not null then   -- 高さ（t108）：地下駅・高架駅は建物の下・上にも
-    raise exception 'ホームが建物のある土地にかかります';
+    if not zfo then raise exception 'ホームが建物のある土地にかかります'; end if;
+    zfc := zfc || jsonb_build_array(jsonb_build_array('b', '建物'));
   end if;
   oc := _mp_seg_cells_arr(_mp_sub(sg.pts, greatest(0, st.at - span / 2 - 1), least(sg.len, st.at + span / 2 + 1)), 'rail', sg.w, sg.dbl);
   need := _mp_land_need(pcs, st.own_u, st.own_c, false, oc || olds);
@@ -24761,7 +24773,7 @@ begin
   if p_dry then
     return jsonb_build_object('cost', addc, 'up_day', round(_mp_rate('up_sta') * (1 + 0.25 * (p_tracks - 1))), 'up_now', round(_mp_rate('up_sta') * (1 + 0.25 * (st.tracks - 1))),
                               'lease', round(lfee), 'need', need,
-                              'routes', (select count(*) from mp_routes r where p_id = any(r.stops)));
+                              'routes', (select count(*) from mp_routes r where p_id = any(r.stops))) || case when zfo then jsonb_build_object('fc', zfc) else '{}'::jsonb end;
   end if;
   perform _mp_land_stop(need);
   if addc > 0 then perform _mp_pay(st.own_u, st.own_c, st.own_u is null and st.own_c is null, addc, 'sta', format('駅「%s」のホームの工事（%sm・%s番線 → %sm・%s番線）', st.name, st.plat, st.tracks, p_plat, p_tracks)); end if;
@@ -25504,6 +25516,7 @@ alter table public.mp_routes add column if not exists kform jsonb;   -- 種別�
 alter table public.mp_routes add column if not exists hpat jsonb;   -- 1時間の型（パターンダイヤ）{rows: [{k, d, m, sa, sb, pre}], h0, h1, rep}（DB の更新104）
 alter table public.mp_routes add column if not exists agrp jsonb;   -- 運用を自動で組む の あてる先（DB の更新106）[{n, k, z, d, t0, t1, pw, f}]
 alter table public.mp_depots add column if not exists sta bigint references public.mp_stations(id) on delete set null;   -- 留置線（size 'R長さx本数'）の駅（DB の更新105）
+alter table public.mp_trains add column if not exists lag int not null default 0;   -- 走ろうとする（DB の更新117）：遅れて出る秒（編成が まにあわない・補給）
 alter table public.mp_trains add column if not exists lay jsonb;   -- 折り返しを待つ（DB の更新105）：[駅, 着く, 出る, 1 ホーム・2 留置線, 留置線（車庫）, 何本目, ホームをあける時刻, つぎの列車]
 create index if not exists mp_trains_lay_t on public.mp_trains (((lay ->> 0)::bigint)) where lay is not null and lay ->> 3 = '2';   -- 留置線で待つ編成（駅ごと）
 create index if not exists mp_trains_lay on public.mp_trains (((lay ->> 0)::bigint)) where lay is not null;   -- 折り返しを待つ編成（駅ごと）
@@ -26292,12 +26305,29 @@ language sql stable set search_path = public as $$
                 format(case when cpl then '前の列車 %s の到着から2分以上あけてください（連結しません）' else '【編成】前の列車 %s の到着から2分以上あけてください（走れません）' end, lnum)
          end
 $$;
--- 走りにしるしをつける：列車（ci = 0）は bad と【編成】の注意。連結（ci）は cplx の ok と w
-create or replace function public._mp_run_mark(tid bigint, ci int, w text) returns void
+-- 走ろうとする（DB の更新117）：前の走りが 駅 lsta に lt（その日の秒）に着く編成が、駅 fs を ft に出る列車に入るとき、遅れて出る秒（0〜3600）。
+--   同じ駅なら 着いてから2分。ちがう駅なら 回送（まっすぐの長さ × 1.3 を 60km/h）＋2分
+create or replace function public._mp_run_lag(lsta bigint, lt int, fs bigint, ft int) returns int
+language sql stable set search_path = public as $$
+  select case when lsta is null or lt is null or ft is null then 0
+              else least(3600, greatest(0, lt + 120 - ft + case when fs = lsta then 0 else
+                     coalesce((select ceil(sqrt(((a.x - b.x) / 100.0) ^ 2 + ((a.y - b.y) / 100.0) ^ 2) * 50 * 1.3 / 16.7)::int
+                                 from mp_stations a, mp_stations b where a.id = lsta and b.id = fs), 600) end))::int end
+$$;
+revoke all on function public._mp_run_lag(bigint, int, bigint, int) from public, anon, authenticated;
+-- 走ろうとする（DB の更新117）：【編成】の注意の おわり（前は「（走れません）」）
+create or replace function public._mp_lag_txt(zl int, other boolean) returns text
+language sql immutable as $$
+  select case when coalesce(other, false) then case when zl >= 60 then format('（回送して、約%s分 遅れて走ります）', round(zl / 60.0)) else '（回送して走ります）' end
+              else format('（約%s分 遅れて走ります）', greatest(1, round(zl / 60.0))) end
+$$;
+revoke all on function public._mp_lag_txt(int, boolean) from public, anon, authenticated;
+-- 走りにしるしをつける：列車（ci = 0）は【編成】の注意と 遅れて出る秒（lag。DB の更新117。前は bad）。連結（ci）は cplx の ok と w
+create or replace function public._mp_run_mark(tid bigint, ci int, w text, zl int default null) returns void
 language plpgsql set search_path = public as $$
 begin
-  if ci = 0 then
-    update mp_trains set bad = w is not null,
+  if ci = 0 then   -- 走ろうとする（DB の更新117）：編成が まにあわなくても走る（bad にしない）。zl：遅れて出る秒（null は いまのまま）
+    update mp_trains set bad = false, lag = coalesce(zl, lag),
            warn = nullif(concat_ws(' / ', nullif(regexp_replace(coalesce(warn, ''), '( / )?【(編成|補給)】[^/]*', '', 'g'), ''), w), '') where id = tid;
   else
     update mp_trains set cplx = jsonb_set(cplx, array[(ci - 1)::text], (cplx -> (ci - 1)) || jsonb_build_object('ok', w is null, 'w', w))
@@ -26653,6 +26683,7 @@ create or replace function public._mp_resched(rid bigint) returns void
 language plpgsql set search_path = public as $$
 declare tr mp_trains; a record; b record; r mp_routes; w text; fid bigint; lsta bigint; lt int; lnum text; dd date; ldated bigint; ldci int; pass int;
         sk jsonb; wl real; cl real; sr jsonb; stw boolean;   -- 蒸気機関車の補給（DB の更新78）
+        zl int; zlg int;   -- 走ろうとする（DB の更新117）：遅れて出る秒・前の走りの おわりの遅れ
 begin
   perform _mp_li_put(rid);   -- 駅と駅のあいだごとの 複々線・電化方式・デッドセクション を1回だけ（DB の更新88）
   perform _mp_dispatch(rid);   -- 時刻（待避・続行もふくめて）
@@ -26726,8 +26757,9 @@ begin
         union all select c.i2, format('単線の区間で %s とすれちがえません', c.n1) from c) z group by z.id)
     update mp_trains t set warn = concat_ws(' / ', t.warn, g.m) from g where t.id = g.id;
   end if;
-  update mp_trains set bad = true where route = rid and form is null;
-  -- 編成のつながり：編成ごとに時刻の順に見て、前に走る列車の終点から2分以上あけて出られる列車だけが走る（走れない列車は bad）
+  update mp_trains set bad = true, lag = 0 where route = rid and form is null;
+  -- 編成のつながり：編成ごとに時刻の順に見て、前に走る列車の終点から2分以上あけて出られるか。まにあわない列車も 走ろうとする（DB の更新117）：
+  --   回送して まにあう時刻まで 遅れて出る（lag。1時間まで。前は bad で走れなかった）。遅れは 走るあいだに 1秒に 0.1秒ずつ取りもどす（つぎの列車にもひびく）
   --   連結（cplx）も、その編成の走りとして見る（つなぐ駅を出てから、切りはなす駅に着くまで）。まにあわない連結は、つながない（ok = false）
   --   連結する列車が走るかどうかは、ほかの編成の結果で決まるので、2回まわす
   for pass in 1..2 loop
@@ -26735,19 +26767,28 @@ begin
                                 union select distinct (c ->> 'f')::bigint from mp_trains t, jsonb_array_elements(t.cplx) c where t.route = rid and (c ->> 'v')::boolean) z
                 order by z.f loop
       -- 毎日の列車
-      lsta := null; lt := null; lnum := null;
+      lsta := null; lt := null; lnum := null; zlg := 0;
       sk := _mp_form_steam(fid); wl := (sk ->> 'w')::real; cl := (sk ->> 'c')::real;   -- 蒸気機関車（DB の更新78）：1日のはじめは水も石炭も満タン
       for a in select * from _mp_form_runs(fid) x where x.day is null order by x.ft, x.tid, x.ci loop
         if a.ci > 0 and a.hb then perform _mp_run_mark(a.tid, a.ci, 'この列車が走らないので、連結しません'); continue; end if;
-        w := _mp_run_check(lsta, lt, lnum, a.fs, a.ft, a.ci > 0);
-        if w is null and sk is not null then   -- 補給（DB の更新78）：止まる駅の給水・給炭で、駅のあいだを走りきれるか
-          sr := _mp_steam_run(a.tid, a.fs, a.es, (sk ->> 'w')::real, (sk ->> 'c')::real, wl, cl);
-          w := sr ->> 'w';
-          if w is null then wl := (sr ->> 'wl')::real; cl := (sr ->> 'cl')::real;
-          elsif a.ci > 0 then w := replace(w, '【補給】', '') || '（連結しません）'; end if;
+        w := _mp_run_check(lsta, lt + zlg, lnum, a.fs, a.ft, a.ci > 0); zl := 0;
+        if w is not null and a.ci = 0 then   -- 走ろうとする（DB の更新117）：前の列車の終点から 回送して まにあう時刻まで 遅れて出る
+          zl := _mp_run_lag(lsta, lt + zlg, a.fs, a.ft);
+          w := replace(w, '（走れません）', _mp_lag_txt(zl, a.fs <> lsta));
         end if;
-        perform _mp_run_mark(a.tid, a.ci, w);
-        if w is null then lsta := a.es; lt := a.et; lnum := a.num; end if;
+        if (w is null or a.ci = 0) and sk is not null then   -- 補給（DB の更新78）：止まる駅の給水・給炭で、駅のあいだを走りきれるか
+          sr := _mp_steam_run(a.tid, a.fs, a.es, (sk ->> 'w')::real, (sk ->> 'c')::real, wl, cl);
+          if sr ->> 'w' is null then wl := (sr ->> 'wl')::real; cl := (sr ->> 'cl')::real;
+          elsif a.ci > 0 then w := replace(sr ->> 'w', '【補給】', '') || '（連結しません）';
+          else   -- 走ろうとする（DB の更新117）：とちゅうで補給して 20分 遅れる。そのあとは満タン
+            w := concat_ws(' / ', w, sr ->> 'w', '【補給】とちゅうで補給して、約20分 遅れて走ります'); zl := zl + 1200;
+            wl := (sk ->> 'w')::real; cl := (sk ->> 'c')::real;
+          end if;
+        end if;
+        zl := least(zl, 3600);
+        perform _mp_run_mark(a.tid, a.ci, w, zl);
+        if a.ci = 0 then lsta := a.es; lt := a.et; lnum := a.num; zlg := greatest(0, zl - floor(0.1 * greatest(0, a.et - a.ft)))::int;   -- 走る（遅れは 着くまでに 取りもどす分だけ へる）
+        elsif w is null then lsta := a.es; lt := a.et; lnum := a.num; zlg := 0; end if;
       end loop;
       -- 臨時列車：その日の毎日の列車とあわせて見る。臨時列車のせいで毎日の列車がまにあわなくなるときは、臨時列車のほうが走れない（連結しない）
       for dd in select distinct x.day from _mp_form_runs(fid) x where x.day is not null loop
@@ -26771,12 +26812,17 @@ begin
             else wl := (sr ->> 'wl')::real; cl := (sr ->> 'cl')::real; end if;
           end if;
           if a.day is not null then
-            perform _mp_run_mark(a.tid, a.ci, w);
-            if w is null then lsta := a.es; lt := a.et; lnum := a.num; ldated := a.tid; ldci := a.ci; end if;
+            zl := 0;
+            if w is not null and a.ci = 0 then   -- 走ろうとする（DB の更新117）
+              if stw then w := concat_ws(' / ', w, '【補給】とちゅうで補給して、約20分 遅れて走ります'); zl := 1200; wl := (sk ->> 'w')::real; cl := (sk ->> 'c')::real;
+              else zl := _mp_run_lag(lsta, lt, a.fs, a.ft); w := replace(w, '（走れません）', _mp_lag_txt(zl, a.fs <> lsta)); end if;
+            end if;
+            perform _mp_run_mark(a.tid, a.ci, w, least(zl, 3600));
+            if w is null or a.ci = 0 then lsta := a.es; lt := a.et; lnum := a.num; ldated := a.tid; ldci := a.ci; end if;
           else
             if w is not null and ldated is not null then
               perform _mp_run_mark(ldated, ldci, format(case when ldci > 0 then case when stw then 'この臨時列車のあと、%s の水か石炭がたりなくなります（連結しません）' else 'この臨時列車のあと、%s にまにあいません（連結しません）' end
-                                                             else case when stw then '【補給】この臨時列車のあと、%s の水か石炭がたりなくなります（走れません）' else '【編成】この臨時列車のあと、%s にまにあいません（走れません）' end end, a.num));
+                                                             else case when stw then '【補給】この臨時列車のあと、%s の水か石炭がたりなくなります（そのまま走ります）' else '【編成】この臨時列車のあと、%s にまにあいません（そのまま走ります）' end end, a.num));   -- 走ろうとする（DB の更新117）
             end if;
             lsta := a.es; lt := a.et; lnum := a.num; ldated := null;
             if stw then wl := (sk ->> 'w')::real; cl := (sk ->> 'c')::real; end if;   -- 毎日の列車は走るので、そのあとは ふだんどおりに（満タンとみる）
@@ -27512,7 +27558,7 @@ begin
     'legs', (select jsonb_agg(jsonb_build_object('d', l -> 'd', 'e', l -> 'e', 's', l -> 's', 'g', l -> 'g', 'w', l -> 'w')) from jsonb_array_elements(r.legs) l),   -- w：航路の折れ線（t54o）
     'trains', (select coalesce(jsonb_agg(jsonb_build_object('id', t.id, 'dir', t.dir, 'num', t.num, 'kind', t.kind, 'dep', t.dep, 'form', t.form, 'tt', t.tt, 'skip', to_jsonb(t.skip),
                  'sched', t.sched, 'warn', case when mine then t.warn end, 'fname', (select name from mp_forms where id = t.form),
-                 'op', t.op, 'onum', (select num from mp_ops where id = t.op), 'day', t.day, 'bad', t.bad, 'cpl', t.cpl, 'cplx', t.cplx, 'tai', t.tai, 'sa', t.sa, 'sb', t.sb,
+                 'op', t.op, 'onum', (select num from mp_ops where id = t.op), 'day', t.day, 'bad', t.bad, 'lag', nullif(t.lag, 0), 'cpl', t.cpl, 'cplx', t.cplx, 'tai', t.tai, 'sa', t.sa, 'sb', t.sb,
                  'orig', t.orig, 'ordj', t.ordj,   -- 運転整理の列車（DB の更新100）：もとの毎日の列車・指示
                  'ordd', (select jsonb_agg(jsonb_build_array(c.day, c.ordk, c.id) order by c.day) from mp_cxl c where c.train = t.id and c.ordk is not null and c.day >= _mp_today() - 1),   -- その日は走らない［日, v（運転整理の列車が走る）か x（運休）, id］
                  'lay', t.lay,   -- 折り返しを待つ（DB の更新105）
@@ -27789,6 +27835,39 @@ begin
   return out;
 end $$;
 
+-- 休みの日（土日・正月・GW・お盆・年末。道路の渋滞 _mp_jam_tick と同じ）
+create or replace function public._mp_offday(d date) returns boolean
+language sql immutable as $$
+  select extract(dow from d) in (0, 6) or to_char(d, 'MM-DD') in ('01-01', '01-02', '01-03', '04-29', '05-03', '05-04', '05-05', '08-13', '08-14', '08-15', '08-16', '12-29', '12-30', '12-31')
+$$;
+revoke all on function public._mp_offday(date) from public, anon, authenticated;
+-- 通勤時間帯の混雑（DB の更新117）：始まりの時 hs（7・8・9・17・18・19）の1時間の 乗った人・定員から、その時間の速さ（1 なら遅れない。いちばん 0.88）
+--   乗車率（乗った人 ÷ 定員の2倍。地図の「乗車率」と同じ）が 80% から・150% でいちばん。9時台・19時台は 6割
+create or replace function public._mp_rush_rate(hs int, served bigint, cap bigint) returns real
+language sql immutable as $$
+  select case when cap is null or cap <= 0 or served is null or hs not in (7, 8, 9, 17, 18, 19) then 1
+              else round((1 - 0.12 * least(1, greatest(0, (served::float8 / (2 * cap) - 0.8) / 0.7)) * case when hs in (9, 19) then 0.6 else 1 end)::numeric, 2) end::real
+$$;
+revoke all on function public._mp_rush_rate(int, bigint, bigint) from public, anon, authenticated;
+-- 通勤時間帯の混雑の窓（_mp_unko_rt と同じ形 [はじめ, おわり, 速さ, 0, 1（全線）, 0]）：rush（{時: 速さ}）・ta〜tb（1970年からの秒）にかかる 平日の分
+create or replace function public._mp_rush_w(rush jsonb, ta float8, tb float8) returns jsonb
+language plpgsql stable as $$
+declare zd float8; zk text; zv text; za float8; zo jsonb := '[]'::jsonb;
+begin
+  if rush is null or jsonb_typeof(rush) <> 'object' or ta is null or tb is null then return zo; end if;
+  zd := floor((ta + 32400) / 86400) * 86400 - 32400 - 86400;   -- 前の日の 0時（日本時間）から
+  while zd < tb loop
+    if not _mp_offday((to_timestamp(zd + 43200) at time zone 'Asia/Tokyo')::date) then
+      for zk, zv in select key, value from jsonb_each_text(rush) order by key::int loop
+        za := zd + zk::int * 3600;
+        if za + 3600 > ta and za < tb and zv::float8 < 1 then zo := zo || jsonb_build_array(jsonb_build_array(za, za + 3600, zv::float8, 0, 1, 0)); end if;
+      end loop;
+    end if;
+    zd := zd + 86400;
+  end loop;
+  return zo;
+end $$;
+revoke all on function public._mp_rush_w(jsonb, float8, float8) from public, anon, authenticated;
 create or replace function public._mp_tick_hour(h timestamptz) returns void
 language plpgsql set search_path = public as $$
 declare r mp_routes; hh int := extract(hour from h at time zone 'Asia/Tokyo')::int; mo int := extract(month from h at time zone 'Asia/Tokyo')::int;
@@ -27854,8 +27933,8 @@ begin
       if r.kind = 'air' and coalesce((perf ->> 'rwy')::int, 0) > (select min(s.plat) from mp_stations s where s.id = any(r.stops)) then continue; end if;   -- 滑走路（t54p）
       if r.kind = 'air' and tr.noslot is not null then continue; end if;   -- 発着口が足りない便は飛ばない（t57）
       ev := null; orf := null;
-      if upc is not null then   -- 乱れの区間を通る列車だけ（DB の更新60）：見合わせ・間引き（番号が奇数）で運休（運賃なし・車両はいたまない）
-        begin ev := _mp_unko_trn(upc, r.stops, r.legs, tr.sched, tr.dir, dep_abs, tr.id, dep_abs + rt); exception when others then ev := null; end;
+      if upc is not null or coalesce(tr.lag, 0) > 0 then   -- 乱れの区間を通る列車・遅れて出る列車（DB の更新117）だけ（DB の更新60）：見合わせ・間引き（番号が奇数）で運休（運賃なし・車両はいたまない）
+        begin ev := _mp_unko_trn(upc, r.stops, r.legs, tr.sched, tr.dir, dep_abs, tr.id, dep_abs + rt, coalesce(tr.lag, 0)::float8); exception when others then ev := null; end;
         if ev ->> 'can' is not null then ncan := ncan + 1; continue; end if;
         if ev ->> 'ori' is not null then orf := (ev ->> 'ori')::real; cf := cf * orf; end if;   -- 区間折り返し（DB の更新82）：乱れの区間の外だけ走る（定員・運賃はその分）
       end if;
@@ -27923,7 +28002,8 @@ begin
       end if;
     end if;
     if nok = 0 then
-      update mp_routes set last = jsonb_build_object('at', h, 'tph', 0, 'demand', 0, 'served', 0, 'revenue', 0, 'broke', broke, 'cancel', ncan, 'shop', nwk, 'trust', round(r.trust::numeric, 2)) where id = r.id;
+      update mp_routes set last = jsonb_build_object('at', h, 'tph', 0, 'demand', 0, 'served', 0, 'revenue', 0, 'broke', broke, 'cancel', ncan, 'shop', nwk, 'trust', round(r.trust::numeric, 2)),
+                           rush = case when r.rush ? (((hh + 23) % 24)::text) then nullif(r.rush - (((hh + 23) % 24)::text), '{}'::jsonb) else r.rush end where id = r.id;   -- 通勤時間帯の混雑（DB の更新117）：走らなければ なし
       continue;
     end if;
     -- 乗りたい人（この1時間）
@@ -27978,6 +28058,13 @@ begin
     update mp_routes set last = lastj where id = r.id;
     insert into mp_hours(route, hour, tph, cap, demand, served, revenue) values (r.id, date_trunc('hour', h), tph1 + tph2, (cap1 + cap2)::int, round(dem)::int, served, rev)
       on conflict (route, hour) do update set tph = excluded.tph, cap = excluded.cap, demand = excluded.demand, served = excluded.served, revenue = excluded.revenue;
+    -- 通勤時間帯の混雑（DB の更新117）：この1時間（始まりが 7・8・9・17・18・19時）の乗車率から、あしたからの その時間の速さ（鉄道）
+    if r.kind = 'rail' and ((hh + 23) % 24) in (7, 8, 9, 17, 18, 19) then
+      update mp_routes set rush = nullif(case when _mp_rush_rate((hh + 23) % 24, served, cap1 + cap2) < 1
+                                             then coalesce(rush, '{}'::jsonb) || jsonb_build_object(((hh + 23) % 24)::text, _mp_rush_rate((hh + 23) % 24, served, cap1 + cap2))
+                                             else coalesce(rush, '{}'::jsonb) - (((hh + 23) % 24)::text) end, '{}'::jsonb)
+       where id = r.id;
+    end if;
   end loop;
 
   -- 変電所（DB の更新89）：この1時間の負荷（平均 × 1.6 を いちばん多いときとみる）。容量をこえたら電圧の低下、1.5倍をこえたら停止（3時間に1回まで）
@@ -34904,6 +34991,7 @@ end $$;
 -- ---------------------------------------------------------------------
 -- 系統の信頼（運行の乱れの対応で下がる。0.7〜1。お客の数にかける）
 alter table public.mp_routes add column if not exists trust real not null default 1;
+alter table public.mp_routes add column if not exists rush jsonb;   -- 通勤時間帯の混雑（DB の更新117）：{始まりの時: 速さ（1 より小さい）}（鉄道。7・8・9・17・18・19時）
 
 -- 運行の乱れ
 create table if not exists public.mp_unko (
@@ -35614,7 +35702,10 @@ language plpgsql security definer set search_path = public as $$
 declare u uuid := _me_g(); pu uuid; pc int; gv boolean := false; today date := (now() at time zone 'Asia/Tokyo')::date;
 begin
   begin select x.pu, x.pc, x.gv into pu, pc, gv from _mp_party(u, p_as) x; exception when others then pu := u; pc := null; gv := false; end;
-  return jsonb_build_object('now', extract(epoch from now()), 'v3', true, 'wx', 3, 'aioff', case when gv then null else _mp_unko_off(pu, pc) end, 'list', (select coalesce(jsonb_agg(jsonb_build_object(
+  return jsonb_build_object('now', extract(epoch from now()), 'v3', true, 'wx', 3, 'aioff', case when gv then null else _mp_unko_off(pu, pc) end,
+    'rush', (select coalesce(jsonb_agg(jsonb_build_array(ro.id, ro.rush) order by ro.id), '[]'::jsonb) from mp_routes ro
+              where ro.ok and ro.kind = 'rail' and ro.rush is not null and not _mp_unko_off(ro.own_u, ro.own_c)),   -- 通勤時間帯の混雑（DB の更新117）：[系統, {時: 速さ}]（平日だけ）
+    'list', (select coalesce(jsonb_agg(jsonb_build_object(
     'id', z.id, 'kind', z.kind, 'sub', z.sub, 'why', _mp_unko_why(z), 'where', _mp_unko_where(z), 'x', z.x, 'y', z.y,
     'routes', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'name', r.name, 'color', r.color, 'own', _mp_pname(r.own_u, r.own_c, false),
                          'mine', (pu is not null or pc is not null or gv) and r.own_u is not distinct from pu and r.own_c is not distinct from pc, 'furi', r.id = any(z.furi),
@@ -38056,18 +38147,20 @@ begin
   return jsonb_build_object('cost', amt, 'segs', nseg, 'routes', nr, 'v', vmin, 've', vemin);
 end $$;
 -- 線路を1本にする（DB の更新99）：つなぎ目（分かれ道のない点）で となりの線と結合する。p_keep の線の設定（単線・複線・電化・方式・信号・規格・雪よけ・名前・色）に、もう1本をそろえる
---   そろえる工事費は、それぞれの設定を変えるのと同じ（へらす分は無料）。アプト式とそうでない線は 1本にできない
+--   そろえる工事費は、それぞれの設定を変えるのと同じ（へらす分は無料）。アプト式とそうでない線は 1本にできない（国の強行 p_force はできる。DB の更新117）
 --   p_b が null：1本にできる となりの線（はし・名前・長さ・設定のちがい）を返す。p_dry：見つもり（工事費・ちがい・つなげるか）
-create or replace function public.mp_seg_merge(p_a bigint, p_b bigint, p_keep bigint, p_dry boolean) returns jsonb
+create or replace function public.mp_seg_merge(p_a bigint, p_b bigint, p_keep bigint, p_dry boolean, p_force boolean default false) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); a mp_segs; b mp_segs; k mp_segs; o mp_segs; o2 mp_segs; me_cs int[]; nd bigint; c1 jsonb; cost numeric := 0; need jsonb; jerr text; r jsonb;
         dopt boolean; dsig boolean; dspec boolean; dsnow boolean;
+        zfo boolean := false; zfc jsonb := '[]'::jsonb;   -- 国の強行（DB の更新117）
 begin
   perform _mp_ok(u);
   select * into a from mp_segs where id = p_a;
   if not found or a.kind <> 'rail' then raise exception '線路が見つかりません'; end if;
   me_cs := array(select id from companies where owner = u);
   if not coalesce(a.own_u = u or a.own_c = any(me_cs) or (a.gov and _is_admin(u)), false) then raise exception 'あなたの線路ではありません'; end if;
+  zfo := coalesce(p_force, false) and a.gov and _is_admin(u);   -- 国の強行（DB の更新117）：アプト式のちがい・つなぎ目のカーブ・はばが建物にかかっても
   if p_b is null then
     return jsonb_build_object('cands', coalesce((select jsonb_agg(jsonb_build_object('id', s.id, 'n', s.name, 'm', round((s.len * 50)::numeric), 'end', case when e.nd = a.n0 then 0 else 1 end,
                'rack', s.rack <> a.rack, 'dif', to_jsonb(_mp_seg_difs(a, s))) order by e.nd = a.n1, s.id)
@@ -38082,13 +38175,16 @@ begin
   if nd is null or (select count(*) from mp_segs q where q.n0 = nd or q.n1 = nd) <> 2 then raise exception 'となりあっていない線か、分かれ道のある点です（1本にできません）'; end if;
   if p_keep is not null and p_keep not in (a.id, b.id) then raise exception 'そろえる線は、えらんだ2本のどちらかです'; end if;
   if p_keep = b.id then k := b; o := a; else k := a; o := b; end if;
-  if k.rack <> o.rack then raise exception 'アプト式の線と そうでない線は、1本にできません（高さの設定で そろえてください）'; end if;
+  if k.rack <> o.rack then
+    if not zfo then raise exception 'アプト式の線と そうでない線は、1本にできません（高さの設定で そろえてください）'; end if;
+    zfc := zfc || jsonb_build_array(jsonb_build_array('rk'));   -- もう1本も そろえる線と同じ（アプト式か そうでないか）に
+  end if;
   dopt := k.dbl <> o.dbl or k.quad <> o.quad or k.elec <> o.elec or (k.elec and k.ps <> o.ps);
   dsig := k.sig <> o.sig;
   dspec := k.gauge <> o.gauge or k.g2 is distinct from o.g2 or k.slp <> o.slp or (k.elec and k.cat <> o.cat) or k.nw <> o.nw;
   dsnow := k.snowp <> o.snowp;
   if p_dry then
-    if dopt then c1 := mp_seg_opts(o.id, k.dbl, k.elec, null, true, null, k.quad, k.ps); cost := cost + coalesce((c1 ->> 'cost')::numeric, 0); need := c1 -> 'need'; end if;
+    if dopt then c1 := mp_seg_opts(o.id, k.dbl, k.elec, null, true, null, k.quad, k.ps, zfo); cost := cost + coalesce((c1 ->> 'cost')::numeric, 0); need := c1 -> 'need'; zfc := zfc || coalesce(c1 -> 'fc', '[]'::jsonb); end if;
     if dsig then cost := cost + coalesce((mp_seg_sig(o.id, k.sig, false, true) ->> 'cost')::numeric, 0); end if;
     if dspec and not o.gov then
       o2 := o;
@@ -38098,17 +38194,25 @@ begin
     if dsnow then cost := cost + coalesce((mp_seg_snow(o.id, k.snowp, true) ->> 'cost')::numeric, 0); end if;
     -- つなげるか（つなぎ目のカーブなど）：設定をそろえたつもりで ためして、もどす
     begin
-      update mp_segs set dbl = k.dbl, quad = k.quad, elec = k.elec, ps = k.ps, sig = k.sig, gauge = k.gauge, g2 = k.g2, slp = k.slp, cat = k.cat, nw = k.nw, snowp = k.snowp, name = k.name where id = o.id;
-      perform _mp_seg_join2(k.id, o.id);
+      update mp_segs set dbl = k.dbl, quad = k.quad, elec = k.elec, ps = k.ps, sig = k.sig, gauge = k.gauge, g2 = k.g2, slp = k.slp, cat = k.cat, nw = k.nw, snowp = k.snowp, name = k.name, rack = case when zfo then k.rack else rack end where id = o.id;
+      begin   -- 国の強行（DB の更新117）：強行しないと つなげないか（ためして もどす）
+        perform _mp_seg_join2(k.id, o.id, false);
+        raise exception '__dry2__';
+      exception when others then
+        if sqlerrm <> '__dry2__' then
+          if zfo and sqlerrm like 'つなぎ目のカーブ%' then zfc := zfc || jsonb_build_array(jsonb_build_array('jc')); else raise; end if;
+        end if;
+      end;
+      perform _mp_seg_join2(k.id, o.id, zfo);
       raise exception '__dry__';
     exception when others then
       if sqlerrm <> '__dry__' then jerr := sqlerrm; end if;
     end;
     return jsonb_build_object('cost', round(cost), 'keep', k.id, 'other', o.id, 'dif', to_jsonb(_mp_seg_difs(k, o)), 'need', need, 'err', jerr,
-      'm', round(((k.len + o.len) * 50)::numeric));
+      'm', round(((k.len + o.len) * 50)::numeric)) || case when zfo then jsonb_build_object('fc', zfc) else '{}'::jsonb end;
   end if;
   -- そろえる（それぞれの工事。工事費もそれぞれ払う）→ 1本にする（どこかでだめなら、ぜんぶ取り消し）
-  if dopt then perform mp_seg_opts(o.id, k.dbl, k.elec, k.name, false, null, k.quad, k.ps); end if;
+  if dopt then perform mp_seg_opts(o.id, k.dbl, k.elec, k.name, false, null, k.quad, k.ps, zfo); end if;
   if dsig then perform mp_seg_sig(o.id, k.sig, false, false); end if;
   if dspec then
     select * into o from mp_segs where id = o.id;
@@ -38118,7 +38222,8 @@ begin
   end if;
   if dsnow then perform mp_seg_snow(o.id, k.snowp, false); end if;
   update mp_segs set name = k.name, color = k.color where id = o.id and (name is distinct from k.name or color is distinct from k.color);
-  r := mp_seg_join(k.id, o.id);
+  if zfo and o.rack <> k.rack then update mp_segs set rack = k.rack where id = o.id; end if;   -- 国の強行（DB の更新117）
+  r := mp_seg_join(k.id, o.id, zfo);
   return r || jsonb_build_object('cost', round(cost));
 end $$;
 
@@ -38697,10 +38802,10 @@ language sql stable set search_path = public as $$
                                left join mp_stations sb on sb.id = ro.stops[(e.v ->> 1)::int + 1]
                               where ro.id = rid), '') end
 $$;
--- 系統 rid の乱れ（ta〜tb にかかるもの）：[{id, w: [[はじめ, おわり, 速さ, 間引き, 全線], …]（はじめの順）, zi}, …]。なければ null
+-- 系統 rid の乱れ（ta〜tb にかかるもの）：[{id, w: [[はじめ, おわり, 速さ, 間引き, 全線], …]（はじめの順）, zi}, …]。なければ null。通勤時間帯の混雑は id 0（DB の更新117）
 create or replace function public._mp_unko_rt(rid bigint, ta float8, tb float8) returns jsonb
 language plpgsql stable set search_path = public as $$
-declare z mp_unko; out jsonb := '[]'::jsonb; w jsonb; zi jsonb; dr float8;
+declare z mp_unko; out jsonb := '[]'::jsonb; w jsonb; zi jsonb; dr float8; zr jsonb;
 begin
   for z in select * from mp_unko x where x.routes @> array[rid] and x.t0 < to_timestamp(tb) and coalesce(x.t_end, now() + interval '1 day') > to_timestamp(ta) order by x.id loop
     zi := _mp_unko_zi(z, rid);
@@ -38716,6 +38821,9 @@ begin
     if jsonb_array_length(w) = 0 then continue; end if;
     out := out || jsonb_build_array(jsonb_build_object('id', z.id, 'w', w, 'zi', zi));
   end loop;
+  -- 通勤時間帯の混雑（DB の更新117）：平日の朝夕、こんでいる鉄道の系統は 全線で少しおそくなる（id 0）。AI の運行の乱れをオフにした名義は なし
+  zr := (select _mp_rush_w(ro.rush, ta, tb) from mp_routes ro where ro.id = rid and ro.kind = 'rail' and ro.rush is not null and not _mp_unko_off(ro.own_u, ro.own_c));
+  if zr is not null and jsonb_array_length(zr) > 0 then out := out || jsonb_build_array(jsonb_build_object('id', 0, 'w', zr, 'zi', null)); end if;
   return case when jsonb_array_length(out) = 0 then null else out end;
 end $$;
 -- 列車のとまる駅（sched の順）が、系統の駅の何番目か（0 から。見つからなければ -1）。map.js の runIdx と同じ
@@ -38739,10 +38847,11 @@ begin
 end $$;
 -- 列車1本の、運行の乱れ（map.js の unkoTrW・unkoCanW・unkoDlyW と同じ計算）：
 --   L：_mp_unko_rt・st：系統の駅・legs：駅と駅のあいだ（d：m）・sc：列車の時刻・d0：始発駅を出る時刻（1970年からの秒）・tid：列車・te：遅れを見る時刻
+--   z0：始発駅を 遅れて出る秒（DB の更新117。走ろうとする列車）
 --   乱れの区間（_mp_unko_zi）を通る列車だけ、その区間にいるあいだ窓の速さになる（区間の手前の駅で待つ）。全線の窓は、どこでも
 --   運休：見合わせの窓のあいだに区間に入るはずで、見合わせ（続けて止めているところ）がはじまってから始発駅を出る列車。間引き：番号が奇数で、間引きの窓に区間に入り、窓がはじまってから出るもの
 --   返すもの：{can（stop・thin・null）, dly（te の遅れ 秒）, z（運休にした乱れ）}
-create or replace function public._mp_unko_trn(L jsonb, st bigint[], legs jsonb, sc jsonb, dir int, d0 float8, tid bigint, te float8) returns jsonb
+create or replace function public._mp_unko_trn(L jsonb, st bigint[], legs jsonb, sc jsonb, dir int, d0 float8, tid bigint, te float8, z0 float8 default 0) returns jsonb
 language plpgsql stable as $$
 declare n int; ns int := coalesce(array_length(st, 1), 0); idx int[]; cum float8[]; t0 float8; bad boolean; fwd boolean;
         ia int[]; ar float8[]; dp float8[];
@@ -38753,7 +38862,7 @@ declare n int; ns int := coalesce(array_length(st, 1), 0); idx int[]; cum float8
         s float8; d float8; p float8; nx float8; pr float8; it int := 0; ze float8; can text := null; cz bigint := null;
 begin
   n := jsonb_array_length(sc);
-  if L is null or jsonb_array_length(L) = 0 or n < 2 then return jsonb_build_object('can', null, 'dly', 0, 'z', null); end if;
+  if n < 2 or ((L is null or jsonb_array_length(L) = 0) and coalesce(z0, 0) <= 0) then return jsonb_build_object('can', null, 'dly', 0, 'z', null); end if;
   idx := _mp_sched_idx(st, dir, sc);
   bad := exists (select 1 from unnest(idx) q where q < 0);
   t0 := (sc -> 0 ->> 2)::float8;
@@ -38806,7 +38915,7 @@ begin
     end loop;
   end loop;
   m := coalesce(array_length(xa, 1), 0);
-  if m = 0 then return jsonb_build_object('can', null, 'dly', 0, 'z', null); end if;
+  if m = 0 and coalesce(z0, 0) <= 0 then return jsonb_build_object('can', null, 'dly', 0, 'z', null); end if;
   -- 運休（見合わせ・間引き）
   for i in 1..m loop
     ze := d0 + xzc[i];
@@ -38821,7 +38930,7 @@ begin
   if can is null and op is not null and op < 0.05 then can := 'stop'; cz := oz; end if;   -- 区間の外がほとんどない列車は運休
   if can is not null then return jsonb_build_object('can', can, 'dly', 0, 'z', cz); end if;
   -- 遅れ：区間にいるあいだは窓の速さ、そのほかは 1秒に 0.1秒ずつ取りもどす
-  s := d0; d := 0;
+  s := d0; d := greatest(0, coalesce(z0, 0));   -- 遅れて出る（DB の更新117。編成が まにあわない）
   while s < te - 1e-6 and it < 400 loop
     it := it + 1;
     p := s - d0 - d; r := 1; nx := te;
@@ -39641,7 +39750,7 @@ alter function public.mp_ops_renum_kind(bigint, jsonb, text, boolean) set statem
 alter function public.mp_tome_build(bigint, bigint, real, real, int, int, int, text, boolean) set statement_timeout = '60s';   -- DB の更新105
 -- 線路の規格・1本にする（DB の更新99）は、通る系統の時刻を組みなおすので60秒まで
 alter function public.mp_seg_spec(bigint, jsonb, boolean, boolean) set statement_timeout = '60s';
-alter function public.mp_seg_merge(bigint, bigint, bigint, boolean) set statement_timeout = '60s';
+alter function public.mp_seg_merge(bigint, bigint, bigint, boolean, boolean) set statement_timeout = '60s';   -- 国の強行（p_force。DB の更新117）
 -- ダイヤの運転整理（DB の更新100）は、系統の時刻を組みなおすので60秒まで
 alter function public.mp_dia_order(bigint, bigint[], jsonb, jsonb, jsonb, boolean, text) set statement_timeout = '60s';
 alter function public.mp_dia_order_del(bigint, bigint[], bigint[], text) set statement_timeout = '60s';

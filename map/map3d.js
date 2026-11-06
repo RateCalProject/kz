@@ -5,8 +5,8 @@
 (function () {
 'use strict';
 // map.js の中のもの（window.MapInt）を使う
-let MQ, q, LITE, liteNeed, EDEC, B64I, S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runIsSel, runName, runDest, showTrain, runFollow, pfZ, runRef, PAL;
-function m3Init() { ({ MQ, q, LITE, liteNeed, EDEC, B64I, S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runIsSel, runName, runDest, showTrain, runFollow, pfZ, runRef } = window.MapInt); PAL = window.MapPal; if (!runRef) runRef = () => null; }
+let sunNow, MQ, q, LITE, liteNeed, EDEC, B64I, S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runIsSel, runName, runDest, showTrain, runFollow, pfZ, runRef, PAL;
+function m3Init() { ({ sunNow, MQ, q, LITE, liteNeed, EDEC, B64I, S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runIsSel, runName, runDest, showTrain, runFollow, pfZ, runRef } = window.MapInt); PAL = window.MapPal; if (!runRef) runRef = () => null; }
 const M3 = { on: false, loading: false };
 const M3_LIB = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
 const M3_FH = 3.4;          // 1階の高さ（m）
@@ -93,13 +93,14 @@ async function m3Open() {
   r.setPixelRatio(m3PR()); r.setSize(S.W, S.H, false);
   const sc = new T3.Scene(); sc.background = new T3.Color('#b9d3ea'); sc.fog = new T3.Fog('#b9d3ea', 200, 900);
   const cam = new T3.PerspectiveCamera(45, S.W / Math.max(1, S.H), 0.05, 4000);
-  sc.add(new T3.HemisphereLight('#e8f0ff', '#7d7566', 0.68));
-  const sun = new T3.DirectionalLight('#fff6e8', 0.55); sun.position.set(-0.35, 1.2, 0.55); sc.add(sun);   // 南西の高いところから（北を見るとき、手前の壁が明るい）
+  const hemi = new T3.HemisphereLight('#e8f0ff', '#7d7566', 0.68); sc.add(hemi);
+  const sun = new T3.DirectionalLight('#fff6e8', 0.55); sun.position.set(-0.35, 1.2, 0.55); sc.add(sun);   // 時刻どおりに 向き・色・明るさを変える（m3Sun）
   const sea = new T3.Mesh(new T3.PlaneGeometry(20000, 20000), new T3.MeshLambertMaterial({ color: '#4680ba' })); sea.rotation.x = -Math.PI / 2; sea.position.y = -0.4; sc.add(sea);   // チャンクのない深い海（チャンクの海は高さ 0）
   const grpT = new T3.Group(), grpB = new T3.Group(), grpR = new T3.Group(), grpL = new T3.Group(); sc.add(grpT, grpB, grpR, grpL);   // grpL：遠くの建物（t63）
   Object.assign(M3, { on: true, T: T3, r, sc, cam, sea, grpT, grpB, grpR, grpL, lm: new Map(), cv, cm: new Map(), bKey: '', rKey: '', tex: null, tg: 0, tgN: 0,
-    tx: S.cam.x, ty: S.cam.y, d: Math.max(10, Math.min(700, (S.H / S.cam.z) * 0.95)), yaw: 0, pitch: 0.92, gy: 0, dirty: true });
-  M3.tex = m3WinTex(T3);
+    tx: S.cam.x, ty: S.cam.y, d: Math.max(10, Math.min(700, (S.H / S.cam.z) * 0.95)), yaw: 0, pitch: 0.92, gy: 0, dirty: true, hemi, sun, sunT: 0, nightW: 0 });
+  M3.tex = m3WinTex(T3); M3.texE = m3WinTexE(T3);
+  m3Sun(true);   // 日のあたり（時刻どおり）
   S.v3 = M3; S.wrap.classList.add('mp-3d');
   m3Mods().then(r => { if (!M3.on || !r.some(Boolean)) return; for (const [, o] of M3.cm) { M3.grpT.remove(o.mesh); m3Dispose(o.mesh); } M3.cm.clear(); M3.tg++; M3.tgN++; M3.bKey = ''; S.dirty = true; });   // 線路・地形のファイル（t64c）
   m3Bind(cv);
@@ -123,6 +124,45 @@ function m3Close() {
 function m3Clear(g) { for (const o of [...g.children]) { g.remove(o); m3Dispose(o); } }   // 子のメッシュも（t64c）
 const alertMsg = m => { try { hint(m); setTimeout(() => hint(''), 3500); } catch (e) {} };
 
+// 日のあたり（時刻どおり）：太陽の向き・色・明るさ、空と霧の色、夜は 建物の窓・列車の明かり（15秒ごと）。日がしずむと 月の光（青く 弱い）
+const M3_SKY = [[-90, [12, 19, 39]], [-8, [24, 32, 64]], [-3, [93, 95, 143]], [1, [233, 170, 140]], [7, [222, 200, 190]], [16, [185, 211, 234]], [90, [185, 211, 234]]];
+function m3Mix(a, b, t) { return a.map((v, i) => v + (b[i] - v) * t); }
+function m3SkyAt(e) {
+  for (let i = 0; i + 1 < M3_SKY.length; i++) { const [e0, c0] = M3_SKY[i], [e1, c1] = M3_SKY[i + 1]; if (e <= e1) return m3Mix(c0, c1, Math.max(0, Math.min(1, (e - e0) / (e1 - e0)))); }
+  return M3_SKY[M3_SKY.length - 1][1];
+}
+function m3Sun(force) {
+  if (!M3.sun || !M3.sc) return;
+  const t = now(); if (!force && t - (M3.sunT || 0) < 15000) return; M3.sunT = t;
+  const sn = sunNow(), day = sn.day, warm = sn.warm, night = sn.night;
+  // 光の向き：日が出ていれば太陽（低くても すこしは上から）。しずんだら 月（南の高いところ）
+  if (sn.el > -3) M3.sun.position.set(sn.ex, Math.max(0.15, sn.up), sn.sz); else M3.sun.position.set(-0.25, 1.1, 0.6);
+  const sunC = m3Mix(m3Mix([255, 246, 232], [255, 168, 96], warm * 0.85), [150, 172, 225], night);
+  M3.sun.color.setRGB(sunC[0] / 255, sunC[1] / 255, sunC[2] / 255);
+  M3.sun.intensity = 0.16 + 0.39 * day;
+  M3.hemi.intensity = 0.32 + 0.36 * day;
+  const hs = m3Mix([232, 240, 255], [96, 112, 160], 1 - day), hg = m3Mix([125, 117, 102], [38, 40, 50], 1 - day);
+  M3.hemi.color.setRGB(hs[0] / 255, hs[1] / 255, hs[2] / 255); M3.hemi.groundColor.setRGB(hg[0] / 255, hg[1] / 255, hg[2] / 255);
+  const sky = m3SkyAt(sn.el), skyC = new M3.T.Color(sky[0] / 255, sky[1] / 255, sky[2] / 255);
+  if (M3.ugSky) { M3.ugSky[0].copy(skyC); M3.ugSky[1].copy(skyC); }   // 地下ビューのあいだは、もどすときの色だけ
+  else { if (M3.sc.background && M3.sc.background.isColor) M3.sc.background.copy(skyC); if (M3.sc.fog) M3.sc.fog.color.copy(skyC); }
+  // 夜の明かり：建物の窓（夕方から）・列車
+  const w = Math.max(0, Math.min(1, (2 - sn.el) / 8));
+  M3.nightW = w;
+  for (const g of [M3.grpB, M3.grpL]) if (g) g.traverse(o => { const m = o.material; if (m && m.userData && m.userData.win) m.emissiveIntensity = 0.95 * w; });
+  if (M3.run && M3.run.material && M3.run.material.emissive) { const e = 0.16 + 0.5 * w; M3.run.material.emissive.setRGB(e, e * 0.95, e * 0.82); }
+  M3.dirty = true;
+}
+// 夜の窓の明かり（emissiveMap）：窓のところだけ あたたかい色（壁は黒）
+function m3WinTexE(T3) {
+  const mk = draw => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, 64, 64); draw(g); const t = new T3.CanvasTexture(c); t.wrapS = t.wrapT = T3.RepeatWrapping; t.anisotropy = 4; return t; };
+  return {
+    glass: mk(g => { g.fillStyle = '#c9a56a'; g.fillRect(2, 8, 60, 46); g.fillStyle = '#000'; g.fillRect(30, 8, 3, 46); }),
+    grid: mk(g => { g.fillStyle = '#ffd08a'; g.fillRect(12, 14, 40, 30); }),
+    house: mk(g => { g.fillStyle = '#ffc070'; g.fillRect(20, 18, 24, 22); g.fillStyle = '#000'; g.fillRect(31, 18, 2, 22); }),
+    none: null
+  };
+}
 // 窓のテクスチャ（壁の色にかける）：ガラス張り・格子の窓・家の窓
 function m3WinTex(T3) {
   const mk = draw => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, 64, 64); draw(g); const t = new T3.CanvasTexture(c); t.wrapS = t.wrapT = T3.RepeatWrapping; t.anisotropy = 4; return t; };
@@ -159,6 +199,7 @@ function m3Rects() {
 }
 function m3Frame() {
   if (!M3.on) return;
+  m3Sun();   // 日のあたり（時刻どおり。15秒ごと）
   const rc = m3Rects();
   // 地形：チャンクを読む（2D の読みこみを、このはんいで）
   S.cam.x = M3.tx; S.cam.y = M3.ty;
@@ -1244,7 +1285,10 @@ function m3Blds(v) {
       C[j] = arr[o + 6]; C[j + 1] = arr[o + 7]; C[j + 2] = arr[o + 8]; UV[i * 2] = arr[o + 9]; UV[i * 2 + 1] = arr[o + 10];
     }
     const g = new T3.BufferGeometry(); g.setAttribute('position', new T3.BufferAttribute(P, 3)); g.setAttribute('normal', new T3.BufferAttribute(N, 3)); g.setAttribute('color', new T3.BufferAttribute(C, 3)); g.setAttribute('uv', new T3.BufferAttribute(UV, 2));
-    const m = new T3.MeshLambertMaterial({ vertexColors: true, map: tex || null, side: T3.DoubleSide });
+    const te = tex && M3.texE ? (tex === M3.tex.glass ? M3.texE.glass : tex === M3.tex.grid ? M3.texE.grid : tex === M3.tex.house ? M3.texE.house : null) : null;   // 夜の窓の明かり
+    const m = new T3.MeshLambertMaterial(Object.assign({ vertexColors: true, map: tex || null, side: T3.DoubleSide },
+      te ? { emissive: new T3.Color('#ffd9a0'), emissiveMap: te, emissiveIntensity: 0.95 * (M3.nightW || 0) } : {}));
+    if (te) m.userData.win = true;
     grp.add(new T3.Mesh(g, m));
   };
   // 駅（t62）：ホーム（両がわ）・屋根・橋の上の駅舎。バス停は小さな待合所。名前は上に
@@ -1518,7 +1562,8 @@ function m3Runs(v) {
   if (!M3.run || M3.runCap < n) {
     if (M3.run) { M3.sc.remove(M3.run); M3.run.geometry.dispose(); M3.run.material.dispose(); }
     M3.runCap = Math.max(64, Math.ceil(n * 1.5));
-    M3.run = new T3.InstancedMesh(new T3.BoxGeometry(1, 1, 1), new T3.MeshLambertMaterial({ color: '#ffffff', emissive: '#2a2a2a' }), M3.runCap); M3.run.userData.ug = true;   // 地下ビューでも すかさない
+    M3.run = new T3.InstancedMesh(new T3.BoxGeometry(1, 1, 1), new T3.MeshLambertMaterial({ color: '#ffffff', emissive: '#2a2a2a' }), M3.runCap); M3.run.userData.ug = true;
+    { const e = 0.16 + 0.5 * (M3.nightW || 0); M3.run.material.emissive.setRGB(e, e * 0.95, e * 0.82); }   // 夜は 明かりがついて見える   // 地下ビューでも すかさない
     M3.run.instanceMatrix.setUsage(T3.DynamicDrawUsage); M3.run.frustumCulled = false; M3.sc.add(M3.run);
   }
   const ppx = 0.828 * M3.d / Math.max(300, S.H);   // 画面の 1px が、だいたい何マスか（まん中の距離で）
