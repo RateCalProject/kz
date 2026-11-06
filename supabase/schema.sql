@@ -15267,6 +15267,14 @@ insert into public.av_skins(code, name, kind, rare, w, look, file, credit, sort)
    'CG-CA Uka (c) 2023-2024 by Nagoya Institute of Technology, Moonshot R&D Goal 1 Avatar Symbiotic Society（CC BY 4.0）', 100)
 on conflict (code) do nothing;
 
+-- 見た目：霊夢（鈴奈庵風）の 春服・冬服（DB の更新120。東方Project の二次創作。モデル：モンテコア）
+insert into public.av_skins(code, name, kind, rare, w, look, file, credit, sort) values
+  ('mmd_reimu_s', '霊夢（春服）', 'mmd', 'SR', 1000, '{"h":1.52,"m":["まばたき"],"hide":["武器"]}', 'map/skins/reimu/R_spring.pmx',
+   '東方Project の二次創作（原作：上海アリス幻樂団）／MMD モデル「博麗霊夢（鈴奈庵風）」ver.1.1：モンテコア', 101),
+  ('mmd_reimu_w', '霊夢（冬服）', 'mmd', 'SR', 1000, '{"h":1.52,"m":["まばたき"],"hide":["武器"]}', 'map/skins/reimu/R_winter.pmx',
+   '東方Project の二次創作（原作：上海アリス幻樂団）／MMD モデル「博麗霊夢（鈴奈庵風）」ver.1.1：モンテコア', 102)
+on conflict (code) do nothing;
+
 -- 見た目（DB の更新118）：名前・いまの見た目（code）・髪とはだの色（l）。見た目が なくなっていたら ふだん着
 create or replace function public._av_me_json(zu uuid) returns jsonb
 language sql stable set search_path = public as $$

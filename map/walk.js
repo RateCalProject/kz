@@ -165,8 +165,9 @@ function mmdLoad(sk) {
   MMD.set(sk.file, e);
   e.p = mmdLib().then(() => new Promise((ok, ng) => {
     const T = window.THREE, man = new T.LoadingManager();
-    // テクスチャは WebP にしてある（名前は同じ・拡張子だけ）。\ は /
-    man.setURLModifier(u => /^(data|blob):/.test(u) ? u : u.replace(/\\/g, '/').replace(/\.(png|jpe?g|bmp|tga)$/i, '.webp'));
+    // テクスチャは WebP にしてある（名前は同じ・拡張子だけ。スフィアマップ .spa・.sph も）。\ は /。.tga も ふつうの画像として読む（TGALoader は使わない）
+    man.setURLModifier(u => /^(data|blob):/.test(u) ? u : u.replace(/\\/g, '/').replace(/\.(png|jpe?g|bmp|tga|spa|sph)$/i, '.webp'));
+    man.addHandler(/\.tga$/i, new T.TextureLoader(man));
     const L = new T.MMDLoader(man), base = sk.file.replace(/[^/]*$/, '');
     L.loadPMX(sk.file + '?v=' + mapv(), data => {
       try {
@@ -176,7 +177,8 @@ function mmdLoad(sk) {
         data.rigidBodies = []; data.metadata.rigidBodyCount = 0; data.constraints = []; data.metadata.constraintCount = 0;
         const mesh = L.meshBuilder.setCrossOrigin('anonymous').build(data, base, undefined, er => console.warn(er));
         const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-        for (const m of mats) { if (m.opacity === 0) m.visible = false; m.userData.em0 = m.emissive ? m.emissive.clone() : null; }   // 色を変えるモーフ用の材質（ふだんは 見えない）
+        const hide = new Set((sk.look && Array.isArray(sk.look.hide) ? sk.look.hide : []).map(String));   // 見せない材質（持ち物など）
+        for (const m of mats) { if (m.opacity === 0 || hide.has(m.name)) m.visible = false; m.userData.em0 = m.emissive ? m.emissive.clone() : null; }   // 色を変えるモーフ用の材質（ふだんは 見えない）
         mesh.geometry.computeBoundingBox();
         const hgt = Math.max(1, mesh.geometry.boundingBox.max.y);
         e.mesh = mesh; e.hgt = hgt; e.k = (Number(sk.look && sk.look.h) || 1.6) / hgt; e.mats = mats;
