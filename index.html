@@ -575,10 +575,18 @@ h3{font-size:15px;margin:16px 0 8px}
 .ip-k{display:inline-block;min-width:18px;font-size:11px;font-weight:800;text-align:center;border-radius:999px;background:var(--accent);color:var(--accent-ink);padding:0 5px;margin-left:6px}
 .ip-o{display:flex;gap:8px;align-items:baseline;width:100%;text-align:left;border:0;border-top:1px solid var(--line);background:none;padding:9px 4px;font-size:14px}
 .ip-list > .ip-o:first-child{border-top:0}
-.ip-o .cd{flex:none;width:2em;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.ip-o .cd{flex:none;width:2.4em;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
 .ip-o.on{color:var(--accent);font-weight:800}
 .ip-o.on::after{content:'✓';margin-left:auto}
 .ip-o:disabled{opacity:.4;cursor:default}
+.ip-n{display:flex;align-items:stretch;border-top:1px solid var(--line)}
+.ip-list > .ip-n:first-child,.ip-g > .ip-n:first-of-type{border-top:0}
+.ip-n .ip-o{border-top:0;flex:1 1 auto;min-width:0;padding-left:calc(4px + var(--d, 0) * 16px)}
+.ip-n[style*="--d:1"],.ip-n[style*="--d:2"]{background:var(--soft)}
+.ip-x{flex:none;display:flex;align-items:center;gap:3px;border:0;background:none;color:var(--muted);font-size:13px;padding:0 8px;min-width:46px;justify-content:center;cursor:pointer}
+.ip-x small{font-size:11px}
+.ip-x.has{color:var(--accent);font-weight:800}
+.ip-path{display:block;font-size:11px;color:var(--muted);font-weight:400;margin-top:1px}
 .srv{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--line)}
 .srv:first-of-type{border-top:0}
 .srv-ic{flex:none;width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;background:var(--soft);color:var(--accent)}
@@ -1293,7 +1301,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=85dc93bf","zh-TW":"zh-TW.js?v=0836c71b","zh-CN":"zh-CN.js?v=6f576279","ko":"ko.js?v=40cfb302","ko-Hani":"ko-Hani.js?v=dec15333"};
+  window.AX_LANGS = {"en":"en.js?v=a340427e","zh-TW":"zh-TW.js?v=13dd7305","zh-CN":"zh-CN.js?v=e4c3eae9","ko":"ko.js?v=a25cfa90","ko-Hani":"ko-Hani.js?v=bd4dc7be"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -1954,6 +1962,11 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     <div class="langs" id="langSeg" translate="no"></div>
     <p class="muted small" style="margin:6px 0 0">画面の言葉を、英語・中国語・韓国語にできます。みんなの投稿・名前・ニュースなどは、書かれたままです。この端末と、ログインしているアカウントに保存します。</p>
   </div>
+  <div class="card" data-sub="style" id="roCard">
+    <h3 style="margin-top:0">地名のローマ字 / Romaji place names</h3>
+    <div class="seg sm" id="roSeg"><button data-k="auto">おまかせ</button><button data-k="on">表示する</button><button data-k="off">表示しない</button></div>
+    <p class="muted small" style="margin:6px 0 0">国土の地図・さがす・住所に、都道府県・市区町村・区の名前をローマ字（例：Nakazato-ku, Ruri-shi）でも出します。「おまかせ」は、日本語のときは出さず、ほかの言語のときに出します。地図の「さがす」は、ローマ字の地名や郵便番号（例：〒100-0001）でもさがせます。この端末に保存します。</p>
+  </div>
   <div class="card" data-sub="style" id="numFCard">
     <h3 style="margin-top:0">数字の表示</h3>
     <div class="seg sm" id="numF"><button data-k="comma">1,234,567</button><button data-k="jp">123万4567</button><button data-k="four">123&#8239;4567</button></div>
@@ -2041,6 +2054,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
 
 <script src="config.js?v=20261031"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="jsic.js?v=783b42e8"></script>
 <script>
 'use strict';
 const CFG = window.AILINAX_CONFIG || {};
@@ -2217,6 +2231,11 @@ $$('#numF button').forEach(b => {
   b.classList.toggle('on', b.dataset.k === NUMF);
   b.onclick = () => { if (b.dataset.k === NUMF) return; try { localStorage.setItem('numfmt', b.dataset.k); } catch (e) { return toast('この端末では保存できませんでした'); } location.reload(); };
 });
+// 地名のローマ字（国土の地図。おまかせ・表示する・表示しない。この端末に保存）（DB の更新114）
+{ let rv = null; try { rv = localStorage.getItem('ro'); } catch (e) { rv = null; }
+  $$('#roSeg button').forEach(b => { b.classList.toggle('on', b.dataset.k === (rv === 'on' || rv === 'off' ? rv : 'auto'));
+    b.onclick = () => { try { if (b.dataset.k === 'auto') localStorage.removeItem('ro'); else localStorage.setItem('ro', b.dataset.k); } catch (e) { return toast('この端末では保存できませんでした'); }
+      $$('#roSeg button').forEach(x => x.classList.toggle('on', x === b)); if (window.MapApp && MapApp.roLoad) MapApp.roLoad(true); }; }); }
 $('#numFEx').textContent = `いまの表示：${fmt(1366583491)} X（カンマ 1,366,583,491・日本式 13億6658万3491・4けたごと 13\u202F6658\u202F3491）。この端末に保存します。`;
 
 /* ---------------- 賭け金入力 ---------------- */
@@ -5190,7 +5209,7 @@ function stCmpDraw() {
    役所 → ヘルプ（t62）：遊び方・やり方（help/help.json。README からつくる）。さがせる（題・中身・ことば。ひらがな・カタカナ・全角半角は同じに）
    役所 → 意見箱（t62）：運営への問い合わせ（support_open）に「【意見箱】」の件名で送る
    ================================================================= */
-const HELP_V = '55326cac';
+const HELP_V = 'e645e447';
 const HP = { d: null, cat: 'start', q: '' };
 const hpNorm = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
 async function helpLoad() {
@@ -5839,46 +5858,73 @@ const CERT_SVG = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" st
 const certTag = c => c.cert || (c.cert_until && c.status === 'active') ? `<span class="cert" title="サイトの認証（${c.cert_until}まで）">${CERT_SVG}認証</span>` : '';
 /* ---------- 業種（日本標準産業分類・令和5年7月改定の中分類） ---------- */
 const JSIC = [["A","農業、林業",[["01","農業"],["02","林業"]]],["B","漁業",[["03","漁業（水産養殖業を除く）"],["04","水産養殖業"]]],["C","鉱業、採石業、砂利採取業",[["05","鉱業、採石業、砂利採取業"]]],["D","建設業",[["06","総合工事業"],["07","職別工事業（設備工事業を除く）"],["08","設備工事業"]]],["E","製造業",[["09","食料品製造業"],["10","飲料・たばこ・飼料製造業"],["11","繊維工業"],["12","木材・木製品製造業（家具を除く）"],["13","家具・装備品製造業"],["14","パルプ・紙・紙加工品製造業"],["15","印刷・同関連業"],["16","化学工業"],["17","石油製品・石炭製品製造業"],["18","プラスチック製品製造業（別掲を除く）"],["19","ゴム製品製造業"],["20","なめし革・同製品・毛皮製造業"],["21","窯業・土石製品製造業"],["22","鉄鋼業"],["23","非鉄金属製造業"],["24","金属製品製造業"],["25","はん用機械器具製造業"],["26","生産用機械器具製造業"],["27","業務用機械器具製造業"],["28","電子部品・デバイス・電子回路製造業"],["29","電気機械器具製造業"],["30","情報通信機械器具製造業"],["31","輸送用機械器具製造業"],["32","その他の製造業"]]],["F","電気・ガス・熱供給・水道業",[["33","電気業"],["34","ガス業"],["35","熱供給業"],["36","水道業"]]],["G","情報通信業",[["37","通信業"],["38","放送業"],["39","情報サービス業"],["40","インターネット附随サービス業"],["41","映像・音声・文字情報制作業"]]],["H","運輸業、郵便業",[["42","鉄道業"],["43","道路旅客運送業"],["44","道路貨物運送業"],["45","水運業"],["46","航空運輸業"],["47","倉庫業"],["48","運輸に附帯するサービス業"],["49","郵便業（信書便事業を含む）"]]],["I","卸売業、小売業",[["50","各種商品卸売業"],["51","繊維・衣服等卸売業"],["52","飲食料品卸売業"],["53","建築材料、鉱物・金属材料等卸売業"],["54","機械器具卸売業"],["55","その他の卸売業"],["56","各種商品小売業"],["57","織物・衣服・身の回り品小売業"],["58","飲食料品小売業"],["59","機械器具小売業"],["60","その他の小売業"],["61","無店舗小売業"]]],["J","金融業、保険業",[["62","銀行業"],["63","協同組織金融業"],["64","貸金業、クレジットカード業等非預金信用機関"],["65","金融商品取引業、商品先物取引業"],["66","補助的金融業等"],["67","保険業（保険媒介代理業、保険サービス業を含む）"]]],["K","不動産業、物品賃貸業",[["68","不動産取引業"],["69","不動産賃貸業・管理業"],["70","物品賃貸業"]]],["L","学術研究、専門・技術サービス業",[["71","学術・開発研究機関"],["72","専門サービス業（他に分類されないもの）"],["73","広告業"],["74","技術サービス業（他に分類されないもの）"]]],["M","宿泊業、飲食サービス業",[["75","宿泊業"],["76","飲食店"],["77","持ち帰り・配達飲食サービス業"]]],["N","生活関連サービス業、娯楽業",[["78","洗濯・理容・美容・浴場業"],["79","その他の生活関連サービス業"],["80","娯楽業"]]],["O","教育、学習支援業",[["81","学校教育"],["82","その他の教育、学習支援業"]]],["P","医療、福祉",[["83","医療業"],["84","保健衛生"],["85","社会保険・社会福祉・介護事業"]]],["Q","複合サービス事業",[["86","郵便局"],["87","協同組合（他に分類されないもの）"]]],["R","サービス業（他に分類されないもの）",[["88","廃棄物処理業"],["89","自動車整備業"],["90","機械等修理業（別掲を除く）"],["91","職業紹介・労働者派遣業"],["92","その他の事業サービス業"],["93","政治・経済・文化団体"],["94","宗教"],["95","その他のサービス業"],["96","外国公務"]]],["S","公務（他に分類されるものを除く）",[["97","国家公務"],["98","地方公務"]]],["T","分類不能の産業",[["99","分類不能の産業"]]]];
-const IND = {}; JSIC.forEach(m => m[2].forEach(c => { IND[c[0]] = { n: c[1], m: m[0], mn: m[1] }; }));
+const IND = {}; JSIC.forEach(m => m[2].forEach(c => { IND[c[0]] = { n: c[1], m: m[0], mn: m[1], l: 2 }; }));
+// 小分類（3けた）・細分類（4けた）：jsic.js の JSIC_D（DB の更新113）。IND_K は 下の分類のコード、IND_ALL は ぜんぶのコード（表の順）
+const IND_K = {}, IND_ALL = [];
+String(window.JSIC_D || '').split('|').forEach(e => {
+  const c = (e.match(/^\d{3,4}/) || [''])[0], up = c && IND[c.slice(0, 2)]; if (!up) return;
+  const p = c.length === 3 ? c.slice(0, 2) : c.slice(0, 3);
+  IND[c] = { n: e.slice(c.length), m: up.m, mn: up.mn, l: c.length, p }; (IND_K[p] = IND_K[p] || []).push(c);
+});
+{ const add = c => { IND_ALL.push(c); (IND_K[c] || []).forEach(add); }; JSIC.forEach(m => m[2].forEach(c => add(c[0]))); }
+const IND_GEN = new Set(['主として管理事務を行う本社等', 'その他の管理、補助的経済活動を行う事業所']);   // どの中分類にもある名前（中分類の名前をそえる）
 const indName = c => IND[c] ? IND[c].n : c;
-const indChips = (codes, click) => (codes || []).map(c => `<span class="ind" ${click ? `data-ind="${c}"` : ''}>${esc(indName(c))}</span>`).join('');
+const indHtml = c => `<span>${esc(indName(c))}</span>${IND[c] && IND[c].l === 4 && IND_GEN.has(IND[c].n) ? `<small>（<span>${esc(indName(c.slice(0, 2)))}</span>）</small>` : ''}`;
+const indChips = (codes, click) => (codes || []).map(c => `<span class="ind" title="${esc(c)}" ${click ? `data-ind="${esc(c)}"` : ''}>${indHtml(c)}</span>`).join('');
 const indLock = kind => kind === '銀行' ? '62' : kind === '証券' ? '65' : null;
 const IND_MAX = 25;   // 業種は25まで
 // 業種のまとめ（はじめの k こ・ほか N件）
-const indSum = (codes, k) => esc(codes.slice(0, k).map(indName).join('・')) + (codes.length > k ? `<span> ほか${codes.length - k}件</span>` : '');
-// 業種をえらぶ部品（大分類ごとに中分類を並べる・名前でさがせる・25まで）
+const indSum = (codes, k) => codes.slice(0, k).map(indHtml).join('・') + (codes.length > k ? `<span> ほか${codes.length - k}件</span>` : '');
+// サーバーの DB の更新の番号（app_ver。わからないときは 0）
+let dbAtP = null;
+const dbAt = () => dbAtP || (dbAtP = call('app_ver').then(v => (v && v.db) || 0).catch(() => { dbAtP = null; return 0; }));
+// 業種をえらぶ部品（大分類 → 中分類 → 小分類 → 細分類 の木・名前やコードでさがせる・25まで。小分類・細分類は サーバーが DB の更新113 のあと）
 function indPicker(box, init, opt) {
   opt = opt || {};
-  const P = { sel: [...new Set(init || [])], lock: opt.lock || null, official: !!opt.official, q: '', open: new Set() };
-  box.innerHTML = '<div class="ip-sel"></div><input class="inp ip-q" placeholder="業種をさがす（例：飲食・情報）"><div class="ip-list"></div>';
+  const P = { sel: [...new Set(init || [])], lock: opt.lock || null, official: !!opt.official, q: '', open: new Set(), deep: false };
+  box.innerHTML = '<div class="ip-sel"></div><input class="inp ip-q" placeholder="業種をさがす（例：飲食・鉄道・4211）"><div class="ip-list"></div>';
   const selEl = box.querySelector('.ip-sel'), qEl = box.querySelector('.ip-q'), listEl = box.querySelector('.ip-list');
-  const can = c => P.official || (c !== '97' && c !== '98' && (c !== '62' || P.lock === '62') && (c !== '65' || P.lock === '65'));
+  const can = c => P.official || (!/^9[78]/.test(c) && (!c.startsWith('62') || P.lock === '62') && (!c.startsWith('65') || P.lock === '65'));
   const norm = () => { if (P.lock && !P.sel.includes(P.lock)) P.sel.push(P.lock); P.sel.sort(); };
-  const one = (c, n) => { const on = P.sel.includes(c), dis = on ? c === P.lock : (P.sel.length >= IND_MAX || !can(c));
-    return `<button type="button" class="ip-o ${on ? 'on' : ''}" data-c="${c}" ${dis ? 'disabled' : ''}><span class="cd">${c}</span><span>${esc(n)}</span></button>`; };
+  const kids = c => P.deep ? IND_K[c] || [] : [];
+  // 1行（d：木の深さ。find：さがした結果の行＝下の分類を出さず、小分類・細分類には中分類をそえる）
+  const one = (c, d, find) => {
+    const on = P.sel.includes(c), dis = on ? c === P.lock : (P.sel.length >= IND_MAX || !can(c)), k = find ? [] : kids(c), op = P.open.has(c), path = find && IND[c].l > 2;
+    const under = k.length && P.sel.some(y => y !== c && y.startsWith(c));   // 下の分類を えらんでいる
+    return `<div class="ip-n" style="--d:${d}"><button type="button" class="ip-o ${on ? 'on' : ''}" data-c="${c}" ${dis ? 'disabled' : ''}><span class="cd">${c}</span><span>${path ? indHtml(c) : `<span>${esc(indName(c))}</span>`}${path ? `<small class="ip-path"><span>${c.slice(0, 2)}</span> <span>${esc(indName(c.slice(0, 2)))}</span></small>` : ''}</span></button>`
+      + (k.length ? `<button type="button" class="ip-x${under ? ' has' : ''}" data-t="${c}" aria-expanded="${op}" aria-label="下の分類（${k.length}）">${op ? '▾' : '▸'}<small>${k.length}</small></button>` : '') + '</div>'
+      + (op ? k.map(x => one(x, d + 1)).join('') : '');
+  };
   function draw() {
     norm();
-    selEl.innerHTML = (P.sel.length ? P.sel.map(c => `<span class="ind">${esc(indName(c))}${c === P.lock ? '' : `<button type="button" data-x="${c}" aria-label="はずす">×</button>`}</span>`).join('')
+    selEl.innerHTML = (P.sel.length ? P.sel.map(c => `<span class="ind" title="${esc(c)}">${indHtml(c)}${c === P.lock ? '' : `<button type="button" data-x="${esc(c)}" aria-label="はずす">×</button>`}</span>`).join('')
       : '<span class="muted small">まだえらんでいません</span>') + `<span class="muted small" style="margin-left:auto">${P.sel.length}/${IND_MAX}</span>`;
-    const q = P.q.trim();
-    listEl.innerHTML = q
-      ? (JSIC.flatMap(m => m[2].filter(c => c[1].includes(q) || m[1].includes(q) || c[0] === q || m[0] === q.toUpperCase()).map(c => one(c[0], c[1]))).join('')
-         || '<p class="muted small" style="margin:8px 0">見つかりません</p>')
-      : JSIC.map(m => { const k = m[2].filter(c => P.sel.includes(c[0])).length;
-          return `<details class="ip-g" data-m="${m[0]}" ${P.open.has(m[0]) ? 'open' : ''}><summary><b>${m[0]}</b>${esc(m[1])}${k ? `<span class="ip-k">${k}</span>` : ''}${m[0] === 'S' && !P.official ? '<span class="muted small">（国営の会社だけ）</span>' : ''}${m[0] === 'J' && !P.official ? '<span class="muted small">（62は銀行・65は証券の会社だけ）</span>' : ''}</summary>${m[2].map(c => one(c[0], c[1])).join('')}</details>`; }).join('');
+    const q = P.q.trim(), ql = q.toLowerCase(), qu = q.toUpperCase();
+    if (q) {
+      const hit = c => { const o = IND[c];
+        return c.startsWith(q) || o.n.includes(q) || (o.l === 2 && (o.mn.includes(q) || o.m === qu)) || (LANG !== 'ja' && q.length > 1 && String(tr(o.n)).toLowerCase().includes(ql)); };
+      const all = IND_ALL.filter(c => (P.deep || IND[c].l === 2) && hit(c)), MAXR = 200;
+      listEl.innerHTML = all.length ? all.slice(0, MAXR).map(c => one(c, 0, true)).join('') + (all.length > MAXR ? `<p class="muted small" style="margin:8px 0">ほか${all.length - MAXR}件（ことばを足して しぼってください）</p>` : '')
+        : '<p class="muted small" style="margin:8px 0">見つかりません</p>';
+      return;
+    }
+    listEl.innerHTML = JSIC.map(m => { const k = P.sel.filter(c => IND[c] && IND[c].m === m[0]).length;
+      return `<details class="ip-g" data-m="${m[0]}" ${P.open.has(m[0]) ? 'open' : ''}><summary><b>${m[0]}</b>${esc(m[1])}${k ? `<span class="ip-k">${k}</span>` : ''}${m[0] === 'S' && !P.official ? '<span class="muted small">（国営の会社だけ）</span>' : ''}${m[0] === 'J' && !P.official ? '<span class="muted small">（62は銀行・65は証券の会社だけ）</span>' : ''}</summary>${m[2].map(c => one(c[0], 0)).join('')}</details>`; }).join('');
   }
   box.addEventListener('click', ev => {
-    const o = ev.target.closest('[data-c]'), x = ev.target.closest('[data-x]');
-    if (o && !o.disabled) { const c = o.dataset.c; P.sel = P.sel.includes(c) ? P.sel.filter(y => y !== c) : P.sel.concat(c); draw(); }
+    const o = ev.target.closest('[data-c]'), x = ev.target.closest('[data-x]'), t = ev.target.closest('[data-t]');
+    if (t) { const c = t.dataset.t; if (P.open.has(c)) P.open.delete(c); else P.open.add(c); draw(); }
+    else if (o && !o.disabled) { const c = o.dataset.c; P.sel = P.sel.includes(c) ? P.sel.filter(y => y !== c) : P.sel.concat(c); draw(); }
     else if (x) { P.sel = P.sel.filter(y => y !== x.dataset.x); draw(); }
   });
   box.addEventListener('toggle', ev => { const d = ev.target; if (d.dataset && d.dataset.m) { if (d.open) P.open.add(d.dataset.m); else P.open.delete(d.dataset.m); } }, true);
   qEl.oninput = () => { P.q = qEl.value; draw(); };
   draw();
+  if (IND_ALL.length > 99) dbAt().then(v => { if (v >= 113 && !P.deep) { P.deep = true; draw(); } });
   return {
     get: () => { norm(); return P.sel.slice(); },
     set: codes => { P.sel = [...new Set(codes || [])]; P.q = ''; qEl.value = ''; draw(); },
-    setLock: c => { if (c === P.lock) return; if (P.lock) P.sel = P.sel.filter(y => y !== P.lock); P.lock = c; draw(); },
+    setLock: c => { if (c === P.lock) return; if (P.lock) P.sel = P.sel.filter(y => !y.startsWith(P.lock)); P.lock = c; draw(); },
   };
 }
 // ゲーム・Discordのサーバー
@@ -5912,15 +5958,15 @@ const starStr = n => '★'.repeat(n) + '☆'.repeat(5 - n);
 const ratingH = r => r && r.n ? `<span class="stars">${starStr(Math.round(Number(r.avg)))}</span> <strong>${Number(r.avg).toFixed(1)}</strong><span class="muted">（${r.n}人）</span>` : '<span class="muted">まだ評価なし</span>';
 const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>${esc(c.name)}${kindTag(c)}</b>
   <small>ID ${c.cid_full || c.cid}・社長 ${nameB(c.owner, c.owner_badge)}${c.ai ? '（AI）' : ''}${c.status === 'bankrupt' || c.status === 'closed' ? `・${c.closed_at || ''}${c.status === 'bankrupt' ? '倒産' : '廃業'}` : ''}${c.description ? '・' + esc(c.description) : ''}</small>
-  ${(c.industries && c.industries.length) || (c.servers && c.servers.length) ? `<small>${srvTags(c.servers)}${(c.industries || []).slice(0, 2).map(indName).map(esc).join('・')}${(c.industries || []).length > 2 ? ` ほか${c.industries.length - 2}` : ''}</small>` : ''}
+  ${(c.industries && c.industries.length) || (c.servers && c.servers.length) ? `<small>${srvTags(c.servers)}${(c.industries || []).slice(0, 2).map(indHtml).join('・')}${(c.industries || []).length > 2 ? ` ほか${c.industries.length - 2}` : ''}</small>` : ''}
   ${c.rating && c.rating.n ? `<small>${ratingH(c.rating)}</small>` : ''}</span>${c.pinned ? '📌' : ''}</div>`;
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
 // 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
-const MAPV = '173';
+const MAPV = '174';
 const STAGE = 'Pre';   // 正式公開の前（Pre）。名前のよこと、バージョンの表記に出す。正式公開のときは '' にする
 document.querySelectorAll('.kz-stage').forEach(e => { e.textContent = STAGE; e.hidden = !STAGE; });
-const DBV = 112;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）
+const DBV = 114;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）
 { const e = document.getElementById('verLogin'); if (e) e.textContent = 'v' + MAPV + (STAGE ? ' ' + STAGE : ''); }   // バージョン表記（ログインの画面）
 // バージョン表記（設定 → プロフィール）：画面の版・サーバーに入っている DB の更新の番号。管理者には、サーバーの更新がまだのとき知らせる
 async function verShow() {
@@ -5987,6 +6033,12 @@ async function coSearch() {
 $('#coQ').oninput = () => { clearTimeout(coT); coT = setTimeout(() => coSearch().catch(e => toast(e.message)), 300); };
 $('#coInd').innerHTML += JSIC.map(m => `<optgroup label="${m[0]} ${esc(m[1])}"><option value="${m[0]}">${m[0]} ${esc(m[1])}（ぜんぶ）</option>${m[2].map(c => `<option value="${c[0]}">${c[0]} ${esc(c[1])}</option>`).join('')}</optgroup>`).join('');
 $('#coInd').onchange = () => coSearch().catch(e => toast(e.message));
+// 業種でしぼる：小分類・細分類（えらぶ欄にないもの）は、欄の上に足してえらぶ
+function coIndSet(c) {
+  const el = $('#coInd');
+  if (c && ![...el.options].some(o => o.value === c)) { const o = document.createElement('option'); o.value = c; o.textContent = c + ' ' + tr(indName(c)); o.dataset.extra = '1'; el.insertBefore(o, el.options[1] || null); }
+  el.value = c || '';
+}
 async function jbSearch() {
   const d = await call('job_list', { p_q: $('#jbQ').value });
   $('#jbList').innerHTML = d.length ? d.map(j => `<div class="item">
@@ -6085,7 +6137,7 @@ async function corpOpen(cid, ccOpen) {
   const dkI = m.querySelector('[data-dkinbox]');
   if (dkI) dkI.onclick = () => { if (c.mine) { m.remove(); OWsel = c.cid; OWsec = 'desk'; go('vWork', 'corp'); } else deskInbox(c.cid); };
   const dkM = m.querySelector('[data-dkmine]'); if (dkM) dkM.onclick = () => { m.remove(); go('vCorp', 'desk'); };
-  m.querySelectorAll('[data-ind]').forEach(x => x.onclick = () => { m.remove(); $('#coQ').value = ''; $('#coInd').value = x.dataset.ind; go('vCorp', 'search'); });
+  m.querySelectorAll('[data-ind]').forEach(x => x.onclick = () => { m.remove(); $('#coQ').value = ''; coIndSet(x.dataset.ind); go('vCorp', 'search'); });
   const scB = m.querySelector('[data-srvclear]');
   if (scB) scB.onclick = async () => {
     const why = prompt('サーバー欄を消す理由（社長に届きます）', ''); if (why === null) return;
@@ -6179,7 +6231,7 @@ function ownSections(c) {
         <p class="muted small" style="margin:0">利息は会社のお金から毎日払います。会社のお金が足りないと払えません。</p>` : ''}
       <button class="btn main s" data-act="save">保存</button>`]);
   S.push(['ind', '業種（日本標準産業分類）', c.industries.length ? indSum(c.industries, 3) : '未設定（えらんでください）', c.industries.length ? 0 : 1, `
-      <p class="muted small" style="margin:0 0 6px">中分類から25までえらべます。会社のページと会社検索に出て、業種でさがせるようになります。${indLock(c.kind) ? `${c.kind === '銀行' ? '銀行' : '証券会社'}は「${indName(indLock(c.kind))}」が必ず入ります。` : ''}</p>
+      <p class="muted small" style="margin:0 0 6px">中分類・小分類・細分類から25までえらべます（▸ で下の分類）。会社のページと会社検索に出て、業種でさがせるようになります。${indLock(c.kind) ? `${c.kind === '銀行' ? '銀行' : '証券会社'}は「${indName(indLock(c.kind))}」が必ず入ります。` : ''}</p>
       <div id="owInd"></div><button class="btn main s" data-act="ind">保存</button>`]);
   S.push(['srv', 'ゲーム・Discordのサーバー', c.servers.length ? esc(c.servers.map(sv => sv.name).join('・')) : 'なし', 0, `
       <p class="muted small" style="margin:0 0 6px">ゲームやDiscordに関係する会社は、サーバーの名前とリンク（アドレス）を5つまでのせられます。会社のページに出て、サーバー名でもさがせるようになります。</p>

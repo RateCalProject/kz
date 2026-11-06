@@ -1696,7 +1696,24 @@ async function natFind(q) {
   }
   return out.sort((a, b) => a.hit - b.hit || b.h - a.h).slice(0, 12);
 }
+// 地名のローマ字（設定 → 地名のローマ字。おまかせ：日本語のときは出さない）（DB の更新114）：都道府県・市区町村・区の id → Tsukimi-shi
+function roOn() { let v = null; try { v = localStorage.getItem('ro'); } catch (e) { v = null; } return v === 'on' || (v !== 'off' && typeof LANG !== 'undefined' && LANG !== 'ja'); }
+function roLoad(force) {
+  if (!roOn() || (S.roP && !force)) return;
+  S.roP = call('mp_place_ro', {}).then(d => { S.ro = d || {}; S.dirty = true; })
+    .catch(e => { S.ro = S.ro || {}; if (!/Could not find the function|schema cache|does not exist/.test(e.message || '')) setTimeout(() => { S.roP = null; }, 60000); });
+}
+const placeRo = id => S.ro && roOn() ? S.ro[id] || '' : '';
+const zipFmt = z => /^\d{7}$/.test(z || '') ? z.slice(0, 3) + '-' + z.slice(3) : z || '';
+// 名前（漢字）と、その下に小さくローマ字
+function labelRo(g, p, text, x, y, o) {
+  const ro = placeRo(p.id); if (!ro) return label(g, text, x, y, o);
+  const sz = o.size || 12, s2 = Math.max(9, Math.round(sz * 0.72)), ky = y - (s2 + 4) / 2, ok = label(g, text, x, ky, o);
+  if (ok) label(g, ro, x, ky + (sz + 4) / 2 + (s2 + 4) / 2 + 0.5, { size: s2, color: o.color });   // 名前の箱の すぐ下（重ならない）
+  return ok;
+}
 function drawPlaces(g, it, z) {
+  roLoad();
   // 島（小さい島は近づいたときだけ。島が小さく見えるときは島の下に）
   for (const p of it.places.values()) {
     if (p.k !== 'island') continue;
@@ -1723,9 +1740,9 @@ function drawPlaces(g, it, z) {
   ps.filter(show).sort((a, b) => rank(a) - rank(b) || (b.pop || 0) - (a.pop || 0)).forEach(p => {
     const x = sx(p.x + 0.5), y = sy(p.y + 0.5);
     if (x < -60 || y < -30 || x > S.W + 60 || y > S.H + 30) return;
-    if (p.k === 'pref') label(g, p.n + (p.t || '県'), x, y, { size: z < Z_FAR ? 14 : 18, bold: true, color: '#3a3a3a' });   // 瑠璃府は「府」。とても遠いときは小さく（t108）
-    else if (p.k === 'muni') label(g, p.n + (p.t || ''), x, y, { size: p.pop > 500000 ? 16 : 13, bold: true, color: '#2b2b2b' });
-    else if (p.k === 'ward') label(g, p.n + '区', x, y, { size: 13, bold: true, color: '#5a4a6a' });
+    if (p.k === 'pref') labelRo(g, p, p.n + (p.t || '県'), x, y, { size: z < Z_FAR ? 14 : 18, bold: true, color: '#3a3a3a' });   // 瑠璃府は「府」。とても遠いときは小さく（t108）
+    else if (p.k === 'muni') labelRo(g, p, p.n + (p.t || ''), x, y, { size: p.pop > 500000 ? 16 : 13, bold: true, color: '#2b2b2b' });
+    else if (p.k === 'ward') labelRo(g, p, p.n + '区', x, y, { size: 13, bold: true, color: '#5a4a6a' });
     else if (p.k === 'river') label(g, p.n, x, y, { size: 12, color: '#1e5ea8' });
     else label(g, p.n, x, y, { size: 11, color: '#555' });
   });
@@ -4028,7 +4045,7 @@ async function showSpot(cx, cy) {
   if (d.none) return sheet(`<h4>地図の外です</h4>`);
   const P = d.parcel; S.sel.parcel = P ? P.id : null; S.dirty = true;
   const on = (d.on || []).map(o => onH(o.name)).join('<br>');
-  sheet(`<h4><span translate="no">${esc(d.addr.text)}</span>${d.addr.ban ? ` <span>${esc(d.addr.ban)}</span>` : ''}</h4>
+  sheet(`<h4><span translate="no">${esc(d.addr.text)}</span>${d.addr.ban ? ` <span>${esc(d.addr.ban)}</span>` : ''}</h4>${addrSub(d.addr)}
     <div class="mp-kv"><b>地形</b><span><span>${esc(d.ter)}</span>${d.elev ? `<small>（標高 約${d.elev}m）</small>` : ''}</span>${wxRow((cx + 0.5) / 5, (cy + 0.5) / 5)}<b>地目</b><span>${esc(d.chimoku)}</span>
       <b>用途地域</b><span>${esc(d.zname)}</span><b>人の多さ</b><span>${fmt(d.dens)} 人/km²</span>
       ${d.nz != null ? `<b>線路の騒音</b><span><span>${nzWord(d.nz)}</span><small class="muted">（${d.nz}）</small></span>` : ''}
@@ -4077,8 +4094,10 @@ async function showSpot(cx, cy) {
     if (q('[data-merge]')) q('[data-merge]').onclick = () => startMerge(P);
     if (q('[data-home]')) q('[data-home]').onclick = () => homeHere(cx, cy, P);
   });
-  S.addr.hidden = false; S.addr.textContent = d.addr.text + (d.addr.ban ? ' ' + d.addr.ban : '');
+  S.addr.hidden = false; S.addr.textContent = (d.addr.zip ? '〒' + zipFmt(d.addr.zip) + ' ' : '') + d.addr.text + (d.addr.ban ? ' ' + d.addr.ban : '');
 }
+// 住所の下の行：郵便番号・ローマ字（DB の更新114）
+const addrSub = a => a && (a.zip || (roOn() && a.ro)) ? `<p class="small muted" style="margin:-4px 0 6px" translate="no">${a.zip ? `〒${esc(zipFmt(a.zip))}` : ''}${roOn() && a.ro ? `${a.zip ? '　' : ''}${esc(a.ro)}` : ''}</p>` : '';
 // 自分の住所（t54i）：ここが住所か（区画か、同じ建物）
 function isHome(cx, cy, P) { const h = S.boot.home; return !!h && ((h.x === cx && h.y === cy) || (!!P && !!P.b && h.bld === P.b.id)); }
 // ここを自分の住所に（建物に部屋がいくつもあれば、部屋をえらぶ）
@@ -8505,13 +8524,21 @@ function namesTool() {
     const rows = [[(d.pref && d.pref.type) || '県', d.pref, 'place', (d.pref && d.pref.type) || '県'], ['郡', d.gun, 'gun', '郡'], ['市区町村', d.muni, 'place', d.muni && d.muni.type], ['区', d.ward, 'place', '区'],
                   [choName || '町', d.cho, 'cho', ''], [subName || '丁目', d.sub, 'cho', ''], ['島', d.isl, 'place', '']].filter(r => r[1]);
     sheet(`<h4>${esc(d.text || '')}</h4><div class="mp-kv">${rows.map((r, i) => `<b>${esc(r[0])}</b><span><b>${esc(r[1].name + (r[0] === '郡' ? '郡' : r[3] || ''))}</b>
-        ${r[1].gen ? `<small class="muted">（もとは ${esc(r[1].gen)}）</small>` : ''} <button class="btn" style="padding:2px 8px" data-ren="${i}">名前を変える</button></span>`).join('')}</div>
+        ${r[1].gen ? `<small class="muted">（もとは ${esc(r[1].gen)}）</small>` : ''}${r[1].zip ? ` <small class="muted" translate="no">〒${esc(zipFmt(r[1].zip))}</small>` : ''} <button class="btn" style="padding:2px 8px" data-ren="${i}">名前を変える</button>
+        ${r[1].ro !== undefined && r[2] !== 'cho' && r[0] !== '島' ? `<br><small translate="no">${r[1].ro ? `${esc(r[1].ro)}（${esc(r[1].yomi || '')}）` : '<span class="muted">読み：まだ</span>'}</small> <button class="btn" style="padding:2px 8px" data-yomi="${i}">読み</button>` : ''}</span>`).join('')}</div>
       ${d.cho ? `<div class="mp-row"><button class="btn" data-split>この${esc(subName || choName)}を分ける</button>
         ${d.sub ? `<button class="btn" data-merge="sub">${esc(subName)}をとなりと合併</button>` : ''}<button class="btn" data-merge="cho">${esc(choName)}をとなりと合併</button></div>` : ''}`, s => {
       s.querySelectorAll('[data-ren]').forEach(b => b.onclick = async () => {
         const r = rows[Number(b.dataset.ren)];
         const nm = prompt(r[0] === '島' ? T('島の新しい名前（「島」「岩」までつける）') : T('新しい名前（「県」「市」「区」「郡」などはつけない）'), r[1].name); if (!nm) return;
         if (await api('mp_admin_rename', { p_kind: r[2], p_id: r[1].id, p_name: nm }, '名前を変えました')) { for (const c of S.cells.values()) c.stale = true; show(tx, ty); }
+      });
+      // 読み（ひらがな）→ ローマ字（DB の更新114）
+      s.querySelectorAll('[data-yomi]').forEach(b => b.onclick = async () => {
+        const r = rows[Number(b.dataset.yomi)];
+        const y = prompt(T('読み（ひらがな。空にすると消します。町を「ちょう」・村を「そん」と読むときは「すずの ちょう」のように空白のあとに）'), r[1].yomi || ''); if (y == null) return;
+        const x = await api('mp_admin_yomi', { p_kind: r[2], p_id: r[1].id, p_yomi: y });
+        if (x) { toast(x.ro ? T(`ローマ字：${x.ro}`) : T('読みを消しました')); roLoad(true); show(tx, ty); }
       });
       const sp = s.querySelector('[data-split]'); if (sp) sp.onclick = () => {
         tileRect(`分ける：新しい町字にするマスを、2か所タップして四角くえらびます（${d.sub ? d.sub.name : d.cho.name}のところだけ）`, async r => {
@@ -10006,7 +10033,7 @@ function findHist() { try { return JSON.parse(localStorage.getItem('mp_find') ||
 function findSave(q) { try { const h = [q, ...findHist().filter(x => x !== q)].slice(0, 6); localStorage.setItem('mp_find', JSON.stringify(h)); } catch (e) {} }
 function openFind() {
   const m = modal(['🔍 さがす', `<div class="mp-seg" style="margin-bottom:8px"><button class="on">📍 <span>場所・建物</span></button><button data-runf>🚃 <span>列車・バス</span></button></div><div class="mp-row" style="margin-top:0"><input class="mp-inp" data-q style="flex:1 1 180px" placeholder="住所・地名・駅・建物の名前" enterkeyhint="search" autocomplete="off"><button class="btn main" data-go>さがす</button></div>
-      <p class="muted small" style="margin:4px 0"><span>例：瑠璃市中里区中央三丁目・中里3-12-5・梅ヶ枝町・新中里・瑠璃府庁・赤影岳</span></p>
+      <p class="muted small" style="margin:4px 0"><span>例：瑠璃市中里区中央三丁目・中里3-12-5・梅ヶ枝町・新中里・瑠璃府庁・赤影岳</span><br><span>郵便番号（〒100-0001）・ローマ字の地名（Nakazato）でも さがせます</span></p>
       <div data-hist class="mp-row" style="margin-top:2px"></div><div data-res class="mp-list"></div>`], b => {
     const inp = b.querySelector('[data-q]'), res = b.querySelector('[data-res]'), hist = b.querySelector('[data-hist]');
     let seq = 0;
@@ -10024,8 +10051,9 @@ function openFind() {
       if (!d0 && !nat.length) { res.innerHTML = ''; return; }
       const d = [...nat.filter(r => r.hit === 0), ...(d0 || []), ...nat.filter(r => r.hit > 0)];   // 山・湖・峠・岬・川（t108）
       findSave(q); showHist();
-      res.innerHTML = d.length ? d.map((r, i) => `<button class="mp-item" style="text-align:left" data-i="${i}"><b>${r.k === 'sta' ? (FIND_IC.sta[r.sk] || '🚉') : (FIND_IC[r.k] || '📍')} <span translate="no">${esc(r.n)}</span></b>
-          <br><small><span>${esc(T(FIND_K[r.k] || ''))}</span>${r.s ? `・<span translate="no">${esc(r.s)}</span>` : ''}</small></button>`).join('')
+      const ro = roOn();   // ローマ字（DB の更新114）
+      res.innerHTML = d.length ? d.map((r, i) => `<button class="mp-item" style="text-align:left" data-i="${i}"><b>${r.k === 'sta' ? (FIND_IC.sta[r.sk] || '🚉') : (FIND_IC[r.k] || '📍')} <span translate="no">${esc(r.n)}</span>${ro && r.ro ? ` <small translate="no">${esc(r.ro)}</small>` : ''}</b>
+          <br><small><span>${esc(T(FIND_K[r.k] || ''))}</span>${r.zip ? `・<span translate="no">〒${esc(zipFmt(r.zip))}</span>` : ''}${r.s ? `・<span translate="no">${esc(r.s)}</span>` : ''}${ro && r.sro ? `<br><span translate="no">${esc(r.sro)}</span>` : ''}</small></button>`).join('')
         : '<p class="small"><span>見つかりませんでした。</span><span>地名・町字・番地・駅・建物・山・湖・川・峠・岬の名前でさがせます（人の名前ではさがせません）</span></p>';
       res.querySelectorAll('[data-i]').forEach(x => x.onclick = () => go(d[Number(x.dataset.i)]));
     };
@@ -10198,6 +10226,6 @@ function showCert(r) {
   modal([r.kind === 'cert' ? '住民票の写し' : '印鑑登録証明書', html], null, 'mp-wide');
 }
 window.MapInt = { MQ, q, LITE, liteNeed, EDEC, B64I, bldShift, S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runOff, runIsSel, runName, runDest, showTrain, showSta, runFollow, pfZ, runRef };   // 3D（map3d.js）が使う
-window.MapApp = { open, pause, state: S, spline, setCam, jamList: () => openJamList(), erList: () => openErList(), jamAt: L => layAt('jam', L, 3), erAt: L => layAt('er', L, 2.5), landReqs: () => openLandReqs(), xfers: () => openXfers(), cars: () => openCars(), goto: (x, y) => homeGo(x, y), thru: () => openThru(), bld: id => openBld(id), sc: () => openSC(),
+window.MapApp = { open, pause, state: S, spline, setCam, roLoad: f => { roLoad(f); S.dirty = true; }, jamList: () => openJamList(), erList: () => openErList(), jamAt: L => layAt('jam', L, 3), erAt: L => layAt('er', L, 2.5), landReqs: () => openLandReqs(), xfers: () => openXfers(), cars: () => openCars(), goto: (x, y) => homeGo(x, y), thru: () => openThru(), bld: id => openBld(id), sc: () => openSC(),
   slots: L => (L && L.st ? openSlots(Number(L.st)) : openSlotList()), unko: L => openUnko(L && L.id ? Number(L.id) : 0), bldAt: L => { if (L && L.cx != null) homeGo(Number(L.cx), Number(L.cy)); }, lic: L => { if (L && /申請があります/.test(L.body || '')) LIC.tab = 'rev'; openLic(); }, snow: () => openSnow(), find: () => openFind(), jm: id => openJuumin(id), wxMap: () => wxMapOn() };
 })();
