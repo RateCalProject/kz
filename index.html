@@ -1304,7 +1304,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=42c3bc8a","zh-TW":"zh-TW.js?v=bdcf4d4f","zh-CN":"zh-CN.js?v=a76a53a2","ko":"ko.js?v=7e654d7d","ko-Hani":"ko-Hani.js?v=a545e3ce"};
+  window.AX_LANGS = {"en":"en.js?v=8fd0eff4","zh-TW":"zh-TW.js?v=3775d438","zh-CN":"zh-CN.js?v=4e0f0005","ko":"ko.js?v=26c0da81","ko-Hani":"ko-Hani.js?v=90e3acc4"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -5218,7 +5218,7 @@ function stCmpDraw() {
    役所 → ヘルプ（t62）：遊び方・やり方（help/help.json。README からつくる）。さがせる（題・中身・ことば。ひらがな・カタカナ・全角半角は同じに）
    役所 → 意見箱（t62）：運営への問い合わせ（support_open）に「【意見箱】」の件名で送る
    ================================================================= */
-const HELP_V = '31ebcc1c';
+const HELP_V = '8681937b';
 const HP = { d: null, cat: 'start', q: '' };
 const hpNorm = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
 async function helpLoad() {
@@ -5558,6 +5558,7 @@ function gaDraw() {
     + (SK ? `<p style="margin:10px 0 4px"><b>👕 スキンガチャ</b>（🎫${fmt(SK.cost)}枚で1回）</p>
     <table class="ga-tbl">${(SK.list || []).map(x => `<tr><td><span class="ga-rare ${esc(x.rare)}">${esc(x.rare)}</span>${esc(x.name)}</td><td>${x.p}%</td></tr>`).join('')}</table>
     <p class="muted" style="margin:4px 0 0">もう持っている見た目が出たら、チケットを ${fmt(SK.dup)}枚 もどします。見た目は 国土の 3D の「🚶 歩く」で着られます（ほかの人にも見えます）。</p>
+    <p class="muted" style="margin:4px 0 0">見た目は このスキンガチャ（広告のチケット）でだけ 手に入ります。お金では 買えません。</p>
     ${(SK.list || []).filter(x => x.credit).map(x => `<p class="muted" style="margin:4px 0 0">${esc(x.name)}：${esc(x.credit)}</p>`).join('')}` : '');
   $('#gaLog').innerHTML = (d.log || []).length ? d.log.map(r => `<div class="ga-lr"><span class="muted">${esc(new Date(r.at_ms).toLocaleString(LANG === 'ja' ? 'ja-JP' : undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>
       <span>${r.kind === 'land' ? '🏞 国有地' : r.kind === 'skin' ? '👕 スキン' : r.cost >= 10 ? '🎰 10連' : '🎰 1回'}</span><b>${r.skin ? `${esc(r.skin.name)}${r.skin.dup ? `（🎫+${fmt(r.skin.back)}）` : ''}` : r.land ? `<span translate="no">${esc(r.land.addr)}</span>` : `+${fmt(r.x)} X`}</b></div>`).join('')
@@ -6000,10 +6001,10 @@ const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
 // 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
-const MAPV = '179';
+const MAPV = '180';
 const STAGE = 'Pre';   // 正式公開の前（Pre）。名前のよこと、バージョンの表記に出す。正式公開のときは '' にする
 document.querySelectorAll('.kz-stage').forEach(e => { e.textContent = STAGE; e.hidden = !STAGE; });
-const DBV = 118;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）
+const DBV = 119;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）
 { const e = document.getElementById('verLogin'); if (e) e.textContent = 'v' + MAPV + (STAGE ? ' ' + STAGE : ''); }   // バージョン表記（ログインの画面）
 // バージョン表記（設定 → プロフィール）：画面の版・サーバーに入っている DB の更新の番号。管理者には、サーバーの更新がまだのとき知らせる
 async function verShow() {

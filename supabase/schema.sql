@@ -15342,6 +15342,56 @@ end $$;
 revoke all on function public.av_who(text[]) from public, anon;
 grant execute on function public.av_who(text[]) to authenticated;
 
+-- 街を歩く人の いまの位置（DB の更新119）。ログを残さない（サーバーを入れなおすと 空になる。それでよい）
+create unlogged table if not exists public.av_pos (
+  k       text primary key,                                                -- 歩くときの しるし（av_walk）
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  x       double precision not null,                                       -- 位置（マス）
+  y       double precision not null,
+  f       double precision not null,                                       -- 足もとの高さ（3D）
+  h       real not null default 0,                                         -- 向き
+  m       smallint not null default 0,                                     -- 0 止まる・1 歩く・2 走る
+  v       int not null default 0,                                          -- 見た目の番号（変えたら かわる）
+  at      timestamptz not null default now()
+);
+create index if not exists av_pos_at_idx on public.av_pos(at);
+alter table public.av_pos enable row level security;
+revoke all on public.av_pos from anon, authenticated;
+
+-- 自分の位置を送って、近く（400m）の人の位置を受けとる（DB の更新119）
+create or replace function public.av_step(p_k text, p_x double precision, p_y double precision, p_f double precision, p_h double precision,
+                                          p_m int default 0, p_v int default 0, p_known text[] default null) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare zu uuid := _me_g(); zo jsonb;
+begin
+  if p_k is null or not exists (select 1 from av_walk w where w.k = p_k and w.user_id = zu and w.at > now() - interval '1 day') then
+    raise exception 'walk_k：歩くしるしが古くなりました';
+  end if;
+  if coalesce(p_m, 0) < 0 then   -- やめた
+    delete from av_pos a where a.k = p_k;
+    return jsonb_build_object('o', '[]'::jsonb);
+  end if;
+  -- NaN・無限大も ここで はねる（PostgreSQL では NaN が いちばん大きい）
+  if p_x is null or p_y is null or p_f is null or p_h is null or abs(p_x) > 100000 or abs(p_y) > 100000 or abs(p_f) > 100 or abs(p_h) > 1000 then
+    raise exception '位置が おかしいです';
+  end if;
+  insert into av_pos as a (k, user_id, x, y, f, h, m, v, at)
+  values (p_k, zu, p_x, p_y, p_f, p_h, least(2, greatest(0, coalesce(p_m, 0))), coalesce(p_v, 0), now())
+  on conflict (k) do update set x = excluded.x, y = excluded.y, f = excluded.f, h = excluded.h, m = excluded.m, v = excluded.v, at = excluded.at;
+  if random() < 0.02 then delete from av_pos a where a.at < now() - interval '1 minute'; end if;
+  select coalesce(jsonb_agg(jsonb_build_object('k', a.k, 'x', round(a.x::numeric, 4), 'y', round(a.y::numeric, 4), 'f', round(a.f::numeric, 4),
+                                               'h', round(a.h::numeric, 2), 'm', a.m, 'v', a.v, 'a', round(extract(epoch from (now() - a.at)) * 1000))
+                            || case when a.k = any (coalesce(p_known[1:60], '{}'::text[])) then '{}'::jsonb else _av_me_json(a.user_id) end
+                            order by a.zd), '[]'::jsonb)
+    into zo
+    from (select q.*, (q.x - p_x) ^ 2 + (q.y - p_y) ^ 2 zd from av_pos q
+           where q.k <> p_k and q.at > now() - interval '12 seconds' and abs(q.x - p_x) < 8 and abs(q.y - p_y) < 8
+           order by zd limit 30) a;
+  return jsonb_build_object('o', zo);
+end $$;
+revoke all on function public.av_step(text, double precision, double precision, double precision, double precision, int, int, text[]) from public, anon;
+grant execute on function public.av_step(text, double precision, double precision, double precision, double precision, int, int, text[]) to authenticated;
+
 -- ガチャの中身（確率は画面に出す）
 create or replace function public._gacha_json() returns jsonb
 language sql stable set search_path = public as $$
@@ -39806,7 +39856,7 @@ begin
             'mp_chunk_lo','mp_blds_lite','_mp_lo_idx','_mp_b64n',
             '_mp_gov_sale_sync',
             '_ad_cfg','_ad_json','_ad_check','ad_info','ad_begin','ad_end','ad_admin','_gx_parse','_gx_table','_gx_draw','_gacha_json','gacha_pull',
-            '_av_me_json','av_info','av_set','av_walk_start','av_who',
+            '_av_me_json','av_info','av_set','av_walk_start','av_who','av_step',
             'money_history','corp_ledger_page','money_days','corp_days','_kb_bid_min','_kb_can_run','_kb_colors','_kb_give_horse','_kb_hint','_kb_hjson','_kb_own_c','_kb_own_open','_kb_own_tick','_kb_owned_n','_kb_owner_row','_kb_prog_day','_kb_release','_kb_sale_at','_kb_sale_day','_kb_sales_tick','_kb_take_regs','_kb_upkeep_tick','owner_bid','owner_buy','owner_name','owner_reg','owner_retire','owner_sell','owner_silks','owner_state',
             'fi_cast','fi_consign','fi_hook','fi_join','fi_land','fi_state',
             '_pr_bonus','_pr_check_sel','_pr_hit','_pr_make_day','_pr_make_race','_pr_margin','_pr_month','_pr_name','_pr_new_racer','_pr_odds','_pr_open','_pr_prob','_pr_rate','_pr_seed','_pr_settle','_pr_status','_pr_tick','_pr_wx','pr_bet','pr_day','pr_odds','pr_race','pr_racer',

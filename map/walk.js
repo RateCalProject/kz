@@ -1,9 +1,8 @@
-/* ===== 風の芽経済組：3D の街を歩く（DB の更新118）=====
+/* ===== 風の芽経済組：3D の街を歩く（DB の更新118・119）=====
    3D の地図に 自分の人を出して 歩く。左下のスティック（パソコンは WASD・矢印。Shift で走る）。スティックを いっぱいに たおすと 走る
    カメラは うしろから：1本指（マウス）で まわす・2本指（ホイール）で 近く／遠く
-   ほかの人も リアルタイムに見える：Supabase Realtime の broadcast（32マスの区画ごとのチャンネル。自分のまわりの 2×2 に入る）。
-     送るのは しるし（av_walk_start。歩きはじめるたびに 新しい）と 位置・向きだけ。名前と見た目は av_who でサーバーから（ほかの人の名前を かたれない）。
-     同じ端末のタブどうしは BroadcastChannel
+   ほかの人も見える（DB の更新119）：サーバーと この端末のあいだだけで やりとり（av_step）。送るのは しるし（av_walk_start。歩きはじめるたびに 新しい）と
+     位置・向き・うごきだけ。近く（400m）の人の 位置・向き・うごきを受けとって、この端末で その人を組み立てる。名前と見た目はサーバーから（ほかの人の名前を かたれない）
    見た目（スキン）：組み立ての人（服の形と色・髪とはだの色）・MMD のモデル（map/skins。map/vendor の MMDLoader で読む。まばたき以外のモーフ・物理演算は使わない）
    たてもの（区画）には入れない。海・川・湖には入れない（橋の上は歩ける）。道路・線路・橋・ホームの面は、のぼれる段（1.6m）まで のれる
    map3d.js（window.m3State・MapInt）を使う。歩いているあいだは M3.walk に この中身（step・cam・look・zoom・tags・stop） */
@@ -13,8 +12,7 @@ const U = 1 / 50;                       // 1m（マス）
 const SPD = { walk: 2.2, run: 6.5 };    // 歩く・走る（m/秒）
 const STEP = 1.6;                       // のぼれる段（m）。道路の帯（地面から 1m）にも のれる
 const HEAD = 1.45;                      // カメラが見る高さ（足もとから m）
-const AREA = 32;                        // ほかの人の区画（マス）
-const SEND_MOVE = 330, SEND_IDLE = 4000, LOST = 12000, WHO_EVERY = 1500, WHO_AGE = 60000;
+const LOST = 12000;                     // これだけ 位置が来なければ いなくなった
 const SEE = 8;                          // ほかの人を描く遠さ（マス。400m）
 const TAG = 1.4;                        // 名前を出す遠さ（マス。70m）
 const MMD_CAP = 6, OTHER_CAP = 24;      // MMD のモデルで描く人数（ほかは 組み立ての人）・描く人数
@@ -31,13 +29,17 @@ let M3 = null, T3 = null, MI = null;
 let W = null;          // 歩いているときの中身
 let CAT = null;        // 見た目の表（av_info）
 let onChange = null;   // map.js のボタン
+let lookSeq = 0;       // 見た目を変えた回数（catLoad の古い答えで もどさない）
 
 /* ---------- 見た目の表 ---------- */
 async function catLoad(force) {
   if (CAT && !force && !CAT.off) return CAT;
+  const seq = lookSeq;
   try {
     const d = await rpc('av_info');
-    CAT = { skins: new Map(d.skins.map(s => [s.code, s])), list: d.skins, me: d.me || { c: 'base', l: {} }, cost: d.cost, dup: d.dup, tix: d.tix };
+    // 読んでいるあいだに 見た目を変えたら、いまの見た目は そのまま（古い答えで もどさない）
+    const me = seq !== lookSeq && CAT && !CAT.off ? CAT.me : (d.me || { c: 'base', l: {} });
+    CAT = { skins: new Map(d.skins.map(s => [s.code, s])), list: d.skins, me, cost: d.cost, dup: d.dup, tix: d.tix };
   } catch (e) {
     let l = {}; try { l = JSON.parse(localStorage.getItem('kz_walk_look') || '{}') || {}; } catch (e2) {}
     CAT = { skins: new Map([['base', BASE_SKIN]]), list: [BASE_SKIN], me: { c: 'base', l }, off: true };
@@ -423,45 +425,58 @@ function cam() {
 function look(dx, dy) { if (!W) return; M3.yaw -= dx * 0.006 * (MI.S.v3x ? -1 : 1); W.pitch = clamp(W.pitch + dy * 0.0045, -0.35, 1.25); }
 function zoom(f) { if (!W) return; W.cd = clamp(W.cd / f, 1.4, 30); }
 
-/* ---------- ほかの人（リアルタイム） ---------- */
-const WHO = new Map();   // しるし → { n, c, l, at, bad }
-let whoQ = new Set(), whoT = 0, whoBusy = false;
-function whoNeed(k) { const w = WHO.get(k); if (!w || now() - w.at > (w.bad ? 30000 : WHO_AGE)) whoQ.add(k); }
-async function whoRun() {
-  if (whoBusy || !whoQ.size || now() - whoT < WHO_EVERY || !W || !W.me) return;
-  whoBusy = true; whoT = now();
-  const ks = [...whoQ].slice(0, 50); ks.forEach(k => whoQ.delete(k));
-  try {
-    const r = await rpc('av_who', { p_ks: ks }), got = new Set();
-    for (const x of r || []) { if (!x || typeof x.k !== 'string') continue; got.add(x.k); WHO.set(x.k, { n: String(x.n || '').slice(0, 40), c: String(x.c || 'base'), l: x.l && typeof x.l === 'object' ? x.l : {}, at: now() }); }
-    for (const k of ks) if (!got.has(k)) WHO.set(k, { bad: true, at: now() });
-    if (r && CAT && !CAT.off && r.some(x => x && x.c && !CAT.skins.has(x.c))) catLoad(true);   // 新しい見た目（表を とりなおす）
-  } catch (e) { for (const k of ks) WHO.set(k, { bad: true, at: now() - WHO_AGE + 10000 }); }
-  whoBusy = false;
+/* ---------- ほかの人（サーバーと やりとり：av_step。DB の更新119） ---------- */
+//   自分の位置・向き・うごきだけを送って、近く（400m）の人の 位置・向き・うごきを受けとる（サーバーと この端末のあいだだけ）。
+//   自分が うごいているときは 0.5秒・近くの人が うごいているときは 0.6秒・止まっているときは 1.5秒（まわりに だれもいなければ 3秒）ごと。
+//   名前と見た目は 知らない人のぶんだけ サーバーがつける。受けとった位置と 速さ（はじめは 向きと うごき）で、つぎの位置まで なめらかに動かす（その人を この端末で組み立てる）
+const WHO = new Map();   // しるし → { n, c, l, v }
+const r4 = v => Math.round(v * 1e4) / 1e4;
+function stepArgs(m) {
+  const known = [];
+  for (const o of W.others.values()) { const w = WHO.get(o.k); if (w && w.v === o.v && known.length < 60) known.push(o.k); }
+  return { p_k: W.me.k, p_x: r4(W.x), p_y: r4(W.y), p_f: r4(W.f), p_h: Math.round(W.h * 100) / 100, p_m: m, p_v: W.lv, p_known: known };
 }
-function onMsg(m) {
-  if (!W || !m || typeof m !== 'object' || typeof m.k !== 'string' || !/^[0-9a-f]{8,24}$/.test(m.k) || (W.me && m.k === W.me.k)) return;
-  if (m.bye) { const o = W.others.get(m.k); if (o) { o.gone = true; o.t = 0; } return; }
-  const x = Number(m.x), y = Number(m.y), f = Number(m.f), h = Number(m.h);
-  if (![x, y, f, h].every(Number.isFinite) || Math.abs(x) > 1e5 || Math.abs(y) > 1e5) return;
-  if (Math.hypot(x - W.x, y - W.y) > SEE * 6) return;
-  let o = W.others.get(m.k);
-  const t = now();
-  if (!o) { if (W.others.size >= OTHER_CAP * 2) return; o = { k: m.k, x, y, f, h, dx: x, dy: y, df: f, dh: h, av: null, t, v: -1 }; W.others.set(m.k, o); }
-  else if (t - o.rt < 90) return;   // 多すぎる
-  o.rt = t; o.t = t; o.x = x; o.y = y; o.f = f; o.h = h; o.m = m.m === 2 ? 2 : m.m === 1 ? 1 : 0; o.gone = false;
-  const v = Number(m.v) | 0; if (v !== o.v) { o.v = v; const w = WHO.get(m.k); if (w && !w.bad) w.at = 0; }
-  whoNeed(m.k);
+function onStep(r, t) {
+  if (!W || !r || !Array.isArray(r.o)) return;
+  const seen = new Set();
+  for (const m of r.o) {
+    if (!m || typeof m.k !== 'string' || !/^[0-9a-f]{8,24}$/.test(m.k) || (W.me && m.k === W.me.k)) continue;
+    const x = Number(m.x), y = Number(m.y), f = Number(m.f), h = Number(m.h);
+    if (![x, y, f, h].every(Number.isFinite)) continue;
+    seen.add(m.k);
+    const ts = t - clamp(Number(m.a) || 0, 0, 15000);   // その位置の時刻（この端末の時計で）
+    let o = W.others.get(m.k);
+    if (!o) {
+      if (W.others.size >= OTHER_CAP * 2) continue;
+      o = { k: m.k, x, y, f, h, dx: x, dy: y, df: f, dh: h, vx: 0, vy: 0, ts, av: null, v: Number(m.v) | 0, m: 0, miss: 0, vm: false };
+      W.others.set(m.k, o);
+    } else if (ts > o.ts + 40) {
+      const d = (ts - o.ts) / 1000;
+      o.vm = d < 4 && Math.hypot(x - o.x, y - o.y) < 0.6;   // 前の位置からの速さ（はかれた）
+      if (o.vm) { o.vx = (x - o.x) / d; o.vy = (y - o.y) / d; }
+      o.x = x; o.y = y; o.f = f; o.h = h; o.ts = ts;
+    }
+    o.m = m.m === 2 ? 2 : m.m === 1 ? 1 : 0;
+    if (!o.m) { o.vx = 0; o.vy = 0; o.vm = false; }
+    else if (!o.vm) { const v = (o.m === 2 ? SPD.run : SPD.walk) * U; o.vx = Math.sin(h) * v; o.vy = Math.cos(h) * v; }   // はじめは 向きと うごきから
+    o.v = Number(m.v) | 0; o.t = t; o.miss = 0;
+    if (m.c != null) {   // 名前と見た目（知らない人・見た目を変えた人のぶんだけ）
+      WHO.set(m.k, { n: String(m.n || '').slice(0, 40), c: String(m.c || 'base'), l: m.l && typeof m.l === 'object' ? m.l : {}, v: o.v });
+      if (CAT && !CAT.off && !CAT.skins.has(String(m.c)) && now() - (W.catT || 0) > 30000) { W.catT = now(); catLoad(true); }   // 新しい見た目（表を とりなおす）
+    }
+  }
+  for (const o of W.others.values()) if (!seen.has(o.k)) o.miss = (o.miss || 0) + 1;
 }
 function others(dt) {
   const t = now(), list = [];
   for (const o of W.others.values()) {
-    if (t - o.t > LOST || o.gone) { if (o.av) M3.sc.remove(o.av.root); W.others.delete(o.k); continue; }
-    // なめらかに（0.15秒ほどで おいつく。遠いと とぶ）
-    const k = 1 - Math.exp(-dt / 0.15), jump = Math.hypot(o.x - o.dx, o.y - o.dy) > 1;
+    if (o.miss >= (o.dist < 6 ? 1 : 2) || t - o.t > LOST) { if (o.av) M3.sc.remove(o.av.root); W.others.delete(o.k); continue; }   // 来なかったら いなくなった（400m のふちは 2回）
+    // 受けとった位置 ＋ 速さ × すぎた時間（1.2秒まで）に なめらかに（0.2秒ほどで おいつく。遠いと とぶ）
+    const ex = o.m ? Math.min(1, (t - o.ts) / 1000) : 0, tx = o.x + o.vx * ex, ty = o.y + o.vy * ex;
+    const k = 1 - Math.exp(-dt / 0.2), jump = Math.hypot(tx - o.dx, ty - o.dy) > 1;
     const px = o.dx, py = o.dy;
-    if (jump) { o.dx = o.x; o.dy = o.y; o.df = o.f; o.dh = o.h; }
-    else { o.dx += (o.x - o.dx) * k; o.dy += (o.y - o.dy) * k; o.df += (o.f - o.df) * k; let da = o.h - o.dh; while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI; o.dh += da * Math.min(1, k * 1.5); }
+    if (jump) { o.dx = tx; o.dy = ty; o.df = o.f; o.dh = o.h; }
+    else { o.dx += (tx - o.dx) * k; o.dy += (ty - o.dy) * k; o.df += (o.f - o.df) * k; let da = o.h - o.dh; while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI; o.dh += da * Math.min(1, k * 1.5); }
     o.spd = jump ? 0 : Math.hypot(o.dx - px, o.dy - py) / U / Math.max(dt, 1e-3);
     o.dist = Math.hypot(o.dx - W.x, o.dy - W.y);
     list.push(o);
@@ -469,11 +484,11 @@ function others(dt) {
   list.sort((a, b) => a.dist - b.dist);
   let n = 0;
   for (const o of list) {
-    const w = WHO.get(o.k), show = w && !w.bad && o.dist < SEE && n < OTHER_CAP;
+    const w = WHO.get(o.k), show = w && o.dist < SEE && n < OTHER_CAP;
     if (!show) { if (o.av) { M3.sc.remove(o.av.root); o.av = null; } continue; }
     n++;
-    const hk = JSON.stringify(w.l || {});
-    if (!o.av || o.av.code !== w.c || o.av.hk !== hk || (o.av.wait && MMD.get(skinOf(w.c).file) && (MMD.get(skinOf(w.c).file).mesh || MMD.get(skinOf(w.c).file).fail))) {
+    const hk = JSON.stringify(w.l || {}), e = MMD.get(skinOf(w.c).file);
+    if (!o.av || o.av.code !== w.c || o.av.hk !== hk || (o.av.wait && e && (e.mesh || e.fail))) {
       if (o.av) M3.sc.remove(o.av.root);
       o.av = mkAvatar(w.c, w.l, false); M3.sc.add(o.av.root);
     }
@@ -481,41 +496,28 @@ function others(dt) {
     poseAv(o.av, dt, o.m ? Math.max(o.spd, 0.3) : o.spd * 0.5, o.m === 2);
   }
   W.near = n;
-  whoRun();
-}
-// 送る・区画のチャンネル
-function rtClient() { try { return typeof sb !== 'undefined' && sb && typeof sb.channel === 'function' && !(typeof CFG !== 'undefined' && CFG && CFG.devApi) ? sb : null; } catch (e) { return null; } }
-function netAreas(t) {
-  const N = W.net, rt = N.rt; if (!rt) return;
-  const ax = Math.floor(W.x / AREA - 0.5), ay = Math.floor(W.y / AREA - 0.5), want = new Set();
-  for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) want.add((ax + i) + '_' + (ay + j));
-  for (const [k, c] of N.ch) {
-    if (want.has(k)) { c.drop = 0; continue; }
-    if (!c.drop) c.drop = t + 3000; else if (t > c.drop) { try { rt.removeChannel(c.ch); } catch (e) {} N.ch.delete(k); }
-  }
-  for (const k of want) if (!N.ch.has(k)) {
-    const c = { ok: false, drop: 0, ch: null };
-    try {
-      c.ch = rt.channel('kzw-' + k, { config: { broadcast: { self: false, ack: false } } });
-      c.ch.on('broadcast', { event: 'p' }, e => onMsg(e && e.payload));
-      c.ch.subscribe(st => { c.ok = st === 'SUBSCRIBED'; if (st === 'CHANNEL_ERROR' || st === 'TIMED_OUT') N.err = t; else if (c.ok) N.err = 0; });
-    } catch (e) { N.err = t; }
-    N.ch.set(k, c);
-  }
 }
 function net(t) {
-  const N = W.net; if (!W.me || !W.me.k) return;
-  if (t - (N.at || 0) > 1000) { N.at = t; netAreas(t); }
-  const mv = W.spd > 0.05, st = mv ? (W.lastRun && W.spd > SPD.walk * 1.2 ? 2 : 1) : 0;
-  if (t - N.sent < (st ? SEND_MOVE : SEND_IDLE) && !(st === 0 && N.st !== 0)) return;
-  N.sent = t; N.st = st;
-  const m = { k: W.me.k, x: Math.round(W.x * 1e4) / 1e4, y: Math.round(W.y * 1e4) / 1e4, f: Math.round(W.f * 1e4) / 1e4, h: Math.round(W.h * 100) / 100, m: st, v: W.lv };
-  netSend(m);
+  const N = W.net; if (!W.me || !W.me.k || N.off) return;
+  const st = W.spd > 0.05 ? (W.lastRun && W.spd > SPD.walk * 1.2 ? 2 : 1) : 0;
+  if (st !== N.st && N.st >= 0 && t - N.sent > 250) N.next = 0;   // 歩きだした・止まった：すぐ送る
+  if (N.busy || t < N.next) return;
+  N.busy = true; N.st = st; N.sent = t;
+  rpc('av_step', stepArgs(st)).then(r => { N.err = 0; onStep(r, now()); }).catch(e => {
+    const msg = String((e && e.message) || e);
+    N.err = now();
+    if (/walk_k/.test(msg)) {   // しるしが古い：とりなおす
+      if (now() - (N.rk || 0) > 20000) { N.rk = now(); rpc('av_walk_start').then(r => { if (W && r && r.k) W.me = r; }).catch(() => {}); }
+    } else if (/av_step|PGRST202|schema cache|Could not find the function/i.test(msg)) N.off = true;   // サーバーの更新（119）の前
+  }).finally(() => {
+    N.busy = false;
+    // つぎ：自分が うごいている 0.5秒・近くの人が うごいている 0.6秒・近くに人がいる 1.5秒・だれもいない 3秒
+    if (W) { let mv = false; for (const o of W.others.values()) if (o.m && o.dist < SEE) { mv = true; break; } N.next = now() + (N.err ? 3000 : W.spd > 0.05 ? 500 : mv ? 600 : W.others.size ? 1500 : 3000); }
+  });
 }
-function netSend(m) {
-  const N = W.net;
-  if (N.rt) { const c = N.ch.get(Math.floor(W.x / AREA) + '_' + Math.floor(W.y / AREA)); if (c && c.ok && c.ch) { try { c.ch.send({ type: 'broadcast', event: 'p', payload: m }); } catch (e) {} } }
-  if (N.bc) { try { N.bc.postMessage(m); } catch (e) {} }
+function netLeave(w) {   // やめた：自分の位置を消す（送れなくても 12秒で 見えなくなる）
+  if (!w || !w.me || !w.me.k || w.net.off) return;
+  rpc('av_step', { p_k: w.me.k, p_x: 0, p_y: 0, p_f: 0, p_h: 0, p_m: -1, p_v: 0, p_known: null }).catch(() => {});
 }
 
 /* ---------- 名前（map3d の m3Labels が 描く） ---------- */
@@ -524,7 +526,7 @@ function tags() {
   const L = [];
   for (const o of W.others.values()) {
     if (!o.av || o.dist > TAG) continue;
-    const w = WHO.get(o.k); if (!w || w.bad || !w.n) continue;
+    const w = WHO.get(o.k); if (!w || !w.n) continue;
     L.push({ x: o.dx, y: o.dy, h: o.df + ((o.av.P && o.av.P.h) || 1.75) * U + 0.25 * U, n: w.n, d: o.dist });
   }
   return L.sort((a, b) => a.d - b.d).slice(0, 12);
@@ -609,7 +611,7 @@ function hudTick(t) {
   const addC = c => { const sk = skinOf(c); if (sk.kind === 'mmd' && sk.credit) cred.set(sk.code, sk); };
   if (W.av && W.av.P && W.av.P.mmd) addC(W.av.code);
   for (const o of W.others.values()) if (o.av && o.av.P && o.av.P.mmd) addC(o.av.code);
-  const off = !W.me || !W.me.k ? 'ほかの人は いま表示できません' : (!N.rt && !N.bc) ? 'ほかの人は いま表示できません' : N.rt && N.err && ![...N.ch.values()].some(c => c.ok) ? 'つながりを まっています…' : '';
+  const off = !W.me || !W.me.k || N.off ? 'ほかの人は いま表示できません' : N.err && t - N.err < 10000 ? 'つながりを まっています…' : '';
   s.textContent = off; s.hidden = !off;
   const cb = W.hud.querySelector('[data-wk-cr]'), cs = [...cred.values()];
   cb.hidden = !cs.length;
@@ -646,6 +648,7 @@ function pickDraw() {
 }
 async function setLook(code, lk) {
   if (!W || W.lbusy) return;
+  lookSeq++;
   if (CAT.off) { const l = Object.assign({}, CAT.me.l || {}, lk || {}); CAT.me = { c: 'base', l }; try { localStorage.setItem('kz_walk_look', JSON.stringify(l)); } catch (e) {} }
   else {
     W.lbusy = true;
@@ -656,7 +659,7 @@ async function setLook(code, lk) {
   }
   W.lv = (W.lv + 1) % 1000;
   avSelf(); pickDraw();
-  W.net.sent = 0;   // すぐ送る（ほかの人が 見た目を とりなおす）
+  W.net.next = 0;   // すぐ送る（ほかの人が 見た目を とりなおす）
 }
 function avSelf() {
   const me = (CAT && CAT.me) || { c: 'base', l: {} };
@@ -677,7 +680,7 @@ async function start() {
   await catLoad();
   if (!M3.on) { MI.hint(''); return false; }
   W = { x: M3.tx, y: M3.ty, f: 0, fv: 0, h: M3.yaw + Math.PI, pitch: 0.32, cd: 4.5, d0: M3.d, t: now(), keys: {}, stick: { x: 0, y: 0, on: false }, runOn: false,
-        others: new Map(), net: { rt: null, bc: null, ch: new Map(), sent: 0, st: -1, at: 0, err: 0 }, me: null, lv: 0, ix: null, blk: null, ixAt: [Infinity, Infinity], ixKey: null, near: 0 };
+        others: new Map(), net: { busy: false, next: 0, sent: 0, st: -1, err: 0, off: false }, me: null, lv: 0, ix: null, blk: null, ixAt: [Infinity, Infinity], ixKey: null, near: 0 };
   W.f = M3.surf(W.x, W.y);
   M3.d = 1.2; M3.glide = null; M3.dirty = true; MI.S.dirty = true;
   avSelf();
@@ -688,11 +691,9 @@ async function start() {
   try { const r = await rpc('av_walk_start'); if (W && r && typeof r.k === 'string') { W.me = r; if (r.c && CAT && !CAT.off) { const ch = r.c !== CAT.me.c || JSON.stringify(r.l || {}) !== JSON.stringify(CAT.me.l || {}); CAT.me = { c: r.c, l: r.l || {} }; if (ch) avSelf(); } } } catch (e) { if (W) W.me = null; }
   if (!W) return false;
   if (W.me) {
-    W.net.rt = rtClient();
-    try { if (typeof BroadcastChannel === 'function') { W.net.bc = new BroadcastChannel('kz-walk'); W.net.bc.onmessage = e => onMsg(e.data); } } catch (e) { W.net.bc = null; }
-    W.pagehide = () => { if (W && W.me) netSend({ k: W.me.k, bye: 1 }); };
+    W.pagehide = () => { if (W) netLeave(W); };
     window.addEventListener('pagehide', W.pagehide);
-    W.refresh = setInterval(async () => { if (!W) return; try { const r = await rpc('av_walk_start'); if (W && r && r.k) { if (W.me) netSend({ k: W.me.k, bye: 1 }); W.me = r; } } catch (e) {} }, 3 * 3600 * 1000);   // しるしは 1日まで（3時間ごとに 新しく）
+    W.refresh = setInterval(async () => { if (!W) return; try { const r = await rpc('av_walk_start'); if (W && r && r.k) { netLeave(W); W.me = r; } } catch (e) {} }, 3 * 3600 * 1000);   // しるしは 1日まで（3時間ごとに 新しく）
   }
   if (onChange) onChange(true);
   return true;
@@ -700,9 +701,7 @@ async function start() {
 function stop(fromClose) {
   if (!W) return;
   const w = W;
-  try { if (w.me && w.me.k) netSend({ k: w.me.k, bye: 1 }); } catch (e) {}
-  if (w.net.rt) for (const c of w.net.ch.values()) { try { w.net.rt.removeChannel(c.ch); } catch (e) {} }
-  if (w.net.bc) { try { w.net.bc.close(); } catch (e) {} }
+  netLeave(w);
   clearInterval(w.refresh);
   if (w.pagehide) window.removeEventListener('pagehide', w.pagehide);
   window.removeEventListener('keydown', w.kd); window.removeEventListener('keyup', w.kd); window.removeEventListener('blur', w.blur);
