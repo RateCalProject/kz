@@ -955,26 +955,38 @@ function wheelKeyUp(ts) {   // E を はなした：おしていたら（0.25秒
   const x = W.wheel.L[W.wheel.sel]; if (x) itemPick(x.id); else wheelOpen(false);
 }
 
-/* ---------- 歩きはじめる場所（t68）：3つから えらぶ（数字の キーでも）。フレンドに よばれていたら その人の近くも（DB の更新124） ---------- */
+/* ---------- 歩きはじめる場所（t68）：3つから えらぶ（数字の キーでも）・いま見ている ところ（t69）。フレンドに よばれていたら その人の近くも（DB の更新124） ---------- */
 function cssOn() { if (!document.getElementById('wkCss')) { const st = document.createElement('style'); st.id = 'wkCss'; st.textContent = CSS; document.head.appendChild(st); } }
-function spawnPick(inv) {   // inv：とどいている 招待 [{ i, n }]。こたえ：SPAWN の番号・{ i }（招待）・null（やめる）
+function spawnPick(inv) {   // inv：とどいている 招待 [{ i, n }]。こたえ：SPAWN の番号・{ f: 1 }（いま見ている ところ）・{ i }（招待）・null（やめる）
   return new Promise(ok => {
     const S = MI.S, d = document.createElement('div'), L = (inv || []).slice(0, 5), n0 = SPAWN.length;
     cssOn();
     d.className = 'wk-spawn';
     d.innerHTML = `<b>${esc2(tt('🚶 どこから 歩きますか？'))}</b>${SPAWN.map((x, i) => `<button data-sp="${i}"><i>${i + 1}</i><span>${esc2(tt(x.n))}</span></button>`).join('')}`
-      + (L.length ? `<small>${esc2(tt('👋 フレンドに よばれています（10分まで）'))}</small>` + L.map((x, j) => `<button data-sp-i="${j}"><i>${n0 + j + 1}</i><span>${esc2(tt('👋 ' + x.n + 'さんの 近く'))}</span></button>`).join('') : '')
+      + `<button data-sp-f><i>${n0 + 1}</i><span>${esc2(tt('📍 いま見ている ところ（地図の まん中）'))}</span></button>`
+      + (L.length ? `<small>${esc2(tt('👋 フレンドに よばれています（10分まで）'))}</small>` + L.map((x, j) => `<button data-sp-i="${j}"><i>${n0 + j + 2}</i><span>${esc2(tt('👋 ' + x.n + 'さんの 近く'))}</span></button>`).join('') : '')
       + `<button data-sp-x>${esc2(tt('やめる'))}</button>`;
     S.wrap.appendChild(d);
     const done = v => { clearInterval(iv); window.removeEventListener('keydown', kd, true); d.remove(); ok(v); };
     const iv = setInterval(() => { if (!M3.on || !MI.S.v3) done(null); }, 500);   // 3D を とじた
-    const pickN = k => k < n0 ? k : L[k - n0] ? { i: L[k - n0].i } : null;
+    const pickN = k => k < n0 ? k : k === n0 ? { f: 1 } : L[k - n0 - 1] ? { i: L[k - n0 - 1].i } : null;
     const kd = e => { const k = /^Digit[1-9]$/.test(e.code) ? Number(e.code.slice(5)) - 1 : -1; if (k >= 0 && pickN(k) != null) { e.preventDefault(); done(pickN(k)); } else if (e.code === 'Escape') done(null); };
     window.addEventListener('keydown', kd, true);
     d.querySelectorAll('[data-sp]').forEach(b => b.onclick = () => done(Number(b.dataset.sp)));
+    d.querySelector('[data-sp-f]').onclick = () => done({ f: 1 });
     d.querySelectorAll('[data-sp-i]').forEach(b => b.onclick = () => done({ i: L[Number(b.dataset.spI)].i }));
     d.querySelector('[data-sp-x]').onclick = () => done(null);
   });
+}
+// いま見ている ところ（t69）：3D の まん中。まわり 150m が ぜんぶ 水なら つかえない
+function freePos() {
+  const x = M3.tx, y = M3.ty;
+  for (let r = 0; r <= 3; r += 0.5) for (let k = 0; k < (r ? 12 : 1); k++) {
+    const a = k / 12 * Math.PI * 2;
+    if (!wetAt(x + Math.sin(a) * r, y + Math.cos(a) * r)) return { n: 'いま見ている ところ', x, y, free: true };
+  }
+  if (typeof toast === 'function') toast(tt('ここは 水の上です。陸を 地図の まん中にしてから えらんでください'));
+  return null;
 }
 // 招待（DB の更新124）→ よんだ人の いまの位置（10分まで・その人が 歩いているときだけ）
 async function joinPos(i) {
@@ -1063,13 +1075,14 @@ function onWalk(x, y) {
 function spawnPlace() {
   const sp = W.spawn; if (!sp || !W.ix) return;
   // 建物の前：10m〜160m・48の向き（道路などの上）。フレンドの近く（DB の更新124）：2m から（地面の上でも よい。その人と 同じ高さ）
-  const r0 = sp.fr ? 0.04 : 0.2;
-  for (let r = r0; r <= 3.2; r += sp.fr && r < 0.4 ? 0.03 : 0.1) for (let k = 0; k < 48; k++) {
+  //   いま見ている ところ（t69）：その場所から（地面の上でも よい。たてものの中・水の上なら 近くの 歩けるところ）
+  const nb = sp.fr || sp.free, r0 = sp.free ? 0 : sp.fr ? 0.04 : 0.2;
+  for (let r = r0; r <= 3.2; r += nb && r < 0.4 ? 0.03 : 0.1) for (let k = 0; k < (r ? 48 : 1); k++) {
     const a = k * Math.PI * 2 / 48, x = sp.x + Math.sin(a) * r, y = sp.y + Math.cos(a) * r;
-    if (blocked(x, y) || (!sp.fr && !onWalk(x, y))) continue;
+    if (blocked(x, y) || (!nb && !onWalk(x, y))) continue;
     const g = groundAt(x, y, sp.fr && sp.f != null ? Math.max(sp.f + 0.5 * U, M3.surf(x, y) + 0.3 * U) : M3.surf(x, y) + 2 * U, false); if (g == null) continue;
     W.x = x; W.y = y; W.f = g; W.fv = 0;
-    W.h = Math.atan2(sp.x - x, sp.y - y); M3.yaw = W.h + Math.PI;   // 建物のほうを向く（カメラは うしろ）
+    if (!sp.free) { W.h = Math.atan2(sp.x - x, sp.y - y); M3.yaw = W.h + Math.PI; }   // 建物・フレンドのほうを向く（カメラは うしろ）。いま見ている ところは 見ていた向き
     M3.tx = x; M3.ty = y;
     if (!sp.ok) { sp.ok = true; MI.hint('📍 ' + tt(sp.n)); clearTimeout(W.spHint); W.spHint = setTimeout(() => { if (W && MI.hint) MI.hint(''); }, 2500); }
     return;
@@ -1157,7 +1170,7 @@ async function start(o) {   // o：{ inv（フレンドの 招待の番号。DB 
   if (!M3.on) { MI.hint(''); return false; }
   if (CAT && CAT.soon && CAT.soon.walk && !CAT.admin) { MI.hint(''); if (typeof toast === 'function') toast(tt('🚶 街を歩くのは もうすぐ できるようになります（カミングスーン）')); return false; }   // 準備中（DB の更新121）
   MI.hint('');
-  // 歩きはじめる場所（t68）：瑠璃府庁前・美東区役所前・蛍石県庁前 から えらぶ。フレンドに よばれていたら（DB の更新124）その人の近く
+  // 歩きはじめる場所（t68）：瑠璃府庁前・美東区役所前・蛍石県庁前・いま見ている ところ（t69）から えらぶ。フレンドに よばれていたら（DB の更新124）その人の近く
   if (spawnBusy) return false;
   spawnBusy = true;
   let SP = null;
@@ -1169,7 +1182,8 @@ async function start(o) {   // o：{ inv（フレンドの 招待の番号。DB 
       if (!M3.on || W) return !!W;
       const si = await spawnPick(inv);
       if (si == null || !M3.on || W) return !!W;
-      if (typeof si === 'object') { SP = await joinPos(si.i); if (!SP) return false; }
+      if (si && si.f) { SP = freePos(); if (!SP) return false; }   // いま見ている ところ（t69）
+      else if (typeof si === 'object') { SP = await joinPos(si.i); if (!SP) return false; }
       else SP = SPAWN[si];
     }
   } finally { spawnBusy = false; }
@@ -1177,7 +1191,7 @@ async function start(o) {   // o：{ inv（フレンドの 招待の番号。DB 
   M3.tx = SP.x; M3.ty = SP.y; M3.glide = null; M3.dirty = true; MI.S.dirty = true;
   W = { x: SP.x, y: SP.y, f: 0, fv: 0, h: M3.yaw + Math.PI, pitch: 0.32, cd: 4.5, d0: M3.d, t: now(), keys: {}, stick: { x: 0, y: 0, on: false }, runOn: false, crOn: false, cr: false, air: false, item: 0,
         others: new Map(), net: { busy: false, next: 0, sent: 0, st: -1, err: 0, off: false }, me: null, lv: 0, ix: null, blk: null, ixAt: [Infinity, Infinity], ixKey: null, near: 0,
-        chat: { since: 0, log: [], mute: new Set(), open: false, busy: false, sel: null }, spawn: { x: SP.x, y: SP.y, n: SP.n, f: SP.f, fr: !!SP.fr, until: now() + 20000 } };
+        chat: { since: 0, log: [], mute: new Set(), open: false, busy: false, sel: null }, spawn: { x: SP.x, y: SP.y, n: SP.n, f: SP.f, fr: !!SP.fr, free: !!SP.free, until: now() + 20000 } };
   MI.hint('📍 ' + tt(SP.n) + ' …');
   W.f = SP.fr && SP.f != null ? SP.f : M3.surf(W.x, W.y);
   M3.d = 1.2; M3.glide = null; M3.dirty = true; MI.S.dirty = true;
