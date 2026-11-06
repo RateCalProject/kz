@@ -5600,6 +5600,7 @@ function drawSheet() {
       const r = await api(st.edit ? 'mp_seg_edit' : 'mp_seg_build', drawArgs(st, false));
       if (!r) return;
       toast(r.cost > 0 ? `${st.edit ? '直しました' : 'つくりました'}（${fmt(r.cost)} X）` : (st.edit ? '直しました' : 'つくりました'));
+      if (r.later) setTimeout(() => toast(T('🕐 系統の時刻は 1分ほどで 組みなおします')), 2700);   // 列車の多い路線網（DB の更新123）：時刻は あとで
       const xs = st.curve.map(p => p[0]), ys = st.curve.map(p => p[1]);
       refreshBox(Math.min(...xs) - 2, Math.min(...ys) - 2, Math.max(...xs) + 2, Math.max(...ys) + 2);
       if (st.edit) refreshBox(...st.edit.bb);

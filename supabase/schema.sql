@@ -24635,7 +24635,8 @@ begin
     end if;
   end if;
   perform _mp_chg('seg', sid, 'set', _mp_bb(p_pts));
-  return jsonb_build_object('id', sid, 'cost', cost, 'lease', round(lq.fee));
+  return jsonb_build_object('id', sid, 'cost', cost, 'lease', round(lq.fee))
+         || case when current_setting('mp.later', true) = '1' then jsonb_build_object('later', true) else '{}'::jsonb end;   -- 系統の時刻は あとで（DB の更新123）
 end $$;
 -- 線を直す（形を引きなおす。はしの点はそのまま。駅・車庫のある線は直せない）。高さ（t108）：縦断も決めなおす（地形に合わせる・高架・地下はそのまま。手で決めた高さは、地形に合わせるにもどる）
 create or replace function public.mp_seg_edit(p_id bigint, p_ctl int[], p_pts int[], p_dry boolean, p_force boolean default false) returns jsonb
@@ -26165,11 +26166,22 @@ language sql stable set search_path = public as $$
     from mp_trains t where t.route = any(ids)
 $$;
 drop function if exists public._mp_routes_fix(uuid, int);   -- p_only を足した（DB の更新94）
+-- 系統の時刻を あとで組みなおす（DB の更新123）：線路の持ち主（pu・pc）ごとに まとめて 1分ごと（_mp_resched_run）
+create table if not exists public.mp_resched_q (
+  rid bigint primary key references public.mp_routes(id) on delete cascade,   -- 時刻を組みなおす系統
+  pu  uuid,                                                                   -- 線路の持ち主（その人の系統・乗り入れの系統を まとめて 見なおす）
+  pc  int,
+  at  timestamptz not null default now()
+);
+alter table public.mp_resched_q enable row level security;
+revoke all on public.mp_resched_q from anon, authenticated;
+
 create or replace function public._mp_routes_fix(pu uuid, pc int, p_only bigint[] default null) returns void
 language plpgsql set search_path = public as $$
 declare r mp_routes; i int; leg jsonb; lg jsonb; bad text; ids bigint[] := '{}'; lgs jsonb[] := '{}'; bads text[] := '{}'; same boolean[] := '{}'; k int;
         fp0 text;   -- DB の更新88
         near boolean[] := '{}';   -- DB の更新94
+        zlater boolean;   -- 時刻は あとで（DB の更新123）
 begin
   -- 1. 系統ごとに、線路の道すじを出しなおす
   --    p_only（DB の更新94）：その線を通らない系統は、道すじが変わらないので出しなおさない（線を分けて行きどまりの線をつないだ・線を1本にした・消した・
@@ -26203,6 +26215,21 @@ begin
   if true = all(same) then return; end if;
   -- 3. 道すじが変わった系統だけ、書きかえて時刻を組みなおす（DB の更新88）。
   --    前は どれか1つ変わると、ぜんぶの系統（乗り入れもふくむ）を組みなおしていて、大きい路線網のまん中で線を分けると（分かれ道をつくると）20秒の制限をこえていた
+  --    列車の多い路線網（400本より多い）は、道すじだけ いま書きかえて、時刻は あとで（DB の更新123。mp_resched_q・1分ごと）。
+  --    前は 1分ちかく かかることがあり、ゲートウェイ・ブラウザが先に切れて「通信がとぎれました」になっていた
+  zlater := (select count(*) from mp_trains t where t.route = any(ids)) > 400;
+  if zlater then
+    for k in 1..array_length(ids, 1) loop
+      if not same[k] then
+        update mp_routes set legs = case when bads[k] is null then lgs[k] else mp_routes.legs end, ok = bads[k] is null, why = bads[k], runt = '{}'::jsonb where id = ids[k];
+        if bads[k] is null then
+          insert into mp_resched_q as q (rid, pu, pc) values (ids[k], pu, pc) on conflict (rid) do update set pu = excluded.pu, pc = excluded.pc;
+        end if;
+      end if;
+    end loop;
+    perform set_config('mp.later', '1', true);   -- 画面に「あとで」と出す（mp_seg_build）
+    return;
+  end if;
   fp0 := _mp_routes_fp(ids);   -- 組みなおす前の、列車の時刻・待避・注意・走れるか
   for k in 1..array_length(ids, 1) loop
     if not same[k] then
@@ -26217,6 +26244,42 @@ begin
     end loop;
   end if;
 end $$;
+
+-- あとで組みなおす系統の時刻（DB の更新123）：1分ごと（pg_cron）。持ち主ごとに、道すじの変わった系統を組みなおして、
+--   結果が前と変われば 前と同じように ほかの系統も組みなおす（_mp_routes_fix の 3・4 と同じ）。1回に 25秒くらいまで（のこりは つぎの回）
+create or replace function public._mp_resched_run() returns void
+language plpgsql set search_path = public as $$
+declare zg record; zids bigint[]; zchg bigint[]; zfp text; zk bigint; zt0 timestamptz := clock_timestamp();
+begin
+  if not pg_try_advisory_xact_lock(7641) then return; end if;   -- 前の回が まだ動いている
+  for zg in select q.pu, q.pc, min(q.at) at from mp_resched_q q group by q.pu, q.pc order by min(q.at) loop
+    exit when clock_timestamp() - zt0 > interval '25 seconds';
+    perform _mp_lock(zg.pu, zg.pc);   -- 線路・系統を かえている人と かさならないように
+    zchg := array(select q.rid from mp_resched_q q where q.pu is not distinct from zg.pu and q.pc is not distinct from zg.pc);
+    delete from mp_resched_q q where q.rid = any(zchg);
+    zids := array(select x.id from mp_routes x where x.kind = 'rail' and ((x.own_u is not distinct from zg.pu and x.own_c is not distinct from zg.pc)
+             or exists (select 1 from mp_thru t where t.hu is not distinct from zg.pu and t.hc is not distinct from zg.pc and t.gu is not distinct from x.own_u and t.gc is not distinct from x.own_c)));
+    zfp := _mp_routes_fp(zids);
+    foreach zk in array zchg loop
+      if exists (select 1 from mp_routes r where r.id = zk and r.ok) then perform _mp_resched(zk); end if;
+    end loop;
+    if _mp_routes_fp(zids) is distinct from zfp then
+      foreach zk in array zids loop
+        if not (zk = any(zchg)) and exists (select 1 from mp_routes r where r.id = zk and r.ok) then perform _mp_resched(zk); end if;
+      end loop;
+    end if;
+  end loop;
+end $$;
+revoke all on function public._mp_resched_run() from public, anon, authenticated;
+
+-- 1分ごと：あとで組みなおす系統の時刻（pg_cron があるとき。DB の更新123）
+do $$
+begin
+  if exists (select 1 from pg_namespace where nspname = 'cron') then
+    perform cron.schedule('ailinax-resched', '* * * * *', 'select public._mp_resched_run()');
+  end if;
+end $$;
+
 
 -- 系統をつくる・直す。p_paths はバスだけ（[[線, 線, …], …] バス停と次のバス停のあいだ）
 create or replace function public.mp_route_save(p_id bigint, p_kind text, p_name text, p_color text, p_stops bigint[], p_timing bigint[], p_dwell int, p_paths jsonb, p_as text) returns jsonb
@@ -39955,7 +40018,7 @@ begin
             '_mp_pick_trk','_mp_pkey','_mp_placeholder_names','_mp_pname','_mp_port_busy','_mp_port_isl','_mp_port_open','_mp_port_owner_trg',
             '_mp_port_pier','_mp_pref_road','_mp_pref_type','_mp_proj','_mp_pub_cells','_mp_pub_of','_mp_qnorm','_mp_rail_path',
             '_mp_rate','_mp_renet','_mp_resample','_mp_resched','_mp_rev','_mp_road_mul','_mp_road_v','_mp_road_w',
-            '_mp_role_kind','_mp_room','_mp_rpos','_mp_route_catch','_mp_route_sta','_mp_route_uses','_mp_routes_fix','_mp_run','_mp_run_check',
+            '_mp_role_kind','_mp_room','_mp_rpos','_mp_route_catch','_mp_route_sta','_mp_route_uses','_mp_routes_fix','_mp_resched_run','_mp_run','_mp_run_check',
             '_mp_run_mark','_mp_rwy_cells','_mp_rwy_check','_mp_rwy_gone','_mp_rwy_name','_mp_rwy_names','_mp_same','_mp_sc_info',
             '_mp_sc_init','_mp_sc_kinds','_mp_sc_op','_mp_sc_owes','_mp_sc_recipes','_mp_sc_riders','_mp_sc_school_calc','_mp_sc_tick_hour',
             '_mp_sc_touch','_mp_sea','_mp_sea_leg','_mp_sea_seg','_mp_seg_blocked','_mp_seg_cells_arr','_mp_seg_chain','_mp_seg_join2',
@@ -40052,13 +40115,14 @@ alter function public.mp_dia_order_del(bigint, bigint[], bigint[], text) set sta
 -- 競馬場をおく・さがす（DB の更新92）は、広い土地をしらべるので60秒まで
 alter function public.mp_track_place(text, int, int, text, boolean, text) set statement_timeout = '60s';   -- 名前（p_name）を足した（DB の更新93）
 alter function public.mp_track_find(text, int, int, text) set statement_timeout = '60s';
--- 線路をつくる・直す・つなぐ・こわす・設定を変える（系統の時刻を組みなおすことがある）は 60秒まで（DB の更新88。前は20秒）
+-- 線路をつくる・直す・つなぐ・こわす・設定を変える（系統の時刻を組みなおすことがある）は 50秒まで（DB の更新88 で 60秒・DB の更新123 で 50秒：
+--   ゲートウェイ・ブラウザの 60秒より前に、わかる エラーを返す。列車の多い路線網の 時刻は あとで組みなおす）
 do $$
 declare f record;
 begin
   for f in select p.oid::regprocedure sig from pg_proc p join pg_namespace n on n.oid = p.pronamespace
             where n.nspname = 'public' and p.proname in ('mp_seg_build', 'mp_seg_edit', 'mp_seg_join', 'mp_seg_del', 'mp_seg_opts') loop
-    execute format('alter function %s set statement_timeout = %L', f.sig, '60s');
+    execute format('alter function %s set statement_timeout = %L', f.sig, '50s');
   end loop;
 end $$;
 -- 見はりを PostgREST につなぐ（DB の更新90。API を呼ぶたびに sec_gate）。つなげないときは知らせだけ
