@@ -22699,6 +22699,8 @@ alter table public.mp_trains add column if not exists cpl jsonb not null default
 alter table public.mp_trains add column if not exists cplx jsonb not null default '[]'::jsonb;   -- 計算した連結 [{op, num, f, a, b, ta, tb, n, len, v, ok, w}]
 create index if not exists mp_trains_cpl on public.mp_trains using gin (cpl jsonb_path_ops);
 -- t54f：駅の発着番線・種別の優先番号（0 がいちばん優先）・待避と続行
+alter table public.mp_stations add column if not exists memo text;          -- 直通の会社へのメモ（200文字まで。DB の更新115）
+alter table public.mp_stations add column if not exists memo_at timestamptz;  -- メモを書いた（しらせたとき）
 alter table public.mp_stations add column if not exists trk jsonb;   -- 番線の順に [{d: down・up・both, m: main・side}]。null はいつもの決まり
 alter table public.mp_segs add column if not exists pfill boolean;   -- 古い線の縦断を決めたか（DB の更新108）：true 決めた・false 決められなかった（地形のまま）・null まだ
 create index if not exists mp_segs_pfill on public.mp_segs (id) where kind = 'rail' and prof is null and pfill is null;
@@ -23785,6 +23787,7 @@ begin
                   'rt', (select coalesce(jsonb_agg(jsonb_build_object('id', ro.id, 'c', ro.color, 'n', ro.name)), '[]'::jsonb) from mp_routes ro where s.id = any(ro.stops)))
                   || case when s.melt then jsonb_build_object('ml', 1) else '{}'::jsonb end
                   || case when s.pf is not null then jsonb_build_object('pf', s.pf) else '{}'::jsonb end   -- ホームの形（DB の更新107）
+                  || case when s.memo is not null then jsonb_build_object('mm', s.memo) else '{}'::jsonb end   -- 直通の会社へのメモ（DB の更新115）
                   || case when s.water then jsonb_build_object('wt', 1) else '{}'::jsonb end || case when s.coal then jsonb_build_object('cl', 1) else '{}'::jsonb end   -- 給水・給炭（DB の更新78）
                   || coalesce((select jsonb_build_object('sn', round(sn.dep)) from mp_snow sn where sn.sta = s.id and sn.dep >= 1), '{}'::jsonb)
                   || case when s.kind = 'rail' then coalesce((select jsonb_build_object('zl', v) from (select _mp_sta_lv(s.seg, s.at, s.x, s.y) v) q where v is not null), '{}'::jsonb) else '{}'::jsonb end), '[]'::jsonb)
@@ -26040,14 +26043,19 @@ language sql stable set search_path = public as $$
   select coalesce(array_agg(coalesce((select min(s.sig) from jsonb_array_elements(coalesce(l -> 'g', '[]'::jsonb)) g join mp_segs s on s.id = (g ->> 0)::bigint), 0)::int order by k), '{}')
     from jsonb_array_elements(coalesce(legs, '[]'::jsonb)) with ordinality q(l, k)
 $$;
--- 番線をえらぶ：その向き（dir 1 下り・-1 上り）で使える番線のうち、side なら待避線（なければ番号の大きいほう）、そうでなければ本線（番号の小さいほう）
-create or replace function public._mp_pick_trk(trk jsonb, dir int, side boolean) returns int
+-- 番線をえらぶ：その向き（dir 1 下り・-1 上り）で使える番線のうち、待避（side）なら待避線から。優先する種別（kind。DB の更新115）の番線 → 決めていない番線 → ほかの種別の番線。
+--   そのあと side なら待避線（なければ番号の大きいほう）、そうでなければ本線（番号の小さいほう）
+create or replace function public._mp_pick_trk(trk jsonb, dir int, side boolean, kind text default null) returns int
 language sql immutable as $$
   select coalesce((select e.k::int from jsonb_array_elements(trk) with ordinality e(v, k)
                     where e.v ->> 'd' in (case when dir = -1 then 'up' else 'down' end, 'both') and coalesce(e.v ->> 'm', 'main') <> 'pass'   -- 通過線には止まらない（t62）
-                    order by (e.v ->> 'm' = case when side then 'side' else 'main' end) desc, (e.v ->> 'd' = 'both'),
+                    order by case when side then e.v ->> 'm' = 'side' end desc nulls last,   -- 待避する列車は 待避線から
+                             case when jsonb_typeof(e.v -> 'k') = 'array' and jsonb_array_length(e.v -> 'k') > 0
+                                  then case when kind is not null and (e.v -> 'k') ? kind then 0 else 2 end else 1 end,   -- 優先する種別（DB の更新115）：その種別の番線 → 決めていない番線 → ほかの種別の番線
+                             (e.v ->> 'm' = case when side then 'side' else 'main' end) desc, (e.v ->> 'd' = 'both'),
                              case when side then -e.k else e.k end limit 1), 1)
 $$;
+revoke all on function public._mp_pick_trk(jsonb, int, boolean, text) from public, anon, authenticated;
 -- 種別の優先番号（0 がいちばん優先）。名義ごとに決められる。決めていなければ：特急 1・急行 2・快速 3・普通 5・回送 8・試運転 8・そのほか 5
 create or replace function public._mp_kprio(pu uuid, pc int, k text) returns int
 language sql stable set search_path = public as $$
@@ -26176,7 +26184,7 @@ begin
     spec := tr.tt -> (r.stops[i]::text);
     stop := k = k0 or k = k1 or not (r.stops[i] = any(tr.skip));
     trk := coalesce((spec ->> 't')::int, _mp_pick_trk(_mp_sta_trk(st), tr.dir, st.id = any(coalesce(waits, '{}'))
-                       or (qx and coalesce(coalesce(lq[i - 1], lq[i]) and coalesce(lq[i], lq[i - 1]), false))));   -- 複々線の中の駅：急行線の列車は待避線の番線（DB の更新86）
+                       or (qx and coalesce(coalesce(lq[i - 1], lq[i]) and coalesce(lq[i], lq[i - 1]), false)), tr.kind));   -- 種別：番線ごとに優先する種別（DB の更新115）   -- 複々線の中の駅：急行線の列車は待避線の番線（DB の更新86）
     if trk > st.tracks then ws := ws || format('%s に %s番線はありません', st.name, trk); trk := st.tracks; end if;
     if stop and r.kind = 'rail' and (_mp_sta_trk(st) -> (trk - 1) ->> 'm') = 'pass' then
       ws := ws || format('%s の %s番線は通過線です（ホームがないので止まれません）', st.name, trk);   -- t62
@@ -27465,7 +27473,9 @@ begin
                                   from mp_ops o left join mp_forms f on f.id = o.form
                                  where o.own_u is not distinct from r.own_u and o.own_c is not distinct from r.own_c and o.kind = r.kind) end,
     'today', _mp_today(), 'ord', true,   -- 運転整理（DB の更新100）
-    'stops', (select jsonb_agg(jsonb_build_object('id', s.id, 'name', s.name, 'tracks', s.tracks, 'plat', s.plat, 'trk', _mp_sta_trk(s), 'x', s.x, 'y', s.y) order by o) from unnest(r.stops) with ordinality z(sid, o) join mp_stations s on s.id = z.sid),
+    'stops', (select jsonb_agg(jsonb_build_object('id', s.id, 'name', s.name, 'tracks', s.tracks, 'plat', s.plat, 'trk', _mp_sta_trk(s), 'x', s.x, 'y', s.y)
+                               || case when s.memo is not null then jsonb_build_object('mm', s.memo, 'mo', _mp_pname(s.own_u, s.own_c, s.own_u is null and s.own_c is null)) else '{}'::jsonb end   -- 駅のメモと 駅の持ち主（DB の更新115）
+                               order by o) from unnest(r.stops) with ordinality z(sid, o) join mp_stations s on s.id = z.sid),
     'kinds', _mp_kinds_of(r.own_u, r.own_c), 'pats', r.pats, 'hpat', case when mine then r.hpat end, 'agrp', case when mine then r.agrp end,   -- agrp：運用の あてる先（DB の更新106）   -- hpat：1時間の型（DB の更新104）
     'km', (select jsonb_agg(round((coalesce((select sum((l ->> 'd')::real) from jsonb_array_elements(r.legs) with ordinality q(l, k) where k < o), 0) / 1000)::numeric, 2) order by o) from unnest(r.stops) with ordinality z(sid, o)),
     'legs', (select jsonb_agg(jsonb_build_object('d', l -> 'd', 'e', l -> 'e', 's', l -> 's', 'g', l -> 'g', 'w', l -> 'w')) from jsonb_array_elements(r.legs) l),   -- w：航路の折れ線（t54o）
@@ -32069,12 +32079,15 @@ begin
   select * into st from mp_stations where id = p_sta;
   if not found or st.kind <> 'rail' then raise exception '駅が見つかりません'; end if;
   return jsonb_build_object('id', st.id, 'name', st.name, 'tracks', st.tracks, 'trk', _mp_sta_trk(st), 'custom', st.trk is not null, 'mine', _mp_mine(u, st.own_u, st.own_c), 'pf', st.pf,   -- pf：ホームの形（DB の更新107）
-    'routes', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'name', r.name)), '[]'::jsonb) from mp_routes r where st.id = any(r.stops)));
+    'routes', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'name', r.name)), '[]'::jsonb) from mp_routes r where st.id = any(r.stops)),
+    'kinds', (select coalesce(jsonb_agg(q.kind order by q.p, q.kind), '[]'::jsonb) from (select t.kind, min(_mp_kprio(r.own_u, r.own_c, t.kind)) p
+                from mp_trains t join mp_routes r on r.id = t.route where st.id = any(r.stops) group by t.kind limit 40) q),   -- この駅を通る列車の種別（DB の更新115）
+    'memo', st.memo);
 end $$;
 -- 決める：p_trk は番線の順に [{d: down・up・both, m: main・side}]（null でいつもの決まりに）。この駅を通る系統の時刻を計算しなおす
 create or replace function public.mp_sta_trk_set(p_sta bigint, p_trk jsonb) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u uuid := _me(); st mp_stations; v jsonb; nv jsonb := '[]'::jsonb; rr bigint; st2 mp_stations;
+declare u uuid := _me(); st mp_stations; v jsonb; nv jsonb := '[]'::jsonb; rr bigint; st2 mp_stations; zk jsonb; zx text;
 begin
   perform _mp_ok(u);
   select * into st from mp_stations where id = p_sta for update;
@@ -32085,7 +32098,16 @@ begin
     if jsonb_typeof(p_trk) <> 'array' or jsonb_array_length(p_trk) <> greatest(st.tracks, 1) then raise exception '番線の数があっていません'; end if;
     for v in select x from jsonb_array_elements(p_trk) x loop
       if not (v ->> 'd' in ('down', 'up', 'both') and v ->> 'm' in ('main', 'side', 'pass')) then raise exception '番線の使いかたがちがいます'; end if;   -- pass：通過線（t62）
-      nv := nv || jsonb_build_array(jsonb_build_object('d', v ->> 'd', 'm', v ->> 'm'));
+      -- 優先する種別（DB の更新115）：8つまで・1つ 12文字まで。同じものは1つに
+      zk := '[]'::jsonb;
+      if jsonb_typeof(v -> 'k') = 'array' then
+        for zx in select distinct on (btrim(y)) btrim(y) from jsonb_array_elements_text(v -> 'k') y where btrim(y) <> '' loop
+          if char_length(zx) > 12 or zx ~ '[[:cntrl:]]' then raise exception '種別の名前は12文字までです'; end if;
+          zk := zk || to_jsonb(zx);
+        end loop;
+        if jsonb_array_length(zk) > 8 then raise exception '優先する種別は 番線ごとに8つまでです'; end if;
+      end if;
+      nv := nv || jsonb_build_array(jsonb_build_object('d', v ->> 'd', 'm', v ->> 'm') || case when jsonb_array_length(zk) > 0 then jsonb_build_object('k', zk) else '{}'::jsonb end);
     end loop;
     -- 止まる列車のために、下り・上りそれぞれ、ホームのある番線（通過線でない）がいる
     if not exists (select 1 from jsonb_array_elements(nv) zv where zv ->> 'd' in ('down', 'both') and zv ->> 'm' <> 'pass') then raise exception '下りの列車が止まれる番線（ホームのある番線）がありません'; end if;
@@ -32098,6 +32120,35 @@ begin
   perform _mp_chg('sta', p_sta, 'set', box(point(st.x / 100.0 - 3, st.y / 100.0 - 3), point(st.x / 100.0 + 3, st.y / 100.0 + 3)));
   return jsonb_build_object('ok', true, 'trk', (select _mp_sta_trk(s) from mp_stations s where s.id = p_sta));
 end $$;
+-- 駅の 直通の会社へのメモ（DB の更新115）：200文字まで（空で消す）。だれでも見られる（地図の駅・系統の駅）。
+--   書くと、この駅を通る ほかの名義の系統の持ち主に しらせる（同じ駅は 10分に1回まで）
+create or replace function public.mp_sta_memo_set(p_sta bigint, p_memo text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u uuid := _me(); st mp_stations; zm text; zq record; zn int := 0; zw uuid;
+begin
+  perform _mp_ok(u);
+  select * into st from mp_stations where id = p_sta for update;
+  if not found or st.kind <> 'rail' then raise exception '駅が見つかりません'; end if;
+  if not _mp_mine(u, st.own_u, st.own_c) then raise exception 'あなたの駅ではありません'; end if;
+  zm := nullif(btrim(regexp_replace(coalesce(p_memo, ''), '[[:cntrl:]]+', ' ', 'g')), '');
+  if char_length(coalesce(zm, '')) > 200 then raise exception 'メモは200文字までです'; end if;
+  if zm is not distinct from st.memo then return jsonb_build_object('ok', true, 'memo', zm, 'told', 0); end if;
+  update mp_stations set memo = zm, memo_at = case when zm is not null and (st.memo_at is null or st.memo_at < now() - interval '10 minutes') then now() else memo_at end where id = p_sta;
+  if zm is not null and (st.memo_at is null or st.memo_at < now() - interval '10 minutes') then
+    for zq in select distinct r.own_u, r.own_c from mp_routes r
+               where p_sta = any(r.stops) and not (r.own_u is not distinct from st.own_u and r.own_c is not distinct from st.own_c) and (r.own_u is not null or r.own_c is not null) loop
+      zw := coalesce(zq.own_u, (select owner from companies where id = zq.own_c));
+      if zw is null or zw = u then continue; end if;
+      perform _notice_l(zw, format('【国土】駅「%s」（%s）に 直通の会社へのメモがあります：「%s」', st.name, _mp_pname(st.own_u, st.own_c, st.own_u is null and st.own_c is null), zm),
+        jsonb_build_object('go', 'map', 'k', 'bldAt', 'cx', floor(st.x / 20.0)::int, 'cy', floor(st.y / 20.0)::int), null);
+      zn := zn + 1;
+    end loop;
+  end if;
+  perform _mp_chg('sta', p_sta, 'set', box(point(st.x / 100.0 - 3, st.y / 100.0 - 3), point(st.x / 100.0 + 3, st.y / 100.0 + 3)));
+  return jsonb_build_object('ok', true, 'memo', zm, 'told', zn);
+end $$;
+revoke all on function public.mp_sta_memo_set(bigint, text) from public, anon;
+grant execute on function public.mp_sta_memo_set(bigint, text) to authenticated;
 -- ホームの形をしらべる（DB の更新107）：pf と 番線の使いかた trk（番線の数 n）。まちがいの文か null（よい）
 --   ホームのない番線は 通過線だけ。となりが 通過線だけの ホームは つくらない
 create or replace function public._mp_pf_err(p_pf text, p_trk jsonb, p_n int) returns text

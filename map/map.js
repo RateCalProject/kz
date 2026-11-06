@@ -3405,6 +3405,8 @@ const CSS = `
 .mp-seg{display:inline-flex;border:1px solid var(--line,#ccc);border-radius:10px;overflow:hidden}
 .mp-seg button{border:0;background:var(--bg,#f4f4f4);padding:6px 10px;font-weight:700;font-size:13px;color:inherit}
 .mp-seg button.on{background:#1f5fbf;color:#fff}
+.mp-kchip{border:1px solid #c7ccd2;background:var(--bg,#f4f4f4);color:inherit;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700;cursor:pointer;min-height:28px}
+.mp-kchip.on{background:#1f5fbf;border-color:#1f5fbf;color:#fff}
 .mp-cost{font-weight:800;font-size:15px}
 .mp-warn{color:#c33;font-size:12px;font-weight:700}
 .mp-fts{margin-top:3px;line-height:1.9}
@@ -4089,6 +4091,17 @@ const TRK_L = { 'down:main': n => T(`${n}番線 下り本線`), 'up:main': n => 
                 'down:side': n => T(`${n}番線 下り待避線`), 'up:side': n => T(`${n}番線 上り待避線`), 'both:side': n => T(`${n}番線 上下の待避線`),
                 'down:pass': n => T(`${n}番線 下り通過線`), 'up:pass': n => T(`${n}番線 上り通過線`), 'both:pass': n => T(`${n}番線 上下の通過線`) };
 const trkL = (t, i) => (TRK_L[t.d + ':' + t.m] || (n => T(`${n}番線`)))(i + 1);
+// 番線ごとに優先する種別（DB の更新115）：「（優先：特急・急行）」
+const trkK = t => t && Array.isArray(t.k) && t.k.length && t.m !== 'pass' ? ` <small>（<span>優先</span>：${t.k.map(x => `<span>${esc(x)}</span>`).join('・')}）</small>` : '';
+const memoOn = () => { lookOn(); return (S.dbv || 0) >= 115; };   // 駅の直通メモ・番線ごとの種別（DB の更新115）
+// 駅の 直通の会社へのメモ（DB の更新115）：200文字まで。書くと、この駅を通る ほかの名義の系統の持ち主に しらせる
+async function staMemo(s) {
+  const v = prompt(T('直通の会社へのメモ（200文字まで・だれでも見られます。空にすると消します。書くと、この駅を通る ほかの会社の系統の持ち主に しらせます）'), s.mm || ''); if (v == null) return;
+  const r = await api('mp_sta_memo_set', { p_sta: s.id, p_memo: v }); if (!r) return;
+  s.mm = r.memo || null;
+  toast(r.memo ? (r.told ? T(`メモを残しました（${r.told}人に しらせました）`) : T('メモを残しました')) : T('メモを消しました'));
+  if (S.sel && S.sel.kind === 'sta' && S.sel.id === s.id) showSta(s);
+}
 async function showSpot(cx, cy) {
   if (S.favIds === undefined) { S.favIds = null; call('mp_bld_favs', {}).then(L => { S.favIds = new Set((L || []).map(b => b.id)); if (S.sel && S.sel.kind === 'cell' && S.sel.x === cx && S.sel.y === cy) showSpot(cx, cy); }).catch(() => {}); }   // お気に入り物件（DB の更新65 の前は出さない）
   S.sel = { kind: 'cell', x: cx, y: cy }; S.dirty = true;
@@ -4441,7 +4454,8 @@ function showSta(s) {
       ${s.k === 'rail' ? `<b>ホーム</b><span>${s.pl} m・${s.tr}番線まで${pfName(s.pf, s.tr) ? `<br><span>${esc(pfName(s.pf, s.tr))}</span>` : ''}</span>` : ''}
       ${s.k === 'rail' && S.hgtOK ? `<b>高さ</b><span>${STA_LV[s.zl || 'G']}</span>` : ''}
       ${s.k === 'rail' && S.supOK ? `<b>補給</b><span>${s.wt || s.cl ? `<span>${[s.wt ? '💧 給水' : '', s.cl ? '⛏ 給炭' : ''].filter(Boolean).join('・')}</span><small class="muted">（蒸気機関車）</small>` : '<span class="muted">給水・給炭の設備はありません</span>'}</span>` : ''}
-      ${s.k === 'rail' && s.tk ? `<b>発着番線</b><span>${s.tk.map((t, i) => `<span>${esc(trkL(t, i))}</span>`).join('<br>')}</span>` : ''}
+      ${s.k === 'rail' && s.tk ? `<b>発着番線</b><span>${s.tk.map((t, i) => `<span>${esc(trkL(t, i))}</span>${trkK(t)}`).join('<br>')}</span>` : ''}
+      ${s.k === 'rail' && (s.mm || (s.mine && memoOn())) ? `<b>直通のメモ</b><span>${s.mm ? `📝 <span translate="no" style="white-space:pre-wrap">${esc(s.mm)}</span>` : '<span class="muted">なし</span>'}${s.mine && memoOn() ? ` <a href="#" data-memo>${s.mm ? '書きなおす' : '書く'}</a>` : ''}</span>` : ''}
       ${s.k === 'rail' && tomeOn() ? (() => { const ts = [...S.vis.deps.values()].filter(d => d.st === s.id);   // 留置線（DB の更新105）
         return `<b>留置線</b><span>${ts.length ? ts.map(d => { const [l, n] = tomeDim(d.sz); return `<span translate="no">${esc(d.n)}</span>（${esc(T(`${l}m・${n}本`))}）`; }).join('<br>') : '<span class="muted">なし</span>'}</span>`; })() : ''}
       ${gov ? `<b>使用料</b><span>${s.ln != null ? `<span>空路に入れると 1路線・1日 ${X(s.ln)}（国庫へ）</span>` : '<span>いまは新しい空路に使えません</span>'}</span>`
@@ -4466,6 +4480,7 @@ function showSta(s) {
     sh.querySelectorAll('[data-rt]').forEach(a => a.onclick = ev => { ev.preventDefault(); openDia(Number(a.dataset.rt)); });
     const th = sh.querySelector('[data-thru]'); if (th) th.onclick = () => thruReq({ sta: s.id }, () => { if (S.sel && S.sel.kind === 'sta' && S.sel.id === s.id) showSta(s); });
     const tk = sh.querySelector('[data-trk]'); if (tk) tk.onclick = () => trkEdit(s);
+    const mo = sh.querySelector('[data-memo]'); if (mo) mo.onclick = ev => { ev.preventDefault(); staMemo(s); };   // 直通のメモ（DB の更新115）
     const ub = sh.querySelector('[data-ugmb]'); if (ub) ub.onclick = () => startUgm(s);   // 地下街（DB の更新109）
     sh.querySelectorAll('[data-ugm]').forEach(a => a.onclick = ev => { ev.preventDefault(); const g = S.vis.ugm.get(Number(a.dataset.ugm)); if (g) showUgm(g); });
     const pl = sh.querySelector('[data-plat]'); if (pl) pl.onclick = () => staResize(s);
@@ -4768,6 +4783,17 @@ function pfPreset(kind, n) {
   }
   return { g: g.join(''), trk };
 }
+// 番線ごとに優先する種別（DB の更新115）：この駅を通る列車の種別のボタン（押すと えらぶ・はずす）と ＋（ほかの種別）。kinds が ない（サーバーが前の版）ときは出さない
+function trkKindRow(t, i, kinds) {
+  if (!kinds || t.m === 'pass') return '';
+  const all = [...new Set([...kinds, ...(t.k || [])])];
+  return `<div class="mp-row small" style="margin:2px 0 6px;flex-wrap:wrap;gap:4px;align-items:center"><span class="muted">優先する種別</span>${all.map(k => `<button class="mp-kchip${(t.k || []).includes(k) ? ' on' : ''}" data-tk="${i}" data-kn="${esc(k)}">${esc(k)}</button>`).join('')}<button class="mp-kchip" data-tka="${i}" title="ほかの種別">＋</button></div>`;
+}
+function trkKindBind(b, cur, draw) {
+  b.querySelectorAll('[data-tk]').forEach(x => x.onclick = () => { const t = cur[Number(x.dataset.tk)], k = x.dataset.kn; t.k = (t.k || []).includes(k) ? t.k.filter(y => y !== k) : [...(t.k || []), k].slice(0, 8); if (!t.k.length) delete t.k; draw(); });
+  b.querySelectorAll('[data-tka]').forEach(x => x.onclick = () => { const v = prompt(T('種別の名前（12文字まで）')); if (!v || !v.trim()) return; const t = cur[Number(x.dataset.tka)]; t.k = [...new Set([...(t.k || []), v.trim().slice(0, 12)])].slice(0, 8); draw(); });
+}
+const TRK_KH = '<p class="muted small" style="margin:4px 0 0"><span>優先する種別：その種別の列車は、その番線を先に使います（つぎは 決めていない番線、さいごに ほかの種別の番線）。待避する列車は 待避線が先・採時駅で番線を決めた列車は そのままです。</span></p>';
 // 駅の発着番線を決める：番線ごとに 下り・上り・両方／本線・待避線（待避線があると、優先番号の低い列車がそこで待避する）。
 //   DB の更新107 から：ホームの形も（上が 駅の向きの左。ホームを押すと つける・はずす）
 async function trkEdit(s) {
@@ -4778,11 +4804,13 @@ async function trkEdit(s) {
   const draw = () => m.set('発着番線', `<p class="small" style="margin:0"><b>${esc(d.name)}</b>（<span>${d.tracks}番線まで</span>）</p>
       <div class="mp-list">${cur.map((t, i) => `<div class="mp-row small" style="align-items:center;margin-top:4px"><b style="min-width:4.5em">${i + 1}番線</b>
         <span class="mp-seg">${['down', 'up', 'both'].map(k => `<button data-td="${i}:${k}" class="${t.d === k ? 'on' : ''}">${TRK_D[k]}</button>`).join('')}</span>
-        <span class="mp-seg">${['main', 'side', 'pass'].map(k => `<button data-tm="${i}:${k}" class="${t.m === k ? 'on' : ''}">${TRK_M[k]}</button>`).join('')}</span></div>`).join('')}</div>
+        <span class="mp-seg">${['main', 'side', 'pass'].map(k => `<button data-tm="${i}:${k}" class="${t.m === k ? 'on' : ''}">${TRK_M[k]}</button>`).join('')}</span></div>${trkKindRow(t, i, d.kinds)}`).join('')}</div>
+      ${d.kinds ? TRK_KH : ''}
       <div class="mp-row"><button class="btn main" data-ok>決める</button><button class="btn" data-def>いつもの決まりにもどす</button></div>
       <p class="muted small"><span>通過線はホームのない番線です。止まる列車は使わず、通過する列車が、止まっている列車を追いこせます（その向きに番線が2つ以上あると、待避できる駅になります）。</span><br><span>地図で駅に近づくと、ホームの中に番線の番号（1・2…）が出ます。</span><br><span>列車は、ふだんはその向きの本線に止まります（採時駅で番線を決めた列車は、その番線）。その向きで使える番線が2つ以上ある駅は待避できます。優先番号の大きい列車は待避線で待ち、あとから来る優先番号の小さい列車に先をゆずります</span></p>`, b => {
     b.querySelectorAll('[data-td]').forEach(x => x.onclick = () => { const [i, k] = x.dataset.td.split(':'); cur[Number(i)].d = k; draw(); });
     b.querySelectorAll('[data-tm]').forEach(x => x.onclick = () => { const [i, k] = x.dataset.tm.split(':'); cur[Number(i)].m = k; draw(); });
+    trkKindBind(b, cur, draw);   // 優先する種別（DB の更新115）
     b.querySelector('[data-ok]').onclick = async () => { const r = await api('mp_sta_trk_set', { p_sta: s.id, p_trk: cur }, '決めました'); if (r) { s.tk = r.trk; m.close(); showSta(s); } };
     b.querySelector('[data-def]').onclick = async () => { const r = await api('mp_sta_trk_set', { p_sta: s.id, p_trk: null }, 'もどしました'); if (r) { s.tk = r.trk; m.close(); showSta(s); } };
   });
@@ -4805,7 +4833,8 @@ function pfEdit(s, d) {
       <div class="mp-row small" style="flex-wrap:wrap;gap:4px"><span class="mp-seg"><button data-pp="auto" class="${g ? '' : 'on'}">おまかせ</button><button data-pp="opp">相対式</button><button data-pp="isl">島式</button>${n >= 2 ? '<button data-pp="mix">島式＋相対式</button>' : ''}</span>
         <button class="btn${term ? ' main' : ''}" data-pt ${g ? '' : 'disabled'} style="padding:4px 10px">${term ? '✓ ' : ''}<span>頭端式</span></button></div>
       <p class="muted small" style="margin:2px 0 4px">${g ? '<span>上が 駅の向きの左がわです（地図の 1番線のがわ）。ホームを押すと、つける・はずす</span>' : '<span>おまかせ：番線の使いかたから、ホームの場所を決めます</span>'}</p>
-      <div style="border:1px solid #e1e4e8;border-radius:8px;padding:4px 6px">${cur.map((t, i) => gapRow(i) + trkRow(t, i)).join('') + gapRow(n)}</div>
+      <div style="border:1px solid #e1e4e8;border-radius:8px;padding:4px 6px">${cur.map((t, i) => gapRow(i) + trkRow(t, i) + trkKindRow(t, i, d.kinds)).join('') + gapRow(n)}</div>
+      ${d.kinds ? TRK_KH : ''}
       <div class="mp-row"><button class="btn main" data-ok>決める</button><button class="btn" data-def>いつもの決まりにもどす</button></div>
       <p class="muted small"><span>通過線はホームのない番線です。止まる列車は使わず、通過する列車が、止まっている列車を追いこせます（その向きに番線が2つ以上あると、待避できる駅になります）。</span><br><span>頭端式は、線路の行き止まりの駅で使います（線路のはしに 車止め・ホームを横につなぐ）。</span><br><span>列車は、ふだんはその向きの本線に止まります（採時駅で番線を決めた列車は、その番線）。3Dでは、列車は その番線に入ります</span></p>`, b => {
     b.querySelectorAll('[data-td]').forEach(x => x.onclick = () => { const [i, k] = x.dataset.td.split(':'); cur[Number(i)].d = k; draw(); });
@@ -4816,6 +4845,7 @@ function pfEdit(s, d) {
       const P = pfPreset(x.dataset.pp, n); g = P.g; P.trk.forEach((t, k) => { cur[k].d = t.d; cur[k].m = t.m; }); draw();
     });
     b.querySelector('[data-pt]').onclick = () => { if (g) { term = !term; draw(); } };
+    trkKindBind(b, cur, draw);   // 優先する種別（DB の更新115）
     const done = r => { s.tk = r.trk; s.pf = r.pf || null; m.close(); refreshBox(s.fx - 6, s.fy - 6, s.fx + 6, s.fy + 6); showSta(s); };
     b.querySelector('[data-ok]').onclick = async () => { const r = await api('mp_sta_pf_set', { p_sta: s.id, p_pf: g ? (term ? 'T' : '') + g : null, p_trk: cur }, '決めました'); if (r) done(r); };
     b.querySelector('[data-def]').onclick = async () => {
@@ -6783,6 +6813,7 @@ async function openDia(rid) {
           : `<br><span>さいきんの1時間：${fmt(D.last.served || 0)}人・${X(D.last.revenue || 0)}・${D.last.tph || 0}本</span>`) : ''}${D.last && (D.last.cancel || D.last.shop) ? `<span class="mp-warn">${D.last.cancel ? `・<span>運休${D.last.cancel}本</span>` : ''}${D.last.shop ? `・<span>工事中で運休${D.last.shop}本</span>` : ''}</span>` : ''}</p>
       ${D.parent ? `<p class="small" style="margin:4px 0 0">🔀 <span>支線</span>：<span>本線は</span> <a href="#" data-gor="${D.parent.id}" translate="no">${esc(D.parent.name)}</a>${(D.parent.jct || []).length ? `（<span>分かれる駅</span>：<span translate="no">${D.parent.jct.map(esc).join('・')}</span>）` : ''}</p>` : ''}
       ${(D.branches || []).length ? `<p class="small" style="margin:4px 0 0">🔀 <span>支線</span>：${D.branches.map(x => `<a href="#" data-gor="${x.id}" translate="no">${esc(x.name)}</a>${(x.jct || []).length ? `（<span translate="no">${x.jct.map(esc).join('・')}</span>）` : ''}`).join('・')}</p>` : ''}
+      ${(() => { const ms = (D.stops || []).filter(x => x.mm); return ms.length ? `<details class="small" style="margin:4px 0 0" ${ms.length <= 3 ? 'open' : ''}><summary>📝 <span>駅の直通メモ</span>（${ms.length}）</summary>${ms.map(x => `<p style="margin:2px 0 0 1em"><b translate="no">${esc(x.name)}</b>${x.mo ? `<small class="muted">（<span translate="no">${esc(x.mo)}</span>）</small>` : ''}：<span translate="no" style="white-space:pre-wrap">${esc(x.mm)}</span></p>`).join('')}</details>` : ''; })()}
       <div class="tabs-s" style="margin-top:8px">${[['dia', 'ダイヤグラム'], ['tt1', '時刻表（下り）'], ['tt2', '時刻表（上り）'], ['list', '列車'], ...(D.ord && D.mine ? [['ord', '運転整理']] : [])].map(t => `<button data-tab="${t[0]}" class="${tab === t[0] ? 'on' : ''}">${t[1]}</button>`).join('')}</div>
       <div data-flt style="margin-top:6px"></div><div data-pane style="margin-top:8px"></div>
       ${D.mine ? `<div class="mp-row"><button class="btn main" data-add>${D.kind === 'ship' || D.kind === 'air' ? '＋ 便' : '＋ 列車'}</button><button class="btn" data-bulk>＋ まとめて</button>${'hpat' in D ? '<button class="btn" data-hpat>⏱ 1時間の型</button>' : ''}${D.ord ? '<button class="btn" data-ordb>✂ 運転整理</button>' : ''}<button class="btn" data-auto>運用を自動で組む</button>${'hpat' in D && D.trains.some(t => t.onum) ? '<button class="btn" data-orn>運用番号を種別ごとに</button>' : ''}
