@@ -3409,6 +3409,8 @@ const CSS = `
 .mp-kchip.on{background:#1f5fbf;border-color:#1f5fbf;color:#fff}
 .mp-cost{font-weight:800;font-size:15px}
 .mp-warn{color:#c33;font-size:12px;font-weight:700}
+.mp-force{display:flex;align-items:center;gap:8px;margin:8px 0 2px;padding:5px 9px;border:1px dashed #b5651d;border-radius:8px;color:#a0521a;font-size:12px;font-weight:700;cursor:pointer}
+.mp-force input{width:18px;height:18px;margin:0;flex:none}
 .mp-fts{margin-top:3px;line-height:1.9}
 .mp-ft{display:inline-block;border-radius:6px;padding:0 6px;margin:0 4px 0 0;font-size:11px;font-weight:700;line-height:1.7;background:rgba(120,120,120,.13);color:var(--muted,#555)}
 .mp-ft.up{background:rgba(46,150,80,.14);color:#23864a}
@@ -3969,6 +3971,9 @@ function profChart(cv, d, o) {
   // 交差など（下のふちに）
   for (const x of d.xs || []) {
     const xx = X(Math.min(len, Math.max(0, x[0]))), yy = H - B0 + 6;
+    if (x[1] === 'clash') {   // 国の強行で よけきれずに通る（DB の更新116）
+      g.strokeStyle = '#d23'; g.lineWidth = 2; g.beginPath(); g.moveTo(xx - 4, yy - 4); g.lineTo(xx + 4, yy + 4); g.moveTo(xx + 4, yy - 4); g.lineTo(xx - 4, yy + 4); g.stroke(); continue;
+    }
     g.fillStyle = x[1] === 'over' ? '#9a5b2e' : x[1] === 'under' ? '#3d4f66' : '#d23';
     g.beginPath();
     if (x[1] === 'over') { g.moveTo(xx, yy - 4); g.lineTo(xx - 4, yy + 3); g.lineTo(xx + 4, yy + 3); }
@@ -3994,8 +3999,28 @@ function profSum(q) {
   const ps = [`最急 ${q.maxg}‰`];
   if (q.tun) ps.push(`トンネル・地下 ${fmt(q.tun)}m`); if (q.cut) ps.push(`切り通し ${fmt(q.cut)}m`); if (q.via) ps.push(`高架 ${fmt(q.via)}m`); if (q.brg) ps.push(`橋 ${fmt(q.brg)}m`); if (q.lx) ps.push(`踏切 ${q.lx}`);
   const grp = side => { const m = new Map(); for (const x of q.xs || []) if (x[1] === side) { const k = /^建物/.test(x[2]) ? '建物' : x[2]; m.set(k, (m.get(k) || 0) + 1); } return [...m].map(([k, v]) => `<span>${esc(k)}</span>` + (v > 1 ? `×${v}` : '')).join('・'); };
-  const ov = grp('over'), un = grp('under');
-  return `<span>${ps.join('・')}</span>${ov ? `<br><small class="muted">▲ 上を通る：${ov}</small>` : ''}${un ? `<br><small class="muted">▼ 下を通る：${un}</small>` : ''}`;
+  const ov = grp('over'), un = grp('under'), cl = grp('clash');
+  return `<span>${ps.join('・')}</span>${ov ? `<br><small class="muted">▲ 上を通る：${ov}</small>` : ''}${un ? `<br><small class="muted">▼ 下を通る：${un}</small>` : ''}${cl ? `<br><small class="mp-warn">✕ <span>よけきれずに通る（強行）：</span>${cl}</small>` : ''}`;
+}
+// 国の強行（DB の更新116）：国の工事（管理者）は、エラーが出ても つくれる。見つもりの答えの fc は 強行したところ
+const forceOn = () => { lookOn(); return (S.dbv || 0) >= 116; };
+function forceRow(on, err) {
+  return `<label class="mp-force"><input type="checkbox" data-force ${on ? 'checked' : ''}><span>国の権限で強行する（エラーが出ても つくる）</span></label>`
+    + (err && !on ? '<p class="muted small" style="margin:2px 0">国の工事は、強行すると このまま つくれます</p>' : '');
+}
+function forceNotes(fc) {
+  if (!fc || !fc.length) return '';
+  const m = new Map();
+  for (const f of fc) {
+    const nm = f[0] === 'x' || f[0] === 'b' ? (/^建物/.test(f[1] || '') ? '建物' : f[1]) : f[2];
+    const h = f[0] === 'r' ? `<span>カーブ 半径 ${fmt(f[1])}m</span>` : f[0] === 'rs' ? `<span>ホームのカーブ 半径 ${fmt(f[1])}m</span>`
+      : f[0] === 'D' ? '<span>深い海の上</span>' : f[0] === 'c' ? '<span>橋・車庫・手で決めた高さは 守れません</span>'
+      : f[0] === 'g' ? `<span>勾配 ${fmt(f[1])}‰ まで</span>` + (nm ? `（<span>${esc(nm)}</span>）` : '')
+      : f[0] === 'x' ? `<span>よけきれずに通る：</span><span>${esc(nm || '')}</span>` : f[0] === 'b' ? `<span>ホームが建物にかかる</span>` : '';
+    if (h) m.set(h, (m.get(h) || 0) + 1);
+  }
+  const a = [...m].map(([h, n]) => h + (n > 1 ? `×${n}` : ''));
+  return `<p class="mp-warn small" style="margin:2px 0">⚠ <span>強行するところ：</span>${a.slice(0, 6).join('・')}${a.length > 6 ? `<span>・ほか ${a.length - 6}</span>` : ''}</p>`;
 }
 // 地下・高架をえらんだのに とどかないとき（はしが地面で、線が短い）
 function hgtShort(hm, q) {
@@ -4024,10 +4049,11 @@ const pinArr = pins => pins && pins.size ? [...pins].sort((a, b) => a[0] - b[0])
 const pinFind = (pf, v) => { if (v == null || !pf) return null; for (let i = 0; i < pf.length / 2; i++) if (Math.abs(pf[2 * i] - v) < 0.03) return i; return null; };
 // 線の高さを変える（線のシートから）：地形に合わせる・高架・地下・アプト式・点ごとに手で。見つもり → この高さにする
 function segHeight(s) {
-  const st = { hm: s.hm && s.hm !== 'man' ? s.hm : 'auto', rack: !!s.rk, pins: new Map(), q: null, err: null, quoting: false, seq: 0, sel: null, pv: null,
+  const st = { hm: s.hm && s.hm !== 'man' ? s.hm : 'auto', rack: !!s.rk, pins: new Map(), q: null, err: null, quoting: false, seq: 0, sel: null, pv: null, force: false,
               zt: s.ho && s.ho.zt != null ? s.ho.zt : null, zr: !!(s.ho && s.ho.zr), gm: s.ho && s.ho.gm != null ? s.ho.gm : null };   // 高さ・勾配の上限（DB の更新84）
   if (!hgtModes().includes(st.hm)) st.hm = 'auto';
-  const args = dry => ({ p_id: s.id, p_mode: st.hm, p_prof: pinArr(st.pins), p_rack: s.k === 'rail' ? st.rack : null, p_dry: dry, ...(S.hgt2 ? { p_opt: hgtOpt(st) } : {}) });
+  const args = dry => ({ p_id: s.id, p_mode: st.hm, p_prof: pinArr(st.pins), p_rack: s.k === 'rail' ? st.rack : null, p_dry: dry,
+                        ...(S.hgt2 ? { p_opt: st.force && forceOn() ? { ...hgtOpt(st), force: true } : hgtOpt(st) } : {}) });   // 国の強行（DB の更新116）
   const quote = async () => {
     const my = ++st.seq; st.quoting = true; st.err = null; draw();
     let q = null, err = null;
@@ -4048,9 +4074,11 @@ function segHeight(s) {
         ${(q.stas || []).length ? `<p class="small" style="margin:2px 0">駅：${q.stas.map(x => `<span>${esc(x[0])}</span>（${{ G: '地上', U: '地下駅', E: '高架駅' }[x[1]]} → ${{ G: '地上', U: '地下駅', E: '高架駅' }[x[2]]}）`).join('・')}</p>` : ''}
         <div class="mp-row"><span class="mp-cost">工事費 ${X(q.cost)}</span><span class="small muted">${q.rack ? `制限速度 ${q.vlim} km/h まで` : ''}</span></div>`
         : st.err ? `<p class="mp-warn">${esc(st.err)}</p>` : st.quoting ? '<p class="muted small">見つもり中…</p>' : '<p class="muted small">図は、いまの高さです。えらんで「見つもる」を押すと、新しい高さと工事費が出ます</p>'}
+      ${forceOn() && s.o === 'gov' && s.mine ? forceRow(st.force, st.err) : ''}${q ? forceNotes(q.fc) : ''}
       <div class="mp-row"><button class="btn" data-est ${st.quoting || hgtNoZ(st) ? 'disabled' : ''}>見つもる</button><button class="btn main" data-ok ${q ? '' : 'disabled'}>この高さにする</button></div>
       <p class="muted small" style="margin:4px 0 0">工事費は、つくりが高くなるところ（地面 → 高架・トンネル・橋など）と、地下駅・高架駅になる駅の分。もどしても返金はありません</p>`, sh => {
       hgtOptBind(sh, st, changed);
+      { const fc = sh.querySelector('[data-force]'); if (fc) fc.onchange = () => { st.force = fc.checked; quote(); }; }   // 国の強行（DB の更新116）
       const cv = sh.querySelector('[data-prof]');
       if (cv) profChart(cv, q ? { prof: q.prof, g: q.g, st: q.st, xs: q.xs, len: q.len } : cur, q ? { points: true, sel: st.sel, pins: st.pins, onPick: i => { st.sel = i; st.pv = q.prof[2 * i]; draw(); } } : {});
       sh.querySelectorAll('[data-hm]').forEach(b => b.onclick = () => { st.hm = b.dataset.hm; changed(); });
@@ -4672,12 +4700,13 @@ function ugmSheet(st) {
 const STA_LV = { G: '地上駅', E: '高架駅', U: '地下駅' };
 function staHeight(s) {
   const cur = s.zl || 'G', sg = S.vis && S.vis.segs.get(s.seg);
-  const st = { lv: cur === 'G' ? 'E' : 'G', q: null, err: null, quoting: false, seq: 0 };
+  const st = { lv: cur === 'G' ? 'E' : 'G', q: null, err: null, quoting: false, seq: 0, force: false };
+  const fok = () => forceOn() && s.o === 'gov' && s.mine, fa = () => (st.force && fok() ? { p_force: true } : {});   // 国の強行（DB の更新116）
   S.sel = { kind: 'sta', id: s.id }; S.dirty = true;
   const quote = async () => {
     const my = ++st.seq; st.quoting = true; st.err = null; draw();
     let q = null, err = null;
-    try { q = await call('mp_sta_height', { p_id: s.id, p_lv: st.lv, p_dry: true }); } catch (e) { err = errJa(e.message); }
+    try { q = await call('mp_sta_height', { p_id: s.id, p_lv: st.lv, p_dry: true, ...fa() }); } catch (e) { err = errJa(e.message); }
     if (st.seq !== my) return;
     st.quoting = false; st.q = q; st.err = err; draw();
   };
@@ -4692,16 +4721,18 @@ function staHeight(s) {
         <p class="small muted" style="margin:2px 0"><span>高さを決めなおす線路 約${fmt(q.m)}m</span>${q.segs > 1 ? `<span>（${q.segs}本の線）</span>` : ''}<span>・点線は いまの高さ</span></p>
         <div class="mp-row"><span class="mp-cost">${q.cost > 0 ? '工事費 ' + X(q.cost) : '工事費なし'}</span></div>`
         : st.err ? `<p class="mp-warn">${esc(st.err)}</p>` : st.quoting ? '<p class="muted small">見つもり中…</p>' : '<p class="muted small">図は、いまの線の高さです（青いところがホーム）。えらんで「見つもる」を押すと、新しい高さと工事費が出ます</p>'}
+      ${fok() ? forceRow(st.force, st.err) : ''}${q ? forceNotes(q.fc) : ''}
       <div class="mp-row"><button class="btn" data-est ${st.quoting ? 'disabled' : ''}>見つもる</button><button class="btn main" data-ok ${q ? '' : 'disabled'}>この高さにする</button><button class="btn" data-back>もどる</button></div>
       <p class="muted small" style="margin:4px 0 0">ホームの前後の線路の高さを決めなおします（ほかの駅・車庫のところは、いまの高さのまま）。工事費は、つくりが高くなるところ（地面 → 高架・トンネルなど）と、地下駅・高架駅の分。もどしても返金はありません</p>`, sh => {
       const cv = sh.querySelector('[data-prof]');
       if (cv && q) profChart(cv, { prof: q.prof, g: q.g, st: q.st, xs: q.xs, len: q.len }, { mark: q.sta, cmp: q.cur });
       else if (cv && sg) profChart(cv, segProf(sg), { mark: [s.at - s.pl / 100, s.at + s.pl / 100] });
       sh.querySelectorAll('[data-lv]').forEach(b => b.onclick = () => { st.lv = b.dataset.lv; changed(); });
+      { const fc = sh.querySelector('[data-force]'); if (fc) fc.onchange = () => { st.force = fc.checked; quote(); }; }   // 国の強行（DB の更新116）
       sh.querySelector('[data-est]').onclick = () => quote();
       sh.querySelector('[data-back]').onclick = () => showSta(s);
       sh.querySelector('[data-ok]').onclick = async () => {
-        const r = await api('mp_sta_height', { p_id: s.id, p_lv: st.lv, p_dry: false });
+        const r = await api('mp_sta_height', { p_id: s.id, p_lv: st.lv, p_dry: false, ...fa() });
         if (!r) return;
         toast(r.cost > 0 ? `駅の高さを変えました（${fmt(r.cost)} X）` : '駅の高さを変えました');
         s.zl = st.lv === 'G' ? null : st.lv;
@@ -5354,10 +5385,10 @@ async function quoteDraw(st) {
   if (S.toolState === st) drawSheet();
 }
 function drawArgs(st, dry) {
-  if (st.edit) return { p_id: st.edit.id, p_ctl: toInts(st.ctrl), p_pts: toInts(st.curve), p_dry: dry };
+  if (st.edit) return { p_id: st.edit.id, p_ctl: toInts(st.ctrl), p_pts: toInts(st.curve), p_dry: dry, ...(st.force && forceOn() ? { p_force: true } : {}) };   // 国の強行（DB の更新116）
   const o = st.opts;
   return { p_kind: st.kind, p_cls: st.kind === 'road' ? o.cls : null, p_ctl: st.mode === 'arc' ? null : toInts(st.ctrl), p_pts: toInts(st.curve),
-    p_opts: { dbl: o.dbl, elec: o.elec, name: o.name, lanes: o.lanes, ...(S.quadOK && o.quad ? { quad: true } : {}), ...(S.pwOK && o.elec && o.ps ? { ps: o.ps } : {}), ...(S.hgtOK ? { hm: o.hm || 'auto', rack: st.kind === 'rail' && !!o.rack, prof: pinArr(st.pins) } : {}), ...(S.hgt2 ? hgtOpt({ ...o, hm: o.hm || 'auto' }) : {}), ...(S.specOK && st.kind === 'rail' ? specOpt(o) : {}) },
+    p_opts: { ...(st.force && forceOn() ? { force: true } : {}), dbl: o.dbl, elec: o.elec, name: o.name, lanes: o.lanes, ...(S.quadOK && o.quad ? { quad: true } : {}), ...(S.pwOK && o.elec && o.ps ? { ps: o.ps } : {}), ...(S.hgtOK ? { hm: o.hm || 'auto', rack: st.kind === 'rail' && !!o.rack, prof: pinArr(st.pins) } : {}), ...(S.hgt2 ? hgtOpt({ ...o, hm: o.hm || 'auto' }) : {}), ...(S.specOK && st.kind === 'rail' ? specOpt(o) : {}) },
     p_as: S.as, p_from: st.A ? st.A.att : null, p_to: st.B ? st.B.att : null, p_dry: dry };
 }
 function drawSheet() {
@@ -5365,6 +5396,7 @@ function drawSheet() {
   const o = st.opts, rail = st.kind === 'rail', gov = S.as === 'gov', lenM = st.curve.length > 1 ? Math.round((st.curve.length - 1) * 0.5 * 50) : 0;
   const rminM = Math.round(st.rmin * 50), tight = rail ? st.rmin < 3 : st.rmin < 0.7;
   const q = st.quote;
+  const fok = forceOn() && (st.edit ? st.edit.o === 'gov' && st.edit.mine : gov), fon = fok && !!st.force, tightNg = tight && !fon;   // 国の強行（DB の更新116）
   sheet(`<h4>${st.edit ? (rail ? '線路の形を直す' : '道路の形を直す') : rail ? '線路をひく' : '道路をひく'}</h4>
     <p class="small" style="margin:0 0 4px"><span>点 ${st.ctrl.length}・長さ 約${fmt(lenM)} m</span>${st.curve.length > 6 ? `<span>・いちばんきついカーブ 半径 ${rminM >= 50000 ? '—' : fmt(rminM) + ' m'}</span>` : ''}${st.A ? '<span>・はじめ：つなぐ</span>' : ''}${st.B ? '<span>・おわり：つなぐ</span>' : ''}</p>
     ${st.edit ? '' : `<div class="mp-row"><span class="mp-seg"><button data-m="arc" class="${st.mode === 'arc' ? 'on' : ''}">直線＋カーブ</button><button data-m="free" class="${st.mode !== 'arc' ? 'on' : ''}">なめらか</button></span>
@@ -5381,11 +5413,12 @@ function drawSheet() {
     ${st.edit ? '' : `<div class="mp-row"><input class="mp-inp" data-nm placeholder="${rail ? '路線名（なくてもよい）' : '道路の名前（なくてもよい）'}" value="${esc(o.name)}"></div>`}
     <div class="mp-row">${q ? `${q.cost > 0 || S.as !== 'gov' ? `<span class="mp-cost">工事費 ${X(q.cost)}</span>` : '<span>工事費なし（国の工事は無料）</span>'}<span class="small"><span>使用料 1日 ${X(q.lease || 0)}</span>${q.tunnel ? `<span>・トンネル ${q.tunnel}マス</span>` : ''}${q.bridge ? `<span>・橋 ${q.bridge}マス</span>` : ''}${q.vtop != null && q.vtop !== q.vlim ? `<span>・制限速度 ${q.vlim}〜${q.vtop} km/h</span>` : `<span>・制限速度 ${q.vlim} km/h</span>`}</span>`
       : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>'
-      : st.curve.length > 2 ? `<button class="btn" data-est ${tight || st.geoBad || (!st.edit && hgtNoZ({ ...o, hm: o.hm || 'auto' })) ? 'disabled' : ''}>見つもる</button><span class="muted small">${gov ? '国の工事は無料です（見つもらずに、つくれます）' : '工事費を出してから、つくれます'}</span>` : st.mode === 'arc' ? '<span class="muted small">地図をタップして角の点をおいてください（2つ以上）。角には、えらんだ半径のカーブが入ります。線路のはしから始めると延長、まん中から始めると分岐です</span>' : '<span class="muted small">地図をタップして点をおいてください（2つ以上）。はしを線の近くにおくと、つながります</span>'}</div>
+      : st.curve.length > 2 ? `<button class="btn" data-est ${tightNg || st.geoBad || (!st.edit && hgtNoZ({ ...o, hm: o.hm || 'auto' })) ? 'disabled' : ''}>見つもる</button><span class="muted small">${gov ? '国の工事は無料です（見つもらずに、つくれます）' : '工事費を出してから、つくれます'}</span>` : st.mode === 'arc' ? '<span class="muted small">地図をタップして角の点をおいてください（2つ以上）。角には、えらんだ半径のカーブが入ります。線路のはしから始めると延長、まん中から始めると分岐です</span>' : '<span class="muted small">地図をタップして点をおいてください（2つ以上）。はしを線の近くにおくと、つながります</span>'}</div>
+    ${fok ? forceRow(fon, st.err || tight) : ''}${q ? forceNotes(q.fc) : ''}
     ${q && q.prof ? `<canvas class="mp-prof" data-prof></canvas><p class="small" style="margin:2px 0">${profSum(q)}</p>${st.edit ? '' : hgtShort(o.hm, q) + pinRow(q.prof, st.psel, st.pins)}` : ''}
     ${q ? needH(q.need) : ''}
     <div class="mp-row"><button class="btn" data-undo ${st.ctrl.length ? '' : 'disabled'}>1つもどす</button><button class="btn" data-cancel>キャンセル</button>
-      <button class="btn main" data-ok ${(q || (gov && st.curve.length > 2)) && !tight && !st.geoBad && !(q && hasNeed(q)) ? '' : 'disabled'}>${st.edit ? 'この形にする' : `つくる（${esc(asName())}）`}</button></div>
+      <button class="btn main" data-ok ${(q || (gov && st.curve.length > 2)) && !tightNg && !st.geoBad && !(q && hasNeed(q)) ? '' : 'disabled'}>${st.edit ? 'この形にする' : `つくる（${esc(asName())}）`}</button></div>
     <p class="muted small" style="margin:6px 0 0">点はドラッグで動かせます。長押しで消せます</p>`, s => {
     s.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { st.mode = b.dataset.m; try { localStorage.setItem('mp_dm_' + st.kind, st.mode); } catch (e) {} drawUpdate(); });
     { const rd = s.querySelector('[data-rad]'); if (rd) rd.onchange = () => { st.rad = Number(rd.value); try { localStorage.setItem('mp_dr_' + st.kind, String(st.rad)); } catch (e) {} drawUpdate(); }; }
@@ -5410,6 +5443,7 @@ function drawSheet() {
     s.querySelector('[data-undo]').onclick = () => { if (st.edit && st.ctrl.length <= 2) return; st.ctrl.pop(); if (!st.edit) st.B = null; if (!st.ctrl.length) st.A = null; drawUpdate(); };
     s.querySelector('[data-cancel]').onclick = () => setTool(st.edit ? 'look' : st.kind);
     { const es = s.querySelector('[data-est]'); if (es) es.onclick = () => quoteDraw(st); }
+    { const fc = s.querySelector('[data-force]'); if (fc) fc.onchange = () => { st.force = fc.checked; st.quote = null; st.err = null; if (st.curve.length > 2 && !st.geoBad) quoteDraw(st); else drawSheet(); }; }   // 国の強行（DB の更新116）
     needBind(s, q && q.need, () => quoteDraw(st));
     s.querySelector('[data-ok]').onclick = async () => {
       if (nm) o.name = nm.value;
@@ -5543,7 +5577,8 @@ function staSheet(kind, hit, hit2) {
   // 起点と終点のまん中・長さ（20m単位）
   const span = kind === 'rail' ? Math.abs(hit2.at - hit.at) : 0;
   const st = { plat: kind === 'rail' ? clamp(Math.round(span * 50 / 20) * 20, 20, 400) : 0, mid: kind === 'rail' ? (hit.at + hit2.at) / 2 : hit.at,
-               tracks: 2, name: nearDist(hit.x, hit.y), q: null, err: null };
+               tracks: 2, name: nearDist(hit.x, hit.y), q: null, err: null, force: false };
+  const fok = () => kind === 'rail' && S.as === 'gov' && forceOn(), fa = () => (st.force && fok() ? { p_force: true } : {});   // 国の強行（DB の更新116）
   const pt = () => segPointAt(hit.s, st.mid);
   S.sel = { kind: 'seg', id: hit.s.id }; S.dirty = true;
   if (kind === 'rail') {
@@ -5557,7 +5592,7 @@ function staSheet(kind, hit, hit2) {
   const quote = async () => {
     const p = pt(), my = st.seq = (st.seq || 0) + 1; st.quoting = true; draw();
     let q = null, err = null;
-    try { q = await call('mp_sta_build', { p_kind: kind, p_seg: hit.s.id, p_x: p.x, p_y: p.y, p_plat: st.plat, p_tracks: st.tracks, p_name: st.name || '仮', p_as: S.as, p_dry: true }); } catch (e) { err = e.message; }
+    try { q = await call('mp_sta_build', { p_kind: kind, p_seg: hit.s.id, p_x: p.x, p_y: p.y, p_plat: st.plat, p_tracks: st.tracks, p_name: st.name || '仮', p_as: S.as, p_dry: true, ...fa() }); } catch (e) { err = e.message; }
     if (st.seq !== my) return;
     st.quoting = false; st.q = q; st.err = err;
     draw(); S.dirty = true;
@@ -5570,8 +5605,10 @@ function staSheet(kind, hit, hit2) {
       <div class="mp-row">番線 <span class="mp-seg">${[1, 2, 3, 4, 6].map(n => `<button data-t="${n}" class="${st.tracks === n ? 'on' : ''}">${n}</button>`).join('')}</span></div>
       <p class="muted small" style="margin:4px 0 0">起点と終点のあいだが、ホームになります（20m単位）。もう一度タップすると、えらびなおせます</p>` : ''}
     <div class="mp-row">${st.q ? `${S.as === 'gov' && !st.q.cost ? '<span>工事費なし（国の工事は無料）</span>' : `<span class="mp-cost">工事費 ${X(st.q.cost)}</span>`}<span class="small">${st.q.up_day ? `<span>維持費 1日 ${X(st.q.up_day)}</span>` : ''}${st.q.lease ? `<span>・使用料 1日 ${X(st.q.lease)}</span>` : ''}${st.q.zl ? `<span>・${st.q.zl === 'U' ? '地下駅（工事費 2.5倍）' : '高架駅（工事費 1.5倍）'}</span>` : ''}</span>` : st.err ? `<span class="mp-warn">${esc(st.err)}</span>` : st.quoting ? '<span class="muted small">見つもり中…</span>' : '<button class="btn" data-est>見つもる</button><span class="muted small">工事費を出してから、つくれます</span>'}</div>
+    ${fok() ? forceRow(st.force, st.err) : ''}${st.q ? forceNotes(st.q.fc) : ''}
     ${st.q ? needH(st.q.need) : ''}
     <div class="mp-row"><button class="btn main" data-ok ${st.q && !hasNeed(st.q) ? '' : 'disabled'}>つくる（${esc(asName())}）</button></div>`, s => {
+    { const fc = s.querySelector('[data-force]'); if (fc) fc.onchange = () => { st.force = fc.checked; quote(); }; }   // 国の強行（DB の更新116）
     s.querySelector('[data-nm]').onchange = e => { st.name = e.target.value; };
     needBind(s, st.q && st.q.need, () => quote());
     s.querySelectorAll('[data-pm]').forEach(b => b.onclick = () => { st.plat = clamp(st.plat + Number(b.dataset.pm), 20, 400); changed(); });
@@ -5580,7 +5617,7 @@ function staSheet(kind, hit, hit2) {
     s.querySelector('[data-ok]').onclick = async () => {
       st.name = s.querySelector('[data-nm]').value.trim(); if (!st.name) return toast('名前をつけてください');
       const p = pt();
-      if (await api('mp_sta_build', { p_kind: kind, p_seg: hit.s.id, p_x: p.x, p_y: p.y, p_plat: st.plat, p_tracks: st.tracks, p_name: st.name, p_as: S.as, p_dry: false }, 'つくりました')) {
+      if (await api('mp_sta_build', { p_kind: kind, p_seg: hit.s.id, p_x: p.x, p_y: p.y, p_plat: st.plat, p_tracks: st.tracks, p_name: st.name, p_as: S.as, p_dry: false, ...fa() }, 'つくりました')) {
         refreshBox(p.x - 6, p.y - 6, p.x + 6, p.y + 6); sheet(null); S.sel = null; S.toolState = null; S.drawTool = null; S.dirty = true;
         if (kind === 'rail') hint('駅：ホームの起点をタップ（自分の線路の上）。バス停は道路の上をタップ');
       }

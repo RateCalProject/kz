@@ -24233,9 +24233,11 @@ declare u uuid := _me(); pa record; tiles int[]; ters text[]; ln real; rmin real
         cls text := coalesce(p_cls, 'priv'); base numeric; np int := array_length(p_pts, 1) / 2; bad text; ln_ int := (p_opts ->> 'lanes')::int; cells int[]; sw real; need jsonb;
         md text := coalesce(p_opts ->> 'hm', 'auto'); rk boolean := coalesce((p_opts ->> 'rack')::boolean, false); upf real[]; pr jsonb; pf real[]; z0 real; z1 real; ea real; eb real; vl int; nhm text; ho jsonb;
         sga smallint; sg2 smallint; ssl smallint; sct smallint; snw smallint;   -- 線路の規格（DB の更新99）
+        zfo boolean := false; zfc jsonb := '[]'::jsonb;   -- 国の強行（DB の更新116）
 begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
+  zfo := pa.gv and coalesce(p_opts -> 'force' = 'true'::jsonb, false);   -- 国の強行（DB の更新116）：きついカーブ・深い海の上・高さ（勾配・交差）のエラーでも つくる
   if p_kind not in ('road', 'rail') then raise exception '作るものがちがいます'; end if;
   if p_kind = 'rail' then cls := 'rail'; end if;   -- 国も線路を引ける（DB の更新101。国の工事は無料・土地の申請も使用料もなし・免許もいらない）
   if p_kind = 'road' then
@@ -24255,11 +24257,19 @@ begin
     if bad is not null then raise exception '鉄道の免許がない市区町村です（%）。国土 → ≡ →「🚃 鉄道の免許」で申請してください', bad; end if;
   end if;
   if array_length(tiles, 1) / 2 > _mp_rate('max_tiles') then raise exception '一度に引けるのは %マスまでです。分けて引いてください', _mp_rate('max_tiles'); end if;
-  if p_kind = 'rail' and rmin < 3 then raise exception 'カーブがきつすぎます（半径 %m。線路は150m以上）', round(rmin * 50); end if;
-  if p_kind = 'road' and rmin < 0.7 then raise exception 'カーブがきつすぎます'; end if;
+  if (p_kind = 'rail' and rmin < 3) or (p_kind = 'road' and rmin < 0.7) then
+    if not zfo then
+      if p_kind = 'rail' then raise exception 'カーブがきつすぎます（半径 %m。線路は150m以上）', round(rmin * 50); end if;
+      raise exception 'カーブがきつすぎます';
+    end if;
+    zfc := zfc || jsonb_build_array(jsonb_build_array('r', round((rmin * 50)::numeric)));
+  end if;
   ters := _mp_ters(tiles);
   if '?' = any(ters) then raise exception '地図のないところには作れません'; end if;
-  if 'D' = any(ters) then raise exception '深い海には作れません'; end if;
+  if 'D' = any(ters) then
+    if not zfo then raise exception '深い海には作れません'; end if;
+    zfc := zfc || jsonb_build_array(jsonb_build_array('D'));
+  end if;
   if quad then dbl := true; end if;   -- 複々線（DB の更新86）は複線のうち
   -- 線路の規格（DB の更新99）：p_opts の gauge・g2（三線軌条）・slp（枕木）・cat（架線）・nw（防音壁）。ないときは 1067mm・PC・シンプル・なし。第三軌条は 直流750V
   sga := case when (p_opts ->> 'gauge')::int in (762, 1067, 1372, 1435) then (p_opts ->> 'gauge')::int else 1067 end;
@@ -24281,8 +24291,9 @@ begin
   nhm := case when upf is not null then 'man' else md end;
   z0 := _mp_att_z(p_from, p_pts[1], p_pts[2]); z1 := _mp_att_z(p_to, p_pts[2 * np - 1], p_pts[2 * np]);
   ea := case when p_from is null then 0 else least(0.4, ln / 3) end; eb := case when p_to is null then ln else ln - least(0.4, ln / 3) end;
-  pr := _mp_prof_make2(p_pts, p_kind, cls, z0, z1, md, rk, upf, cells, tiles, ea, eb, null::bigint[], false, null::real[], ho);
+  pr := _mp_prof_make2(p_pts, p_kind, cls, z0, z1, md, rk, upf, cells, tiles, ea, eb, null::bigint[], false, null::real[], case when zfo then coalesce(ho, '{}'::jsonb) || jsonb_build_object('force', true) else ho end);
   if not (pr ->> 'ok')::boolean then raise exception '%', pr ->> 'err'; end if;
+  zfc := zfc || coalesce(pr -> 'fc', '[]'::jsonb);
   pf := array(select v::real from jsonb_array_elements_text(pr -> 'prof') v);
   -- 工事費：マスごとに、つくり（地面・高架・トンネル・橋）と地形の倍率 ×（1 ＋ まちの係数）。アプト式は 1.3倍
   base := case when p_kind = 'rail' then _mp_rate('rail') * _mp_gauge_mul(sga) * case when sg2 is not null then 1.4 else 1 end * _mp_slp_bmul(ssl) else _mp_rate('road') * _mp_road_mul(cls, ln_) end;   -- 軌間・三線軌条・枕木（DB の更新99）
@@ -24300,7 +24311,8 @@ begin
       'tiles', array_length(tiles, 1) / 2, 'len_m', round(ln * 50), 'rmin_m', round(least(rmin, 99999) * 50),
       'vlim', vl, 'lanes', ln_, 've', case when p_kind = 'rail' and elec then _mp_cat_v(sct) end,
       'vtop', case when p_kind = 'rail' then least(_mp_seg_v(sga, sg2, ssl, rk), (select max((v ->> 1)::int) from jsonb_array_elements(_mp_vruns(p_pts, 0, ln)) v)) else _mp_road_v(cls, ln_) end,
-      'need', need, 'hm', nhm, 'ho', ho, 'rack', rk, 'z0', z0, 'z1', z1, 'len', round(ln::numeric, 2)) || (pr - 'ok' - 'ns');   -- 高さ（t108）：縦断・つくり・地面・勾配・トンネル・高架・橋・踏切・交差
+      'need', need, 'hm', nhm, 'ho', ho, 'rack', rk, 'z0', z0, 'z1', z1, 'len', round(ln::numeric, 2)) || (pr - 'ok' - 'ns' - 'fc')
+      || case when zfo then jsonb_build_object('fc', zfc) else '{}'::jsonb end;   -- 高さ（t108）：縦断・つくり・地面・勾配・トンネル・高架・橋・踏切・交差
   end if;
   perform _mp_land_stop(need);
   perform _mp_pay(pa.pu, pa.pc, pa.gv, cost::bigint, p_kind, format('%sの工事（%sm）', case when p_kind = 'rail' then '線路' else '道路' end, round(ln * 50)));
@@ -24331,24 +24343,29 @@ begin
   return jsonb_build_object('id', sid, 'cost', cost, 'lease', round(lq.fee));
 end $$;
 -- 線を直す（形を引きなおす。はしの点はそのまま。駅・車庫のある線は直せない）。高さ（t108）：縦断も決めなおす（地形に合わせる・高架・地下はそのまま。手で決めた高さは、地形に合わせるにもどる）
-create or replace function public.mp_seg_edit(p_id bigint, p_ctl int[], p_pts int[], p_dry boolean) returns jsonb
+create or replace function public.mp_seg_edit(p_id bigint, p_ctl int[], p_pts int[], p_dry boolean, p_force boolean default false) returns jsonb
 language plpgsql security definer set search_path = public as $$
 #variable_conflict use_column
 declare u uuid := _me(); sg mp_segs; me_cs int[]; tiles int[]; old int[]; newt int[] := '{}'; ters text[]; ln real; rmin real; amt_ numeric := 0; mul real[]; i int; base numeric; lq record; a mp_nodes; b mp_nodes; np int := array_length(p_pts, 1) / 2; bad text;
         ncells int[]; need jsonb; md text; pr jsonb; pf real[]; z0 real; z1 real; vl int; ho jsonb;
+        zfo boolean := false; zfc jsonb := '[]'::jsonb;   -- 国の強行（DB の更新116）
 begin
   perform _mp_ok(u);
   select * into sg from mp_segs where id = p_id for update;
   if not found then raise exception '線が見つかりません'; end if;
   me_cs := array(select id from companies where owner = u);
   if not coalesce(sg.own_u = u or sg.own_c = any(me_cs) or (sg.gov and _is_admin(u)), false) then raise exception 'あなたの線ではありません'; end if;
+  zfo := coalesce(p_force, false) and sg.gov and _is_admin(u);   -- 国の強行（DB の更新116）
   if exists (select 1 from mp_stations where seg = p_id) or exists (select 1 from mp_depots where seg = p_id) then raise exception '駅や車庫のある線は、形を変えられません（先に駅・車庫をこわしてください）'; end if;
   perform _mp_geom_ok(p_pts);
   select * into a from mp_nodes where id = sg.n0; select * into b from mp_nodes where id = sg.n1;
   if a.id is not null and sqrt(((a.x - p_pts[1]) / 100.0) ^ 2 + ((a.y - p_pts[2]) / 100.0) ^ 2) > 0.6 then raise exception 'はしの点は動かせません（はじめ）'; end if;
   if b.id is not null and sqrt(((b.x - p_pts[2 * np - 1]) / 100.0) ^ 2 + ((b.y - p_pts[2 * np]) / 100.0) ^ 2) > 0.6 then raise exception 'はしの点は動かせません（おわり）'; end if;
   tiles := _mp_tiles(p_pts); ln := _mp_len(p_pts); rmin := _mp_minr(p_pts);
-  if sg.kind = 'rail' and rmin < 3 then raise exception 'カーブがきつすぎます（半径 %m。線路は150m以上）', round(rmin * 50); end if;
+  if sg.kind = 'rail' and rmin < 3 then
+    if not zfo then raise exception 'カーブがきつすぎます（半径 %m。線路は150m以上）', round(rmin * 50); end if;
+    zfc := zfc || jsonb_build_array(jsonb_build_array('r', round((rmin * 50)::numeric)));
+  end if;
   if array_length(tiles, 1) / 2 > _mp_rate('max_tiles') then raise exception '長すぎます'; end if;
   old := _mp_tiles(sg.pts);
   -- 新しく通るマス
@@ -24363,14 +24380,18 @@ begin
     if bad is not null then raise exception '鉄道の免許がない市区町村です（%）。国土 → ≡ →「🚃 鉄道の免許」で申請してください', bad; end if;
   end if;
   if '?' = any(ters) then raise exception '地図のないところには作れません'; end if;
-  if 'D' = any(ters) then raise exception '深い海には作れません'; end if;
+  if 'D' = any(ters) then
+    if not zfo then raise exception '深い海には作れません'; end if;
+    zfc := zfc || jsonb_build_array(jsonb_build_array('D'));
+  end if;
   ncells := _mp_seg_cells_arr(p_pts, sg.kind, sg.w, sg.dbl);
   -- 高さ（t108）：縦断を決めなおす。交差する線・建物・駅のホーム・車庫・バス停・滑走路は、上か下を通る（はしの 20m はのぞく）
   md := case when sg.hm in ('el', 'ug', 'tn', 'fl') then sg.hm when sg.hm = 'tz' and coalesce(sg.hopt ? 'zt', false) then 'tz' else 'auto' end;   -- 平坦・高さを決める（DB の更新84）も
   ho := nullif(case when md = 'tz' then sg.hopt else coalesce(sg.hopt, '{}'::jsonb) - 'zt' - 'zr' end, '{}'::jsonb);   -- 勾配の上限は そのまま
   z0 := _mp_end_z(sg.n0, p_id); z1 := _mp_end_z(sg.n1, p_id);
-  pr := _mp_prof_make2(p_pts, sg.kind, sg.cls, z0, z1, md, sg.rack, null::real[], ncells, tiles, least(0.4, ln / 3)::real, (ln - least(0.4, ln / 3))::real, array[p_id], false, null::real[], ho);
+  pr := _mp_prof_make2(p_pts, sg.kind, sg.cls, z0, z1, md, sg.rack, null::real[], ncells, tiles, least(0.4, ln / 3)::real, (ln - least(0.4, ln / 3))::real, array[p_id], false, null::real[], case when zfo then coalesce(ho, '{}'::jsonb) || jsonb_build_object('force', true) else ho end);
   if not (pr ->> 'ok')::boolean then raise exception '%', pr ->> 'err'; end if;
+  zfc := zfc || coalesce(pr -> 'fc', '[]'::jsonb);
   pf := array(select v::real from jsonb_array_elements_text(pr -> 'prof') v);
   -- 工事費：新しく通るマスはぜんぶ、前から通るマスは つくりが高くなった分だけ
   base := case when sg.kind = 'rail' then _mp_rate('rail') * _mp_gauge_mul(sg.gauge) * case when sg.g2 is not null then 1.4 else 1 end * _mp_slp_bmul(sg.slp) else _mp_rate('road') * _mp_road_mul(sg.cls, sg.lanes) end;
@@ -24385,7 +24406,8 @@ begin
   need := _mp_land_need(ncells, sg.own_u, sg.own_c, sg.gov, _mp_seg_cells_arr(sg.pts, sg.kind, sg.w, sg.dbl));
   if p_dry then return jsonb_build_object('cost', amt_, 'lease', round(lq.fee), 'tiles', array_length(tiles, 1) / 2, 'new', coalesce(array_length(newt, 1), 0) / 2, 'len_m', round(ln * 50), 'rmin_m', round(least(rmin, 99999) * 50), 'vlim', vl,
     'vtop', least(_mp_seg_v(sg.gauge, sg.g2, sg.slp, sg.rack), (select max((v ->> 1)::int) from jsonb_array_elements(_mp_vruns(p_pts, 0, ln)) v)), 'need', need,
-    'hm', md, 'ho', ho, 'rack', sg.rack, 'z0', z0, 'z1', z1, 'len', round(ln::numeric, 2)) || (pr - 'ok' - 'ns'); end if;
+    'hm', md, 'ho', ho, 'rack', sg.rack, 'z0', z0, 'z1', z1, 'len', round(ln::numeric, 2)) || (pr - 'ok' - 'ns' - 'fc')
+    || case when zfo then jsonb_build_object('fc', zfc) else '{}'::jsonb end; end if;
   perform _mp_land_stop(need);
   perform _mp_pay(sg.own_u, sg.own_c, sg.gov, amt_::bigint, sg.kind, format('%sの引きなおし', case when sg.kind = 'rail' then '線路' else '道路' end));
   perform _mp_chg('seg', p_id, 'set', sg.bb);
@@ -24584,13 +24606,15 @@ end $$;
 
 /* ---------- 駅・バス停 ---------- */
 -- p_kind：rail（駅。自分の線路の上）/ bus（バス停。どの道路の上でも）。p_s：線の上の位置（マス）
-create or replace function public.mp_sta_build(p_kind text, p_seg bigint, p_x real, p_y real, p_plat int, p_tracks int, p_name text, p_as text, p_dry boolean) returns jsonb
+create or replace function public.mp_sta_build(p_kind text, p_seg bigint, p_x real, p_y real, p_plat int, p_tracks int, p_name text, p_as text, p_dry boolean, p_force boolean default false) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); pa record; sg mp_segs; q record; s real; span real; tiles int[]; cost numeric; sid bigint; pt record; nm text := left(trim(coalesce(p_name, '')), 20); sub int[];
         pcs int[]; oc int[]; need jsonb; lfee numeric := 0; zp real; zl text;
+        zfo boolean := false; zfc jsonb := '[]'::jsonb; zh text;   -- 国の強行（DB の更新116）
 begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
+  zfo := pa.gv and p_kind = 'rail' and coalesce(p_force, false);   -- 国の強行（DB の更新116）：ホームのカーブ・ホームにかかる建物でも つくる
   if pa.gv and p_kind <> 'rail' then raise exception 'バス停は人か会社で作ります'; end if;   -- 国は鉄道の駅だけ（DB の更新101）
   if not p_dry then perform _mp_lock(pa.pu, pa.pc); end if;
   select * into sg from mp_segs where id = p_seg;
@@ -24608,7 +24632,10 @@ begin
     span := p_plat / 50.0;
     if s - span / 2 < 0.3 or s + span / 2 > sg.len - 0.3 then raise exception 'ホームが線路からはみ出します（線路のはしから離すか、ホームを短くしてください）'; end if;
     sub := _mp_sub(sg.pts, s - span / 2, s + span / 2);   -- ホームの線（先に1回だけ）
-    if _mp_minr(sub) < 8 then raise exception 'ホームはカーブのゆるいところ（半径400m以上）に作ります'; end if;
+    if _mp_minr(sub) < 8 then
+      if not zfo then raise exception 'ホームはカーブのゆるいところ（半径400m以上）に作ります'; end if;
+      zfc := zfc || jsonb_build_array(jsonb_build_array('rs', round((_mp_minr(sub) * 50)::numeric)));
+    end if;
     if exists (select 1 from mp_stations t where t.seg = p_seg and abs(t.at - s) < (t.plat / 50.0 + span) / 2 + 1)
        or exists (select 1 from mp_depots t where t.seg = p_seg and abs(t.at - s) < (span + (_mp_dep_dim(t.kind, t.size))[1]) / 2 + 0.2) then raise exception '近くにほかの駅・車庫があります'; end if;
     tiles := _mp_tiles(sub);
@@ -24616,7 +24643,11 @@ begin
                     lateral unnest(array[z.x, z.y]) with ordinality u(v, o));
     -- 高さ（t108）：ホームの高さ。地下駅（地面−15m より深い）は建物の下、高架駅は低い建物の上（屋根＋5m）にも作れる
     zp := case when sg.prof is not null then _mp_pz(sg.prof, s) end;
-    if _mp_bld_hit_z(pcs, zp) is not null then raise exception 'ホームが建物のある土地にかかります'; end if;
+    zh := _mp_bld_hit_z(pcs, zp);
+    if zh is not null then
+      if not zfo then raise exception 'ホームが建物のある土地にかかります'; end if;
+      zfc := zfc || jsonb_build_array(jsonb_build_array('b', zh));
+    end if;
     -- ホームが他人の筆にかかるところ（線路の区画はのぞく）は、貸出料があるか申請が許可されているときだけ。使用料もかかる
     oc := _mp_seg_cells_arr(_mp_sub(sg.pts, greatest(0, s - span / 2 - 1), least(sg.len, s + span / 2 + 1)), 'rail', sg.w, sg.dbl);   -- ホームの前後 50m までの線路
     need := _mp_land_need(pcs, pa.pu, pa.pc, pa.gv, oc);
@@ -24638,7 +24669,7 @@ begin
     cost := _mp_rate('stop');
   else raise exception '作るものがちがいます'; end if;
   if p_dry then return jsonb_build_object('cost', round(cost), 'up_day', case when pa.gv then 0 when p_kind = 'rail' then round(_mp_rate('up_sta') * (1 + 0.25 * (p_tracks - 1))) else _mp_rate('up_stop') end,
-    'lease', round(lfee), 'need', need, 'zl', zl); end if;
+    'lease', round(lfee), 'need', need, 'zl', zl) || case when zfo then jsonb_build_object('fc', zfc) else '{}'::jsonb end; end if;
   perform _mp_land_stop(need);
   perform _mp_pay(pa.pu, pa.pc, pa.gv, round(cost)::bigint, 'sta', format('%s「%s」の工事', case when p_kind = 'rail' then '駅' else 'バス停' end, nm));
   select * into pt from _mp_at(sg.pts, s);
@@ -37091,6 +37122,8 @@ $$;
 --   oseg：線そのもの（形を直す・高さを変えるとき。その線との交差・その線の駅・車庫はのぞく。いくつでも）・xonly：線路との交差だけ見る（前からある線を直すとき）・
 --   fx：決まった高さのところ [s0, s1, 下, 上, …]（車庫のところは地面 ±2.5m）
 --   答え：{ok, prof, st（1マスごとのつくり）, g（1マスごとの地面）, maxg（いちばん急な勾配 ‰）, tun・via・brg（m）, lx（踏切の数）, xs（交差・上下を通るもの [s, 'over'/'under'/'level', 名前]）, ns} か {ok: false, err}
+--   国の強行（opt.force。DB の更新116）：だめなら 勾配の上限をこえてもよい（よけるもののまわりだけ・ゆるいほうから）。それでも よけきれないものは通す（xs の 'clash'）。
+--     答えに fc（強行したところ：['g', ‰]・['g', ‰, 名前]・['x', 名前]・['c'（はしの高さだけ守った）]）
 -- 縦断を いちばん平らに（DB の更新84）：点 cs ごとの範囲 lo〜hi を通る、いちばん短い折れ線（ぴんと張った糸）。勾配のいちばん急なところも、いちばんゆるくなる
 --   v0・v1：はしが自由なとき、そのはしの外のずっと遠くにおく点の高さ（null なら、そのはしは lo＝hi で決まっている）
 create or replace function public._mp_taut(cs real[], lo real[], hi real[], v0 real, v1 real) returns real[]
@@ -37182,6 +37215,7 @@ declare sm record; ss real[] := '{}'; gg real[] := '{}'; tt text[] := '{}'; S re
         gb real[]; ge real[]; tw int := 20; wv real; jj int; zlv real[] := '{}'; zq record;
         zt real := (opt ->> 'zt')::real; zr boolean := coalesce(opt -> 'zr' = 'true'::jsonb, false); gm real := (opt ->> 'gm')::real; gx real := (opt ->> 'gx')::real; tz boolean; fl boolean := mode = 'fl';
         blo real[]; bhi real[]; gmx real; gmn real; wt boolean; al real; g0 real;
+        zfo boolean := coalesce(opt -> 'force' = 'true'::jsonb, false); zfc jsonb := '[]'::jsonb; zsk boolean[]; zgf real; zw real; zd2 real[]; zok boolean;   -- 国の強行（DB の更新116）
 begin
   -- 1マスごとの地面
   for sm in select * from _mp_gsamp(p) loop ss := ss || sm.s; gg := gg || sm.g; tt := tt || sm.t; end loop;
@@ -37307,10 +37341,36 @@ begin
         elsif wt then blo[k] := 2; bhi[k] := 8; end if;
       end loop;
     end if;
+    zsk := array_fill(false, array[no]);   -- 国の強行で よけないことにしたもの（DB の更新116）
     ord := array(select gi from generate_series(1, no) gi order by o_lv[gi], o_s0[gi]);
     -- 解く。通るものにかかるところは、1つずつ上か下（か踏切）に決めて解きなおす（だめなら ほかの側。線路・建物などが先、踏切にできる道路はあと）
     z := _mp_prof_solve_al(tg, lo, hi, d, al);   -- トンネル優先は、目標より下で いちばん近い線（DB の更新81）
     if fl and z is not null then z := _mp_prof_flat(cs, z, lo, hi, blo, bhi); end if;   -- 平坦（DB の更新84）
+    if z is null and zfo then   -- 国の強行（DB の更新116）：勾配の上限をこえてもよい（ゆるいほうから。120‰ までは 駅のところは水平のまま）。それでもだめなら はしの高さだけ守る
+      foreach zgf in array array[0.05, 0.08, 0.12, 0.2, 0.4, 1.0]::real[] loop
+        continue when zgf <= G;
+        zd2 := '{}';
+        for k in 1..n - 1 loop zd2 := zd2 || (zgf * (cs[k + 1] - cs[k]) * 50)::real; end loop;
+        if zgf < 0.2 then
+          for i in 1..coalesce(array_length(zlv, 1), 0) / 2 loop
+            for k in 1..n - 1 loop if cs[k] >= zlv[2 * i - 1] - 0.02 and cs[k + 1] <= zlv[2 * i] + 0.02 then zd2[k] := least(zd2[k], d[k]); end if; end loop;
+          end loop;
+        end if;
+        z := _mp_prof_solve_al(tg, lo, hi, zd2, al);
+        if fl and z is not null then z := _mp_prof_flat(cs, z, lo, hi, blo, bhi); end if;
+        if z is not null then d := zd2; zfc := zfc || jsonb_build_array(jsonb_build_array('g', round((zgf * 1000)::numeric))); exit; end if;
+      end loop;
+      if z is null then   -- はしの高さだけ（川の上の橋・車庫・手で決めた高さ・駅の水平は 守れない）
+        lo := array_fill(-1e9::real, array[n]); hi := array_fill(1e9::real, array[n]);
+        if z0 is not null then lo[1] := z0; hi[1] := z0; end if;
+        if z1 is not null then lo[n] := z1; hi[n] := z1; end if;
+        zd2 := '{}';
+        for k in 1..n - 1 loop zd2 := zd2 || ((cs[k + 1] - cs[k]) * 50)::real; end loop;   -- 1000‰ まで
+        z := _mp_prof_solve_al(tg, lo, hi, zd2, al);
+        if z is null then zd2 := array_fill(1e6::real, array[n - 1]); z := _mp_prof_solve_al(tg, lo, hi, zd2, al); end if;
+        d := zd2; zfc := zfc || jsonb_build_array(jsonb_build_array('c'));
+      end if;
+    end if;
     if z is null then
       return jsonb_build_object('ok', false, 'err', case when z0 is not null and z1 is not null and abs(z1 - z0) > G * S * 50 then
         format('勾配がきつすぎて、はしの高さどうしをつなげません（%s は %s‰ まで。高さの差 %sm・長さ %sm）', case when G < g0 then '勾配の上限' when kind = 'road' then '道路' when rack then 'アプト式' else '線路' end,
@@ -37321,7 +37381,7 @@ begin
     for it in 1..no + 1 loop
       fi := null;
       foreach i in array coalesce(ord, '{}') loop
-        continue when o_ka[i] = 0;
+        continue when o_ka[i] = 0 or zsk[i];
         za := 1e9; zb_ := -1e9;
         for j in o_ka[i]..o_kb[i] loop za := least(za, z[j]); zb_ := greatest(zb_, z[j]); end loop;
         continue when zb_ <= o_zb[i] + 0.01 or za >= o_zt[i] - 0.01 or (o_lv[i] and za >= o_g[i] - 2.51 and zb_ <= o_g[i] + 2.51);
@@ -37349,10 +37409,37 @@ begin
         if fl and z2 is not null then z2 := _mp_prof_flat(cs, z2, lo2, hi2, blo, bhi); end if;   -- 平坦（DB の更新84）
         exit when z2 is not null;
       end loop;
+      if z2 is null and zfo then   -- 国の強行（DB の更新116）：そのまわり（3・10・30マス）だけ 勾配の上限をこえてもよい（ゆるいほうから）。上下は そのまま（線路どうしは 地下でも 10m）
+        <<zfl>>
+        foreach zgf in array array[0.05, 0.08, 0.12, 0.2, 0.4, 1.0]::real[] loop
+          foreach zw in array array[3, 10, 30]::real[] loop
+            zd2 := d; zok := false;
+            for j in 1..n - 1 loop
+              if cs[j + 1] >= o_s0[fi] - zw and cs[j] <= o_s1[fi] + zw and zd2[j] < zgf * (cs[j + 1] - cs[j]) * 50 then zd2[j] := (zgf * (cs[j + 1] - cs[j]) * 50)::real; zok := true; end if;
+            end loop;
+            continue when not zok;
+            foreach side in array sides loop
+              lo2 := lo; hi2 := hi;
+              for j in o_ka[fi]..o_kb[fi] loop
+                if side = 'over' then lo2[j] := greatest(lo2[j], o_zt[fi]);
+                elsif side = 'under' then hi2[j] := least(hi2[j], o_zb[fi]);
+                else lo2[j] := greatest(lo2[j], o_g[fi] - 2.5); hi2[j] := least(hi2[j], o_g[fi] + 2.5); end if;
+              end loop;
+              z2 := _mp_prof_solve_al(tg, lo2, hi2, zd2, al);
+              if fl and z2 is not null then z2 := _mp_prof_flat(cs, z2, lo2, hi2, blo, bhi); end if;
+              if z2 is not null then d := zd2; zfc := zfc || jsonb_build_array(jsonb_build_array('g', round((zgf * 1000)::numeric), o_nm[fi])); exit zfl; end if;
+            end loop;
+          end loop;
+        end loop;
+        if z2 is null then   -- よけきれない：そのまま通す（ぶつかる）
+          zsk[fi] := true; zfc := zfc || jsonb_build_array(jsonb_build_array('x', o_nm[fi]));
+          continue;
+        end if;
+      end if;
       if z2 is null then return jsonb_build_object('ok', false, 'err', '上下をよける高さがとれません（勾配がきつすぎます' || case when upf is not null then '。手で決めた高さも見なおしてください' else '' end || '）：' || o_nm[fi]); end if;
       lo := lo2; hi := hi2; z := z2;
     end loop;
-    if fi is not null then return jsonb_build_object('ok', false, 'err', '上下をよける高さがとれません：' || o_nm[fi]); end if;
+    if fi is not null and not zfo then return jsonb_build_object('ok', false, 'err', '上下をよける高さがとれません：' || o_nm[fi]); end if;
     pf := _mp_prof_pack(cs, z);
     if fl or tz then pf := _mp_prof_simp(pf); end if;   -- まっすぐにならぶ点は まとめる（DB の更新84）
   end;
@@ -37368,11 +37455,12 @@ begin
   for i in 1..no loop
     za := _mp_pz(pf, (o_s0[i] + o_s1[i]) / 2);
     side := case when za >= o_zt[i] - 0.01 then 'over' when za <= o_zb[i] + 0.01 then 'under' else 'level' end;
+    if zsk[i] then side := 'clash'; end if;   -- 国の強行で よけきれなかったもの（DB の更新116）
     if side = 'level' and o_k[i] = 'x' then lx := lx + 1; end if;
     xs := xs || jsonb_build_array(jsonb_build_array(round(o_s0[i]::numeric, 1), side, o_nm[i]));
   end loop;
   return jsonb_build_object('ok', true, 'prof', to_jsonb(pf), 'st', st, 'g', (select jsonb_agg(round(v::numeric)) from unnest(gg) v), 'maxg', round(mg::numeric),
-    'tun', tun, 'via', via, 'brg', brg, 'cut', cut, 'lx', lx, 'xs', xs, 'ns', ns);
+    'tun', tun, 'via', via, 'brg', brg, 'cut', cut, 'lx', lx, 'xs', xs, 'ns', ns) || case when zfo then jsonb_build_object('fc', zfc) else '{}'::jsonb end;   -- fc：強行したところ（DB の更新116）
 end $$;
 -- 縦断を決めて、しらべる（いままでの呼び出し。数値 opt なし。DB の更新84 から _mp_prof_make2 を呼ぶ）
 create or replace function public._mp_prof_make(p int[], kind text, cls text, z0 real, z1 real, mode text, rack boolean, upf real[], cells int[], tiles int[], ea real, eb real, oseg bigint[], xonly boolean, fx real[]) returns jsonb
@@ -37594,12 +37682,14 @@ create or replace function public.mp_seg_height(p_id bigint, p_mode text, p_prof
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); sg mp_segs; me_cs int[]; pr jsonb; rk boolean; md text; nhm text; tiles int[]; cells int[]; base numeric; amt numeric := 0; scost numeric := 0;
         pf real[]; nw text; vl int; z0 real; z1 real; s record; g real; ozl text; nzl text; sts jsonb := '[]'::jsonb; ho jsonb;
+        zfo boolean := false; zfc jsonb := '[]'::jsonb;   -- 国の強行（DB の更新116）
 begin
   perform _mp_ok(u);
   select * into sg from mp_segs where id = p_id for update;
   if not found then raise exception '線が見つかりません'; end if;
   me_cs := array(select id from companies where owner = u);
   if not coalesce(sg.own_u = u or sg.own_c = any(me_cs) or (sg.gov and _is_admin(u)), false) then raise exception 'あなたの線ではありません'; end if;
+  zfo := coalesce(p_opt -> 'force' = 'true'::jsonb, false) and sg.gov and _is_admin(u);   -- 国の強行（DB の更新116）
   rk := sg.kind = 'rail' and coalesce(p_rack, sg.rack);
   md := case when p_mode in ('auto', 'el', 'ug', 'tn', 'fl', 'tz') then p_mode else 'auto' end;   -- tn：トンネル優先（DB の更新81）・fl：平坦（地上）・tz：高さを決める（DB の更新84）
   ho := _mp_hopt(md, coalesce(p_opt, '{}'::jsonb), sg.kind, rk);   -- 高さ・勾配の上限（DB の更新84）
@@ -37610,8 +37700,9 @@ begin
   cells := _mp_seg_cells_arr(sg.pts, sg.kind, sg.w, sg.dbl);
   z0 := _mp_end_z(sg.n0, p_id); z1 := _mp_end_z(sg.n1, p_id);
   pr := _mp_prof_make2(sg.pts, sg.kind, sg.cls, z0, z1, md, rk, p_prof, cells, tiles, least(0.4, sg.len / 3)::real, (sg.len - least(0.4, sg.len / 3))::real, array[sg.id], false,
-                       _mp_dep_fx(sg.id, 0, false, sg.len), ho);
+                       _mp_dep_fx(sg.id, 0, false, sg.len), case when zfo then coalesce(ho, '{}'::jsonb) || jsonb_build_object('force', true) else ho end);
   if not (pr ->> 'ok')::boolean then raise exception '%', pr ->> 'err'; end if;
+  zfc := zfc || coalesce(pr -> 'fc', '[]'::jsonb);
   nw := pr ->> 'st';
   pf := array(select v::real from jsonb_array_elements_text(pr -> 'prof') v);
   base := case when sg.kind = 'rail' then _mp_rate('rail') else _mp_rate('road') * _mp_road_mul(sg.cls, sg.lanes) end;
@@ -37630,7 +37721,8 @@ begin
   amt := round(amt);
   vl := case when sg.kind = 'rail' then case when rk then least(30, _mp_vlim(_mp_minr(sg.pts))) else _mp_vlim(_mp_minr(sg.pts)) end else sg.vlim end;
   if p_dry then
-    return (pr - 'ok' - 'ns') || jsonb_build_object('cost', amt, 'vlim', vl, 'rack', rk, 'hm', nhm, 'ho', ho, 'stas', sts, 'z0', z0, 'z1', z1, 'len', round(sg.len::numeric, 2));
+    return (pr - 'ok' - 'ns' - 'fc') || jsonb_build_object('cost', amt, 'vlim', vl, 'rack', rk, 'hm', nhm, 'ho', ho, 'stas', sts, 'z0', z0, 'z1', z1, 'len', round(sg.len::numeric, 2))
+      || case when zfo then jsonb_build_object('fc', zfc) else '{}'::jsonb end;
   end if;
   if amt > 0 then
     perform _mp_pay(sg.own_u, sg.own_c, sg.gov, amt::bigint, sg.kind, format('%sの高さ（%s）', case when sg.kind = 'rail' then '線路' else '道路' end,
@@ -37651,7 +37743,7 @@ end $$;
 --   （分かれ道のない点でつながる同じ持ち主の線路もいっしょに。前後 8・16・32マスの順に、とどくまで広げる。区間の外の高さは、いまのまま）。
 --   ほかの駅・車庫のところは、いまの高さのまま。線の高さのえらびかた（地形に合わせる・トンネル優先・平坦・高さを決める など）は、駅の線のもの。
 --   ホームの上に建物があれば、地下駅は地面より 15m 下に。工事費：つくりが高くなるマス（地面 → 高架・トンネルなど）の差と、駅の差（地下駅 2.5倍・高架駅 1.5倍）。もどしても返金なし
-create or replace function public.mp_sta_height(p_id bigint, p_lv text, p_dry boolean) returns jsonb
+create or replace function public.mp_sta_height(p_id bigint, p_lv text, p_dry boolean, p_force boolean default false) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare u uuid := _me(); st mp_stations; sg mp_segs; c record; o record; smp record;
         ids bigint[] := '{}'; rvs boolean[] := '{}'; offs real[] := '{}'; lens real[] := '{}'; cp int[] := '{}'; p int[]; m int; gp real; tl real := 0;
@@ -37660,6 +37752,7 @@ declare u uuid := _me(); st mp_stations; sg mp_segs; c record; o record; smp rec
         a0 real; a1 real; rr real; pr jsonb; wp real[]; sub real[]; comb real[]; z0 real; z1 real; nd0 bigint; nd1 bigint; za real; zb real;
         md text; ho jsonb; rk boolean; wpts int[]; err text; amt numeric := 0; scost numeric := 0; sa numeric; tiles int[]; nst text; zc real; hit text; pcs int[];
         subs jsonb := '{}'::jsonb; nseg int := 0; k text; cg float8;
+        zfo boolean := false; zfc jsonb := '[]'::jsonb;   -- 国の強行（DB の更新116）
 begin
   perform _mp_ok(u);
   select * into st from mp_stations where id = p_id;
@@ -37670,6 +37763,7 @@ begin
   select * into sg from mp_segs where id = st.seg;
   if not found then raise exception '駅の線路が見つかりません'; end if;
   if not _mp_mine(u, sg.own_u, sg.own_c) or sg.gov <> (st.own_u is null and st.own_c is null) then raise exception 'ほかの人の線路にある駅は、高さを変えられません'; end if;   -- 国の駅は国の線路の上（DB の更新101）
+  zfo := coalesce(p_force, false) and sg.gov and _is_admin(u);   -- 国の強行（DB の更新116）
   ozl := _mp_sta_lv(st.seg, st.at, st.x, st.y);
   if ozl is not distinct from nlv then raise exception 'いまと同じ高さです'; end if;
   if not p_dry then perform _mp_lock(st.own_u, st.own_c); end if;
@@ -37745,6 +37839,21 @@ begin
     err := pr ->> 'err';
     exit when a0 = 0 and a1 = tl;
   end loop;
+  if not coalesce((pr ->> 'ok')::boolean, false) and zfo then   -- 国の強行（DB の更新116）：いちばん広い区間で、勾配の上限をこえても
+    a0 := greatest(0, sc - hp - 48); a1 := least(tl, sc + hp + 48);
+    if a0 < 0.5 then a0 := 0; end if;
+    if a1 > tl - 0.5 then a1 := tl; end if;
+    wfx := '{}';
+    for j in 1..coalesce(array_length(fx, 1), 0) / 4 loop
+      if fx[4 * j - 2] > a0 and fx[4 * j - 3] < a1 then wfx := wfx || array[fx[4 * j - 3] - a0, fx[4 * j - 2] - a0, fx[4 * j - 1], fx[4 * j]]; end if;
+    end loop;
+    wpts := _mp_sub(cp, a0, a1);
+    za := case when a0 = 0 then z0 else _mp_pz(cur, a0) end; zb := case when a1 = tl then z1 else _mp_pz(cur, a1) end;
+    pr := _mp_prof_make2(wpts, 'rail', 'rail', za, zb, md, rk, null::real[], _mp_seg_cells_arr(wpts, 'rail', sg.w, sg.dbl), _mp_tiles(wpts),
+                         case when a0 = 0 then 0.4 else 0 end::real, (a1 - a0 - case when a1 = tl then 0.4 else 0 end)::real, ids, false, wfx,
+                         coalesce(ho, '{}'::jsonb) || jsonb_build_object('force', true));
+    zfc := zfc || coalesce(pr -> 'fc', '[]'::jsonb);
+  end if;
   if not coalesce((pr ->> 'ok')::boolean, false) then raise exception '%', coalesce(err, 'この駅は、この高さにできません'); end if;
   wp := array(select v::real from jsonb_array_elements_text(pr -> 'prof') v);
   -- 区間の中は決めた縦断、外は いまの高さ
@@ -37758,7 +37867,10 @@ begin
   -- ホームが建物にかからないか（地下駅は地面より 15m 下・高架駅は屋根より 5m 上なら かからない）
   zc := _mp_pz(comb, sc);
   hit := _mp_bld_hit_z(pcs, zc);
-  if hit is not null then raise exception 'ホームが建物（%）にかかります', hit; end if;
+  if hit is not null then
+    if not zfo then raise exception 'ホームが建物（%）にかかります', hit; end if;
+    zfc := zfc || jsonb_build_array(jsonb_build_array('b', hit));
+  end if;
   -- 区間にかかる線ごとの新しい縦断と工事費（つくりが高くなるマスの差）
   for i in 1..array_length(ids, 1) loop
     continue when not (a0 < offs[i] + lens[i] - 0.01 and a1 > offs[i] + 0.01);
@@ -37778,9 +37890,9 @@ begin
   -- 駅の差（地下駅 2.5倍・高架駅 1.5倍）
   scost := round(greatest(0, _mp_sta_cost(st.tracks, st.plat, (st.x / 100.0)::real, (st.y / 100.0)::real, nlv) - _mp_sta_cost(st.tracks, st.plat, (st.x / 100.0)::real, (st.y / 100.0)::real, ozl)));
   if p_dry then
-    return (pr - 'ok' - 'ns' - 'prof') || jsonb_build_object('prof', to_jsonb(wp), 'cur', to_jsonb(_mp_prof_sub(cur, a0, a1)), 'len', round((a1 - a0)::numeric, 2),
+    return (pr - 'ok' - 'ns' - 'prof' - 'fc') || jsonb_build_object('prof', to_jsonb(wp), 'cur', to_jsonb(_mp_prof_sub(cur, a0, a1)), 'len', round((a1 - a0)::numeric, 2),
       'sta', jsonb_build_array(round((sc - hp - a0)::numeric, 2), round((sc + hp - a0)::numeric, 2)), 'from', coalesce(ozl, 'G'), 'to', p_lv,
-      'cost', amt + scost, 'scost', scost, 'segs', nseg, 'm', round(((a1 - a0) * 50)::numeric));
+      'cost', amt + scost, 'scost', scost, 'segs', nseg, 'm', round(((a1 - a0) * 50)::numeric)) || case when zfo then jsonb_build_object('fc', zfc) else '{}'::jsonb end;
   end if;
   if amt + scost > 0 then
     perform _mp_pay(st.own_u, st.own_c, false, (amt + scost)::bigint, 'sta', format('駅「%s」の高さ（%s → %s）', st.name,
@@ -39515,7 +39627,7 @@ alter function public.mp_sta_sup(bigint, text, boolean, boolean) set statement_t
 -- 運行の乱れの対応で迂回をえらぶと、線路の道すじをさがすので20秒まで（DB の更新82）
 alter function public.mp_unko_pick(bigint, int, text, boolean, boolean, boolean) set statement_timeout = '20s';
 -- 駅の高さを変える（DB の更新84）は、縦断を何回か解くので60秒まで
-alter function public.mp_sta_height(bigint, text, boolean) set statement_timeout = '60s';
+alter function public.mp_sta_height(bigint, text, boolean, boolean) set statement_timeout = '60s';   -- 国の強行（p_force。DB の更新116）
 -- 信号を変える（DB の更新85）は、通る系統の時刻を計算しなおすので60秒まで
 alter function public.mp_seg_sig(bigint, int, boolean, boolean) set statement_timeout = '60s';
 -- 変電所をつくる・こわす（DB の更新89）は、通る系統の時刻を計算しなおすので60秒まで
