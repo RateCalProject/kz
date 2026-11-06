@@ -2215,11 +2215,11 @@ function runPos(R, tn, tm, it) {
     }
     if (i + 1 < sc.length && dp != null && sc[i + 1][1] != null && tt >= dp && tt <= sc[i + 1][1]) {
       nx = i + 1;
-      const f = (tt - dp) / Math.max(1, sc[i + 1][1] - dp), g = R.k === 'air' || R.k === 'ship' ? f : f * f * (3 - 2 * f);   // 電車・バスは、はじめとおわりがゆっくり
+      const T = Math.max(1, sc[i + 1][1] - dp), f = (tt - dp) / T, lin = R.k === 'air' || R.k === 'ship';   // 電車・バスは ほんもののように 加速・一定・減速（runProg）
       const Q = ctr ? runSpan(R, tn, i, i + 1, it) : null;
-      if (Q) { H = Q.H; d = Q.o + g * Q.L + Q.h; break; }
+      if (Q) { H = Q.H; d = Q.o + (lin ? f : runProg(f, T, Q.L * 50, R.k)) * Q.L + Q.h; break; }
       H = runHop(R, tn.idx[i], tn.idx[i + 1], it); if (!H) break;
-      d = g * H.len; break;
+      d = (lin ? f : runProg(f, T, H.len * 50, R.k)) * H.len; break;
     }
     if (i + 1 === sc.length && ar != null && tt >= ar) {
       at = i;
@@ -2233,6 +2233,17 @@ function runPos(R, tn, tm, it) {
   return { H, d, x: p[0], y: p[1], a: p[2], at, nx, tt, dl, day: rday, d0: rd0 };
 }
 const runCarL = k => k === 'rail' ? 0.4 : k === 'bus' ? 0.24 : k === 'ship' ? 2.4 : 0.9;   // 1両（1台）の長さ（マス）
+// 駅と駅のあいだの 進みぐあい（0〜1。f：すぎた時間の わりあい）：ほんものの電車・バスのように 加速（a m/秒²）→ 一定の速さ → 減速（b）。
+//   T 秒で D m 進む（ダイヤの時間に着く 一定の速さを 決める）。時間が 足りないときは なめらかな曲線（はじめと おわりが ゆっくり）
+function runProg(f, T, D, k) {
+  const sm = f * f * (3 - 2 * f);
+  if (!(D > 1) || !(T > 1)) return sm;
+  const a = k === 'bus' ? 1.0 : 0.75, b = k === 'bus' ? 1.1 : 0.9, kk = 1 / (2 * a) + 1 / (2 * b), dis = T * T - 4 * kk * D;
+  if (dis <= 0) return sm;
+  const v = (T - Math.sqrt(dis)) / (2 * kk), ta = v / a, tb = v / b, t = clamp(f, 0, 1) * T;
+  const x = t <= ta ? 0.5 * a * t * t : t >= T - tb ? D - 0.5 * b * (T - t) * (T - t) : 0.5 * a * ta * ta + v * (t - ta);
+  return clamp(x / D, 0, 1);
+}
 // いま走っている車両（しぼりこみのとおり）：[{R, T, H, d（頭の位置）, x, y, a, len（長さ・マス）, car}]。v：見るはんい（マス）
 function runList(it, v) {
   runNeed(it);

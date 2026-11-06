@@ -15367,12 +15367,13 @@ create unlogged table if not exists public.av_pos (
 create index if not exists av_pos_at_idx on public.av_pos(at);
 alter table public.av_pos enable row level security;
 revoke all on public.av_pos from anon, authenticated;
+alter table public.av_pos add column if not exists i smallint not null default 0;   -- 持ち物（DB の更新122）
 
 -- 自分の位置を送って、近く（400m）の人の位置を受けとる（DB の更新119）
 create or replace function public.av_step(p_k text, p_x double precision, p_y double precision, p_f double precision, p_h double precision,
-                                          p_m int default 0, p_v int default 0, p_known text[] default null) returns jsonb
+                                          p_m int default 0, p_v int default 0, p_known text[] default null, p_i int default 0, p_c bigint default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare zu uuid := _me_g(); zo jsonb;
+declare zu uuid := _me_g(); zo jsonb; zc jsonb;
 begin
   if p_k is null or not exists (select 1 from av_walk w where w.k = p_k and w.user_id = zu and w.at > now() - interval '1 day') then
     raise exception 'walk_k：歩くしるしが古くなりました';
@@ -15386,22 +15387,75 @@ begin
   if p_x is null or p_y is null or p_f is null or p_h is null or abs(p_x) > 100000 or abs(p_y) > 100000 or abs(p_f) > 100 or abs(p_h) > 1000 then
     raise exception '位置が おかしいです';
   end if;
-  insert into av_pos as a (k, user_id, x, y, f, h, m, v, at)
-  values (p_k, zu, p_x, p_y, p_f, p_h, least(2, greatest(0, coalesce(p_m, 0))), coalesce(p_v, 0), now())
-  on conflict (k) do update set x = excluded.x, y = excluded.y, f = excluded.f, h = excluded.h, m = excluded.m, v = excluded.v, at = excluded.at;
+  insert into av_pos as a (k, user_id, x, y, f, h, m, v, i, at)
+  values (p_k, zu, p_x, p_y, p_f, p_h, least(5, greatest(0, coalesce(p_m, 0))), coalesce(p_v, 0), least(31, greatest(0, coalesce(p_i, 0))), now())   -- うごき 0〜5・持ち物（DB の更新122）
+  on conflict (k) do update set x = excluded.x, y = excluded.y, f = excluded.f, h = excluded.h, m = excluded.m, v = excluded.v, i = excluded.i, at = excluded.at;
   if random() < 0.02 then delete from av_pos a where a.at < now() - interval '1 minute'; end if;
   select coalesce(jsonb_agg(jsonb_build_object('k', a.k, 'x', round(a.x::numeric, 4), 'y', round(a.y::numeric, 4), 'f', round(a.f::numeric, 4),
-                                               'h', round(a.h::numeric, 2), 'm', a.m, 'v', a.v, 'a', round(extract(epoch from (now() - a.at)) * 1000))
+                                               'h', round(a.h::numeric, 2), 'm', a.m, 'v', a.v, 'i', a.i, 'a', round(extract(epoch from (now() - a.at)) * 1000))
                             || case when a.k = any (coalesce(p_known[1:60], '{}'::text[])) then '{}'::jsonb else _av_me_json(a.user_id) end
                             order by a.zd), '[]'::jsonb)
     into zo
     from (select q.*, (q.x - p_x) ^ 2 + (q.y - p_y) ^ 2 zd from av_pos q
            where q.k <> p_k and q.at > now() - interval '12 seconds' and abs(q.x - p_x) < 8 and abs(q.y - p_y) < 8
            order by zd limit 30) a;
-  return jsonb_build_object('o', zo);
+  -- チャット（DB の更新122）：近く（400m）の 1分以内のもの。p_c より あとのもの（はじめは 1分ぶん）。新しいほうから 20こまで
+  select coalesce(jsonb_agg(jsonb_build_object('id', c.id, 'k', c.k, 't', c.t, 'n', (select p.nickname from profiles p where p.id = c.user_id),
+                                               'a', round(extract(epoch from (now() - c.at)) * 1000)) order by c.id), '[]'::jsonb)
+    into zc
+    from (select q.* from av_chat q where q.id > coalesce(p_c, 0) and q.at > now() - interval '1 minute' and abs(q.x - p_x) < 8 and abs(q.y - p_y) < 8
+           order by q.id desc limit 20) c;
+  return jsonb_build_object('o', zo, 'c', zc);
 end $$;
-revoke all on function public.av_step(text, double precision, double precision, double precision, double precision, int, int, text[]) from public, anon;
-grant execute on function public.av_step(text, double precision, double precision, double precision, double precision, int, int, text[]) to authenticated;
+revoke all on function public.av_step(text, double precision, double precision, double precision, double precision, int, int, text[], int, bigint) from public, anon;
+grant execute on function public.av_step(text, double precision, double precision, double precision, double precision, int, int, text[], int, bigint) to authenticated;
+
+-- 街を歩く人の チャット（DB の更新122）。ログを残さない（10分で消す。サーバーを入れなおすと 空になる）
+create unlogged table if not exists public.av_chat (
+  id      bigserial primary key,
+  k       text not null,                                                   -- 言った人の しるし（av_walk）
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  x       double precision not null,                                       -- 言った場所（マス）
+  y       double precision not null,
+  t       text not null,                                                   -- ことば（60文字まで）
+  at      timestamptz not null default now()
+);
+create index if not exists av_chat_at_idx on public.av_chat(at);
+create index if not exists av_chat_user_idx on public.av_chat(user_id, at);
+alter table public.av_chat enable row level security;
+revoke all on public.av_chat from anon, authenticated;
+revoke all on sequence public.av_chat_id_seq from anon, authenticated;
+
+-- チャットを言う（DB の更新122）：近く（400m）の 歩いている人に 見える。60文字まで。URL・メールアドレス・電話番号は 書けない。1.5秒に1回・1分に15回まで
+create or replace function public.av_say(p_k text, p_t text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare zu uuid := _me_g(); zx double precision; zy double precision; zt text; zh text; zn int; zid bigint;
+begin
+  if p_k is null or not exists (select 1 from av_walk w where w.k = p_k and w.user_id = zu and w.at > now() - interval '1 day') then
+    raise exception 'walk_k：歩くしるしが古くなりました';
+  end if;
+  if 'walk' = any(_beta_games()) and not _is_admin(zu) then raise exception '街を歩くのは もうすぐ できるようになります（カミングスーン）'; end if;
+  select a.x, a.y into zx, zy from av_pos a where a.k = p_k and a.user_id = zu and a.at > now() - interval '30 seconds';
+  if not found then raise exception 'いまは 街に いません（もう一度 歩きはじめてください）'; end if;
+  zt := btrim(regexp_replace(regexp_replace(coalesce(p_t, ''), '[[:cntrl:]]', ' ', 'g'), '\s+', ' ', 'g'));
+  if zt = '' then raise exception 'ことばを 入れてください'; end if;
+  if char_length(zt) > 60 then raise exception 'チャットは 60文字までです'; end if;
+  -- しらべる文（全角の 英数字・記号は 半角に）
+  zh := lower(translate(zt, '０１２３４５６７８９ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ＠．：／－ー―‐',
+                              '0123456789abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz@.:/----'));
+  if zh ~ '(https?:|www\.|[a-z0-9-]+\.(com|net|org|jp|io|co|me|info|xyz|ly|gg|tv|app|dev)([^a-z]|$))' then raise exception 'URL は 書けません'; end if;
+  if zh ~ '[a-z0-9._%+-]+@[a-z0-9-]+\.' then raise exception 'メールアドレスは 書けません'; end if;
+  if zh ~ '(^|[^0-9])0[0-9]{9,10}([^0-9]|$)' or zh ~ '(^|[^0-9])0[0-9]{1,4}-[0-9]{1,4}-[0-9]{3,4}([^0-9]|$)' then raise exception '電話番号は 書けません'; end if;
+  perform pg_advisory_xact_lock(7633, hashtext(zu::text));
+  if exists (select 1 from av_chat c where c.user_id = zu and c.at > now() - interval '1.5 seconds') then raise exception 'すこし まってから 送ってください'; end if;
+  select count(*) into zn from av_chat c where c.user_id = zu and c.at > now() - interval '1 minute';
+  if zn >= 15 then raise exception 'チャットは 1分に 15回までです'; end if;
+  insert into av_chat(k, user_id, x, y, t) values (p_k, zu, zx, zy, zt) returning id into zid;
+  if random() < 0.05 then delete from av_chat c where c.at < now() - interval '10 minutes'; end if;
+  return jsonb_build_object('id', zid, 't', zt);
+end $$;
+revoke all on function public.av_say(text, text) from public, anon;
+grant execute on function public.av_say(text, text) to authenticated;
 
 -- ガチャの中身（確率は画面に出す）
 create or replace function public._gacha_json() returns jsonb
@@ -23467,6 +23521,7 @@ insert into public.mp_types(code, series, label, role, face, num_from, num_to, l
   ('R500-Tc', 'R500', 'Tc500', 'Tc', '偶数向き', 0, 999, 18.0, 130, 46, 30.5, 0, 0, true, 110, 3.0, 4.2, true, true, true, false, 44000000, 11000, 365, '制御車（運転台・SIV・CP・蓄電池）。502-000〜', 4110, '502', '', 0, '{}', 3, 1, 1067),
   ('R500-Tcg', 'R500', 'Tcg500', 'Tc', '偶数向き', 0, 999, 18.0, 72, 40, 31.5, 0, 0, true, 110, 3.0, 4.2, true, true, true, false, 52000000, 13000, 365, '制御車・半室グリーン（運転台がわの半分が 2＋2 のリクライニング席。ゲームでは グリーン車）。4・6両の 最後に。503-000〜', 4120, '503', 'G', 0, '{}', 3, 1, 1067)
 on conflict (code) do nothing;
+update public.mp_series set mdl = 'r122' where code = '122-0' and mdl is null;   -- 122系に 3D のモデル（map/m3car.js。DB の更新122）
 
 /* ---------- 設定（管理者が app_settings の mp_rates で変えられる） ---------- */
 -- ふだんの値（運営が app_settings 'mp_rates' で変えていないとき）。DB の更新81：毎回 jsonb をつくらない（CASE。immutable なので式の中で前もって計算される）
@@ -39870,7 +39925,7 @@ begin
             'mp_chunk_lo','mp_blds_lite','_mp_lo_idx','_mp_b64n',
             '_mp_gov_sale_sync',
             '_ad_cfg','_ad_json','_ad_check','ad_info','ad_begin','ad_end','ad_admin','_gx_parse','_gx_table','_gx_draw','_gacha_json','gacha_pull',
-            '_av_me_json','av_info','av_set','av_walk_start','av_who','av_step',
+            '_av_me_json','av_info','av_set','av_walk_start','av_who','av_step','av_say',
             'money_history','corp_ledger_page','money_days','corp_days','_kb_bid_min','_kb_can_run','_kb_colors','_kb_give_horse','_kb_hint','_kb_hjson','_kb_own_c','_kb_own_open','_kb_own_tick','_kb_owned_n','_kb_owner_row','_kb_prog_day','_kb_release','_kb_sale_at','_kb_sale_day','_kb_sales_tick','_kb_take_regs','_kb_upkeep_tick','owner_bid','owner_buy','owner_name','owner_reg','owner_retire','owner_sell','owner_silks','owner_state',
             'fi_cast','fi_consign','fi_hook','fi_join','fi_land','fi_state',
             '_pr_bonus','_pr_check_sel','_pr_hit','_pr_make_day','_pr_make_race','_pr_margin','_pr_month','_pr_name','_pr_new_racer','_pr_odds','_pr_open','_pr_prob','_pr_rate','_pr_seed','_pr_settle','_pr_status','_pr_tick','_pr_wx','pr_bet','pr_day','pr_odds','pr_race','pr_racer',

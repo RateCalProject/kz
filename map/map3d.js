@@ -227,6 +227,7 @@ function m3Frame() {
 function m3RunFrame() {
   if (!M3.on || !M3.r) return;
   if (M3.walk) { try { M3.walk.step(); } catch (e) { console.error(e); } m3Cam(); }   // 街を歩く（DB の更新118）
+  if (M3.pn) m3PropNear(false);   // 近くの物を こまかく（t68）
   if (M3.nearQ) { try { m3Runs(M3.nearQ); } catch (e) { console.error(e); } }
   m3SigTick();
   M3.r.render(M3.sc, M3.cam);
@@ -1099,26 +1100,44 @@ function m3Roads(T3, segs) {
   M3.tRoad = performance.now() - tR0;
 }
 // 街灯・信号（まとめて描く：InstancedMesh）。信号の灯は 40秒で ひとまわり（交差点の向きで2つの組）
+//   近くは こまかく（t68）：街を歩いているとき、カメラから 60m までの 街灯・電柱・信号の柱は こまかい形（M3.pn・m3PropNear）
 function m3Props(T3, LIGHT, SIG, POLES) {
   const mtx = new T3.Matrix4(), q = new T3.Quaternion(), pos = new T3.Vector3(), sc = new T3.Vector3(), up = new T3.Vector3(0, 1, 0), m = 1 / 50;
+  const PN = M3.pn = { groups: [], on: null, cx: 0, cz: 0 };
+  let grp = null;   // いま作っている 物の組（こまかい形に かえるとき かくす 箱）
   const inst = (geo, mat, list, fn) => {
     if (!list.length) return null;
     const im = new T3.InstancedMesh(geo, mat, list.length);
     list.forEach((o, i) => { fn(o); mtx.compose(pos, q, sc); im.setMatrixAt(i, mtx); });
-    im.instanceMatrix.needsUpdate = true; M3.grpR.add(im); return im;
+    im.instanceMatrix.needsUpdate = true; M3.grpR.add(im);
+    if (grp) grp.parts.push({ im, m: im.instanceMatrix.array.slice() });
+    return im;
   };
+  // こまかい形（m。足もとが原点・+x がアームの向き）：頂点の色で 1つに
+  const NG = m3NearGeo(T3);
+  const near = (list, geo, mat, fn) => {   // こまかい形の InstancedMesh（はじめは 0こ）
+    const cap = Math.min(list.length, 48), im = new T3.InstancedMesh(geo, mat, Math.max(1, cap));
+    im.count = 0; im.visible = false; im.frustumCulled = false; im.instanceMatrix.setUsage(T3.DynamicDrawUsage); M3.grpR.add(im);
+    return { im, cap, fn };
+  };
+  const vc = () => new T3.MeshLambertMaterial({ vertexColors: true });
   const box = () => new T3.BoxGeometry(1, 1, 1), gray = () => new T3.MeshLambertMaterial({ color: '#8f9396' }), dark = () => new T3.MeshLambertMaterial({ color: '#3a3d40' });
   // 街灯：柱（高さ 8m）・アーム（1.6m）・灯（光る）
+  const atL = (o, M) => { pos.set(o[0], o[1], o[2]); q.setFromAxisAngle(up, -o[3]); sc.set(m, m, m); M.compose(pos, q, sc); };
+  if (LIGHT.length) { grp = { list: LIGHT, parts: [], xz: o => [o[0], o[2]], near: [near(LIGHT, NG.light, vc(), atL), near(LIGHT, NG.lightLamp, new T3.MeshBasicMaterial({ color: '#fff4d6' }), atL)] }; PN.groups.push(grp); }
   inst(box(), gray(), LIGHT, o => { pos.set(o[0], o[1] + 4 * m, o[2]); q.identity(); sc.set(0.18 * m, 8 * m, 0.18 * m); });
   inst(box(), gray(), LIGHT, o => { pos.set(o[0] + Math.cos(o[3]) * 0.8 * m, o[1] + 7.9 * m, o[2] + Math.sin(o[3]) * 0.8 * m); q.setFromAxisAngle(up, -o[3]); sc.set(1.6 * m, 0.12 * m, 0.12 * m); });
   inst(box(), new T3.MeshBasicMaterial({ color: '#fff4d6' }), LIGHT, o => { pos.set(o[0] + Math.cos(o[3]) * 1.6 * m, o[1] + 7.8 * m, o[2] + Math.sin(o[3]) * 1.6 * m); q.setFromAxisAngle(up, -o[3]); sc.set(0.7 * m, 0.14 * m, 0.32 * m); });
+  grp = null;
   // 電柱（t65）：コンクリートの柱（12m）・腕木2本・ときどき変圧器。電線（高い3本・低い2本。たるませる）
   const PO = []; for (const L of POLES || []) for (const o of L) if (o) PO.push(o);
   if (PO.length) {
     const cg = new T3.CylinderGeometry(0.5, 0.62, 1, 8), ar = o => Math.atan2(o[4], o[3]);
+    grp = { list: PO, parts: [], xz: o => [o[0], o[2]], near: [near(PO, NG.pole, vc(), (o, M) => { pos.set(o[0], o[1], o[2]); q.setFromAxisAngle(up, -ar(o)); sc.set(m, m, m); M.compose(pos, q, sc); })] }; PN.groups.push(grp);
     inst(cg, new T3.MeshLambertMaterial({ color: '#a3a39b' }), PO, o => { pos.set(o[0], o[1] + 6 * m, o[2]); q.identity(); sc.set(0.32 * m, 12 * m, 0.32 * m); });
     inst(box(), dark(), PO, o => { pos.set(o[0], o[1] + 11.4 * m, o[2]); q.setFromAxisAngle(up, -ar(o)); sc.set(1.7 * m, 0.1 * m, 0.1 * m); });
     inst(box(), dark(), PO, o => { pos.set(o[0] - o[3] * 0.2 * m, o[1] + 9.4 * m, o[2] - o[4] * 0.2 * m); q.setFromAxisAngle(up, -ar(o)); sc.set(1.1 * m, 0.09 * m, 0.09 * m); });
+    grp = null;
     const TR = PO.filter((o, i) => i % 3 === 1);
     inst(new T3.CylinderGeometry(0.5, 0.5, 1, 8), new T3.MeshLambertMaterial({ color: '#8d969b' }), TR, o => { pos.set(o[0] - o[3] * 0.5 * m, o[1] + 8.4 * m, o[2] - o[4] * 0.5 * m); q.identity(); sc.set(0.7 * m, 1.1 * m, 0.7 * m); });
     const LP = [], WI = [[0.75, 11.5, 0.35], [0, 11.5, 0.35], [-0.75, 11.5, 0.35], [-0.45, 9.45, 0.5], [-0.25, 7.2, 0.55]];   // [横（m。−は道のがわ）, 高さ m, たるみ m]
@@ -1136,7 +1155,13 @@ function m3Props(T3, LIGHT, SIG, POLES) {
   M3.sig = null;
   if (!SIG.length) return;
   const ang = o => Math.atan2(o.uy, o.ux);   // アームの向き（+横 → 道のまん中は −横）
+  // 近く（t68）：柱は まるい柱と 押しボタンの箱・灯に ひさし（3つ）
+  const visor = (o, k, M) => { const along = (k - 1) * 0.4 * m, cx = o.x - o.ux * (o.arm + along), cy = o.y - o.uy * (o.arm + along); pos.set(cx + o.d[0] * 0.3 * m, o.h + 5.69 * m, cy + o.d[1] * 0.3 * m); q.setFromAxisAngle(up, -ang(o)); sc.set(0.36 * m, 0.03 * m, 0.24 * m); M.compose(pos, q, sc); };
+  grp = { list: SIG, parts: [], xz: o => [o.x, o.y], near: [near(SIG, NG.sigPole, vc(), (o, M) => { pos.set(o.x, o.h, o.y); q.setFromAxisAngle(up, -ang(o)); sc.set(m, m, m); M.compose(pos, q, sc); }),
+                                                       Object.assign(near(SIG.concat(SIG, SIG), new T3.BoxGeometry(1, 1, 1), dark(), null), { per: 3, fn3: visor })] };
+  PN.groups.push(grp);
   inst(box(), gray(), SIG, o => { pos.set(o.x, o.h + 3 * m, o.y); q.identity(); sc.set(0.25 * m, 6 * m, 0.25 * m); });
+  grp = null;
   inst(box(), gray(), SIG, o => { pos.set(o.x - o.ux * o.arm / 2, o.h + 5.8 * m, o.y - o.uy * o.arm / 2); q.setFromAxisAngle(up, -ang(o)); sc.set(o.arm, 0.15 * m, 0.15 * m); });
   inst(box(), dark(), SIG, o => { pos.set(o.x - o.ux * o.arm, o.h + 5.5 * m, o.y - o.uy * o.arm); q.setFromAxisAngle(up, -ang(o)); sc.set(1.3 * m, 0.45 * m, 0.35 * m); });
   const lamps = [];
@@ -1147,6 +1172,76 @@ function m3Props(T3, LIGHT, SIG, POLES) {
   });
   M3.sig = { lm, lamps, ph: -1 };
   m3SigTick(true);
+  m3PropNear(true);
+}
+// こまかい形（t68。m・足もとが原点・+x がアーム／腕木の向き）。頂点の色で 1つの形に
+let M3_NG = null;
+function m3NearGeo(T3) {
+  if (M3_NG) return M3_NG;
+  const parts = [], add = (g, c) => parts.push([g, c]);
+  const cyl = (rt, rb, h, x, y, z, n) => { const g = new T3.CylinderGeometry(rt, rb, h, n || 12); g.translate(x, y, z); return g; };
+  const bx = (w, h, d, x, y, z) => { const g = new T3.BoxGeometry(w, h, d); g.translate(x, y, z); return g; };
+  const rod = (a, b, r, n) => {   // a → b の 細い柱
+    const d = new T3.Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]), L = d.length(), g = new T3.CylinderGeometry(r, r, L, n || 8);
+    g.applyMatrix4(new T3.Matrix4().makeRotationFromQuaternion(new T3.Quaternion().setFromUnitVectors(new T3.Vector3(0, 1, 0), d.normalize()))); g.translate((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2); return g;
+  };
+  const merge = L => {
+    const P = [], N = [], C = [];
+    for (const [g0, c] of L) {
+      const g = g0.index ? g0.toNonIndexed() : g0, p = g.getAttribute('position'), n = g.getAttribute('normal');
+      for (let i = 0; i < p.count; i++) { P.push(p.getX(i), p.getY(i), p.getZ(i)); N.push(n.getX(i), n.getY(i), n.getZ(i)); C.push(c[0], c[1], c[2]); }
+    }
+    const g = new T3.BufferGeometry(); g.setAttribute('position', new T3.Float32BufferAttribute(P, 3)); g.setAttribute('normal', new T3.Float32BufferAttribute(N, 3)); g.setAttribute('color', new T3.Float32BufferAttribute(C, 3));
+    g.computeBoundingSphere(); return g;
+  };
+  const MET = [0.58, 0.6, 0.62], MET2 = [0.47, 0.49, 0.51], DK = [0.2, 0.21, 0.22], CON = [0.66, 0.66, 0.62], WH = [0.92, 0.92, 0.9], YL = [0.93, 0.76, 0.18];
+  // 街灯：基礎・すこし細くなる柱・まがったアーム・LED の灯具
+  add(bx(0.34, 0.45, 0.34, 0, 0.225, 0), CON); add(cyl(0.085, 0.11, 0.25, 0, 0.55, 0), MET2);
+  add(cyl(0.062, 0.095, 7.2, 0, 4.25, 0), MET); add(cyl(0.07, 0.07, 0.1, 0, 7.88, 0), MET2);
+  const A = [[0, 7.7, 0], [0.35, 7.88, 0], [0.8, 7.98, 0], [1.4, 8.02, 0]];
+  for (let i = 0; i + 1 < A.length; i++) add(rod(A[i], A[i + 1], 0.045), MET);
+  add(bx(0.8, 0.12, 0.34, 1.72, 7.99, 0), MET2); add(bx(0.7, 0.05, 0.28, 1.74, 8.07, 0), MET);
+  const light = merge(parts); parts.length = 0;
+  add(bx(0.62, 0.02, 0.24, 1.75, 7.92, 0), WH); const lightLamp = merge(parts); parts.length = 0;
+  // 電柱：コンクリートの柱（12m。上が細い）・腕木 2本と がいし・足場ボルト・根もと
+  add(cyl(0.14, 0.2, 12, 0, 6, 0), [0.66, 0.66, 0.61]); add(cyl(0.21, 0.21, 0.3, 0, 0.15, 0), [0.5, 0.5, 0.47]);
+  add(bx(1.7, 0.1, 0.1, 0, 11.4, 0), DK); add(bx(1.1, 0.09, 0.09, -0.2, 9.4, 0), DK);
+  for (const x of [-0.75, 0.75]) { add(cyl(0.035, 0.05, 0.16, x, 11.53, 0, 8), WH); add(cyl(0.05, 0.05, 0.02, x, 11.5, 0, 8), WH); }
+  add(cyl(0.035, 0.05, 0.16, 0, 12.08, 0, 8), WH);   // まん中の がいしは 柱の てっぺんに
+  for (const x of [-0.65, 0.25]) add(cyl(0.035, 0.05, 0.14, x, 9.52, 0, 8), WH);
+  for (let k = 0; k < 16; k++) { const y = 2.4 + k * 0.45, sd = k % 2 ? 1 : -1; add(rod([0, y, 0.13 * sd], [0, y, 0.3 * sd], 0.012, 4), DK); }
+  add(cyl(0.205, 0.205, 1.2, 0, 1.8, 0, 12), YL); add(cyl(0.206, 0.206, 0.25, 0, 1.8, 0, 12), DK);   // 黄色の 巻きつけ（車よけ）
+  const pole = merge(parts); parts.length = 0;
+  // 信号の柱：まるい柱（6.2m）・台・押しボタンの箱（歩道がわ）
+  add(cyl(0.1, 0.12, 6.0, 0, 3.0, 0), MET); add(cyl(0.17, 0.17, 0.12, 0, 0.06, 0), MET2); add(cyl(0.08, 0.08, 0.15, 0, 6.05, 0), MET2);
+  add(bx(0.16, 0.26, 0.12, 0, 1.25, 0.15), YL); add(bx(0.06, 0.06, 0.03, 0, 1.28, 0.22), [0.85, 0.2, 0.16]);
+  const sigPole = merge(parts); parts.length = 0;
+  M3_NG = { light, lightLamp, pole, sigPole };
+  return M3_NG;
+}
+// 近くの物を こまかい形に（街を歩いているとき。カメラが 4m うごくごと）：近いものは 箱を かくして こまかい形を出す
+const M3_ZM = new Float32Array(16);
+function m3PropNear(force) {
+  const PN = M3.pn; if (!PN || !M3.cam) return;
+  const on = !!M3.walk, c = M3.cam.position;
+  if (!force && on === PN.on && (!on || Math.hypot(c.x - PN.cx, c.z - PN.cz) < 0.08)) return;
+  PN.on = on; PN.cx = c.x; PN.cz = c.z;
+  const T3 = M3.T, M = PN.M || (PN.M = new T3.Matrix4()), R = 1.2;   // 60m
+  for (const G of PN.groups) {
+    const hit = [];
+    if (on) G.list.forEach((o, i) => { const p = G.xz(o); if (Math.hypot(p[0] - c.x, p[1] - c.z) < R) hit.push(i); });
+    hit.sort((a, b) => { const p = G.xz(G.list[a]), q = G.xz(G.list[b]); return Math.hypot(p[0] - c.x, p[1] - c.z) - Math.hypot(q[0] - c.x, q[1] - c.z); });
+    const use = new Set(hit.slice(0, G.near[0].cap));
+    for (const pt of G.parts) { const A = pt.im.instanceMatrix.array; for (let i = 0; i < G.list.length; i++) A.set(use.has(i) ? M3_ZM : pt.m.subarray(i * 16, i * 16 + 16), i * 16); pt.im.instanceMatrix.needsUpdate = true; }
+    for (const N of G.near) {
+      let n = 0;
+      for (const i of use) {
+        if (N.per) for (let k = 0; k < N.per && n < N.cap; k++) { N.fn3(G.list[i], k, M); N.im.setMatrixAt(n++, M); }
+        else if (n < N.cap) { N.fn(G.list[i], M); N.im.setMatrixAt(n++, M); }
+      }
+      N.im.count = n; N.im.visible = n > 0; N.im.instanceMatrix.needsUpdate = true;
+    }
+  }
 }
 // 信号の灯：組0 は 青 0〜17秒・黄 17〜20秒・赤 20〜40秒、組1 は その反対（赤 0〜20・青 20〜37・黄 37〜40）
 const M3_LAMP = [[0.12, 0.95, 0.62], [1, 0.78, 0.12], [1, 0.16, 0.12]], M3_LAMP_OFF = [0.13, 0.14, 0.15];
@@ -1627,10 +1722,14 @@ function m3RunTrk(o) {
 //   えらんだ列車なら しるしの位置［x, y, z, はば］を返す
 const M3_RC = { m: null, q: null, q2: null, p: null, s: null, up: null, ax: null };
 function m3RunCars(o, md, it, sel) {
-  const T3 = M3.T, C = M3_RC; if (!C.m) { C.m = new T3.Matrix4(); C.q = new T3.Quaternion(); C.q2 = new T3.Quaternion(); C.p = new T3.Vector3(); C.s = new T3.Vector3(); C.up = new T3.Vector3(0, 1, 0); C.ax = new T3.Vector3(0, 0, 1); }
+  const T3 = M3.T, C = M3_RC; if (!C.m) { C.m = new T3.Matrix4(); C.q = new T3.Quaternion(); C.q2 = new T3.Quaternion(); C.p = new T3.Vector3(); C.s = new T3.Vector3(); C.up = new T3.Vector3(0, 1, 0); C.ax = new T3.Vector3(0, 0, 1); C.col = [new T3.Color(), new T3.Color()]; C.hsl = {}; }
   const MOD = window.M3RAIL, MD = MOD && !MOD.fail ? MOD : null, CAR = window.M3CAR;
   const P = md.len * M3_U, Bg = md.bogie * M3_U, comp = CAR.comp(md, o.T.fn, o.T.fm), n = comp.length, fwd = o.T.dir !== -1, dC = o.d - o.len / 2;
-  const off0 = (2.95 / 2 + 0.8) * M3_U, hh = 3.75 * M3_U, cam = M3.cam.position, trs = m3RunTrk(o);
+  const cw = md.w || 2.95, off0 = (cw / 2 + 0.8) * M3_U, hh = (md.h || 3.75) * M3_U, cam = M3.cam.position, trs = m3RunTrk(o);
+  // 帯の色（122系など。t68）：系統の色。下の細い線は こく
+  let col = null;
+  if (md.line) { C.col[0].set(o.R.c || '#2e8b57'); C.col[0].getHSL(C.hsl); C.col[1].setHSL(C.hsl.h, Math.min(1, C.hsl.s * 1.05), C.hsl.l * 0.55); col = C.col; }
+  const nearD = M3.walk && md.near ? md.nearD || 0.7 : 0, midD = md.midD || 9;   // 遠さ（マス）：すぐそば（歩いているとき）・ちかく
   const pt = d => {
     const p = runPt(o.H, d), ref = runRef(o.H, d), sg = ref ? it.segs.get(ref[0]) : null;
     const off = o.yard ? 0 : MD && MD.off && sg ? MD.off(sg, 'rail', ref[1], ref[2], trs) : sg && !sg.dbl && !sg.q ? 0 : off0, x = p[0] + Math.sin(p[2]) * off, z = p[1] - Math.cos(p[2]) * off;
@@ -1642,16 +1741,16 @@ function m3RunCars(o, md, it, sel) {
   let selP = null;
   for (let k = 0; k < n; k++) {
     const e = comp[fwd ? k : n - 1 - k], c = dC + ((n - 1) / 2 - k) * P, a = pt(c + Bg), b = pt(c - Bg);
-    if (a[3] || b[3]) { if (k === 0 && sel) selP = [a[0], m3Surf(a[0], a[2]) + hh, a[2], 2.95 * M3_U]; continue; }   // トンネルの中
+    if (a[3] || b[3]) { if (k === 0 && sel) selP = [a[0], m3Surf(a[0], a[2]) + hh, a[2], cw * M3_U]; continue; }   // トンネルの中
     const dx = a[0] - b[0], dz = a[2] - b[2], L = Math.hypot(dx, dz) || 1e-6, x = (a[0] + b[0]) / 2, y = (a[1] + b[1]) / 2, z = (a[2] + b[2]) / 2;
     C.q.setFromAxisAngle(C.up, -Math.atan2(dz, dx));
     C.q2.setFromAxisAngle(C.ax, Math.atan2(a[1] - b[1], L)); C.q.multiply(C.q2);   // 坂：前の台車が高ければ 前が上
     if (fwd ? e.r : !e.r) { C.q2.setFromAxisAngle(C.up, Math.PI); C.q.multiply(C.q2); }   // 運転台が うしろ向き
     C.p.set(x, y, z); C.s.set(M3_U, M3_U, M3_U); C.m.compose(C.p, C.q, C.s);
-    const lv = Math.hypot(cam.x - x, cam.y - y, cam.z - z) < 9 ? 'mid' : 'far';
-    CAR.put(md, e.c, lv, C.m);
+    const dd = Math.hypot(cam.x - x, cam.y - y, cam.z - z), lv = dd < nearD ? 'near' : dd < midD ? 'mid' : 'far';
+    CAR.put(md, e.c, lv, C.m, col);
     M3.runHit.push({ o, x, y: y + hh / 2, z });
-    if (k === 0 && sel) selP = [x, y + hh, z, 2.95 * M3_U];
+    if (k === 0 && sel) selP = [x, y + hh, z, cw * M3_U];
   }
   return selP;
 }
@@ -1706,8 +1805,23 @@ function m3Labels() {
     else { g.lineWidth = 3.5; g.strokeStyle = 'rgba(255,255,255,.95)'; g.strokeText(t, X, Y - 2); g.fillStyle = fg; g.fillText(t, X, Y - 2); }
     return true;
   };
+  // ふきだし（街を歩く人のチャット。DB の更新122）：名前の上に。白い角まるの四角と しっぽ。1行 168px で おりかえす（4行まで）
+  const bub = (t, X, Y) => {
+    g.font = '600 12.5px system-ui, sans-serif';
+    const lines = []; let cur = '';
+    for (const ch of Array.from(t)) { if (cur && g.measureText(cur + ch).width > 168) { lines.push(cur); cur = ch; } else cur += ch; }
+    if (cur) lines.push(cur);
+    if (lines.length > 4) { lines.length = 4; lines[3] = lines[3].slice(0, -1) + '…'; }
+    const lh = 16, w = Math.max(...lines.map(q => g.measureText(q).width)) + 16, h = lines.length * lh + 8, x0 = X - w / 2, y0 = Y - h - 8, r = 8;
+    if (y0 < 44) return;
+    g.fillStyle = 'rgba(255,255,255,.97)'; g.strokeStyle = 'rgba(30,40,60,.35)'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(x0 + r, y0); g.arcTo(x0 + w, y0, x0 + w, y0 + h, r); g.arcTo(x0 + w, y0 + h, X + 6, y0 + h, r); g.lineTo(X + 6, y0 + h); g.lineTo(X, y0 + h + 7); g.lineTo(X - 6, y0 + h);
+    g.arcTo(x0, y0 + h, x0, y0, r); g.arcTo(x0, y0, x0 + w, y0, r); g.closePath(); g.fill(); g.stroke();
+    g.fillStyle = '#1d2330'; lines.forEach((q, i) => g.fillText(q, X, y0 + 4 + (i + 1) * lh - 2));
+    used.push([x0, y0, x0 + w, y0 + h + 8]);
+  };
   g.textAlign = 'center'; g.textBaseline = 'bottom'; g.lineJoin = 'round';
-  if (wl) for (const l of wl) { const p = at(l); if (p) box(l.n, p[0], p[1], '700 12px system-ui, sans-serif', '#fff', 'rgba(24,30,40,.72)', 'rgba(255,255,255,.55)'); }
+  if (wl) for (const l of wl) { const p = at(l); if (!p) continue; let y = p[1]; if (l.n && box(l.n, p[0], y, '700 12px system-ui, sans-serif', '#fff', 'rgba(24,30,40,.72)', 'rgba(255,255,255,.55)')) y -= 21; if (l.s) bub(l.s, p[0], y); }
   // えらんだ列車（いちばん上）
   if (M3.selLab) { const p = at(M3.selLab); if (p) box(M3.selLab.n, p[0], p[1], '700 12px system-ui, sans-serif', '#222', 'rgba(255,236,150,.97)', '#c99a00'); }
   // 駅（t62）：近いものから。遠すぎるときは出さない

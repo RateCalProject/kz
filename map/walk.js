@@ -1,5 +1,7 @@
-/* ===== 風の芽経済組：3D の街を歩く（DB の更新118・119）=====
-   3D の地図に 自分の人を出して 歩く。左下のスティック（パソコンは WASD・矢印。Shift で走る）。スティックを いっぱいに たおすと 走る
+/* ===== 風の芽経済組：3D の街を歩く（DB の更新118・119・122）=====
+   3D の地図に 自分の人を出して 歩く。歩きはじめる場所は 3つから えらぶ（瑠璃府庁前・美東区役所前・蛍石県庁前。t68）
+   左下のスティック（パソコンは WASD・矢印）。スティックを いっぱいに たおすと 走る。
+   パソコン（t68）：Q 走る（止まると もどる）・Shift しゃがむ・スペース ジャンプ・E 持ち物（輪から えらぶ）・/ か Z チャット（近くの人に。DB の更新122）
    カメラは うしろから：1本指（マウス）で まわす・2本指（ホイール）で 近く／遠く
    ほかの人も見える（DB の更新119）：サーバーと この端末のあいだだけで やりとり（av_step）。送るのは しるし（av_walk_start。歩きはじめるたびに 新しい）と
      位置・向き・うごきだけ。近く（400m）の人の 位置・向き・うごきを受けとって、この端末で その人を組み立てる。名前と見た目はサーバーから（ほかの人の名前を かたれない）
@@ -9,7 +11,8 @@
 (function () {
 'use strict';
 const U = 1 / 50;                       // 1m（マス）
-const SPD = { walk: 2.2, run: 6.5 };    // 歩く・走る（m/秒）
+const SPD = { walk: 2.2, run: 6.5, sneak: 1.1 };   // 歩く・走る・しゃがんで歩く（m/秒）
+const JUMP_V = 3.6;                     // ジャンプ（上へ m/秒。高さ 0.66m）
 const STEP = 1.6;                       // のぼれる段（m）。道路の帯（地面から 1m）にも のれる
 const HEAD = 1.45;                      // カメラが見る高さ（足もとから m）
 const LOST = 12000;                     // これだけ 位置が来なければ いなくなった
@@ -19,6 +22,25 @@ const MMD_CAP = 6, OTHER_CAP = 24;      // MMD のモデルで描く人数（ほ
 const HAIR = ['#1e1b1a', '#3b2a20', '#6b4a2f', '#a07a52', '#9a9a9a', '#1f2433'];
 const SKIN = ['#f2d3b8', '#e0b48f', '#c48c62', '#8d5a3b'];
 const BASE_SKIN = { code: 'base', name: 'ふだん着', kind: 'base', rare: '-', look: { t: 'tee', c1: '#e8e4da', c2: '#4a5568', c3: '#3b3b3b' }, n: 0 };
+// 持ち物（E。t68・DB の更新122 で ほかの人にも見える）：右手に持つ。arm：右うでの形（up 前へ上げる・el ひじ・sw 歩くときの ふり）。
+//   at：手からの位置（m。人の向き：+y 上・+z 前）・rx：前後の かたむき。pmx：MMD の持ち物のモデル（only：その見た目のときだけ）
+const ITEMS = [
+  { ico: '✋', name: '手ぶら' },
+  { ico: '☂️', name: '傘', arm: { up: 0.42, el: -1.25 }, rx: -0.3 },
+  { ico: '📱', name: 'スマホ', arm: { up: 0.32, el: -1.8 }, at: [0, 0.05, 0.03], rx: 0.55 },
+  { ico: '🛍️', name: '買い物ぶくろ', arm: { up: 0.04, el: -0.12, sw: 0.35 } },
+  { ico: '🎈', name: '風船', arm: { up: 0.3, el: -0.6, sw: 0.25 } },
+  { ico: '💐', name: '花たば', arm: { up: 0.26, el: -1.35 }, at: [0, 0.02, 0.02], rx: 0.25 },
+  { ico: '📖', name: '本', arm: { up: 0.32, el: -1.6 }, at: [0.06, 0.08, 0.04], rx: 0.45 },
+  { ico: '📷', name: 'カメラ', arm: { up: 0.62, el: -2.05 }, at: [0, 0.03, 0.06] },
+  { ico: '⛩️', name: 'お祓い棒', arm: { up: 0.3, el: -1.0 }, rx: 0.12, pmx: 'map/skins/reimu/W_oonusa.pmx', only: 'map/skins/reimu/' }   // 霊夢と同じ モデルデータ集の 大幣
+];
+// 歩きはじめる場所（t68）：この建物の前（いちばん近い 道路などの上）。x・y：建物の まん中（マス）
+const SPAWN = [
+  { n: '瑠璃府庁前', x: -7.7, y: 5.5 },
+  { n: '美東区役所前', x: -64.8, y: 52.9 },
+  { n: '蛍石県庁前', x: -2745.1, y: -6543.5 }
+];
 const now = () => performance.now();
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const esc2 = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -30,6 +52,7 @@ let W = null;          // 歩いているときの中身
 let CAT = null;        // 見た目の表（av_info）
 let onChange = null;   // map.js のボタン
 let lookSeq = 0;       // 見た目を変えた回数（catLoad の古い答えで もどさない）
+let spawnBusy = false; // 歩きはじめる場所を えらんでいる
 
 /* ---------- 見た目の表 ---------- */
 async function catLoad(force) {
@@ -130,20 +153,38 @@ function mkBase(look, hl) {
     if (t === 'jersey') { const a = at(M(g.stripe, c3), 0.05 * sd, 0, 0); a.scale.y = 0.29; arm.add(a); const b = at(M(g.stripe, c3), 0.042 * sd, 0, 0); b.scale.y = 0.27; elbow.add(b); }
     arms.push({ arm, elbow, sd });
   }
-  return { root, body, chest, head, legs, arms, h: 1.78 };
+  const hand = at(new T.Object3D(), 0, -0.3, 0); arms[1].elbow.add(hand);   // 右手（持ち物の位置）
+  return { root, body, chest, head, legs, arms, hand, h: 1.78 };
 }
-function poseBase(P, ph, amt, run, tIdle) {
-  const sA = run ? 0.8 : 0.46, kA = run ? 1.35 : 0.62, aA = run ? 0.95 : 0.36, s = Math.sin(ph), c = Math.cos(ph);
+// X（t68）：{ cr しゃがむ 0〜1・air ジャンプ 0〜1・it 持ち物 }。しゃがむ：腰を下げて ひざを まげる（足のうらは 地面に）
+function legPose(amt, run, s, c, sg, X) {
+  const sA = run ? 0.8 : 0.46, kA = run ? 1.35 : 0.62, cr = X ? X.cr || 0 : 0, air = X ? X.air || 0 : 0;
+  let th = -sA * amt * s * sg, kn = (kA * Math.max(0, c * sg) + (run ? 0.28 : 0.05)) * amt;
+  if (cr) { th += (-1.15 + 0.28 * amt * s * sg - th) * cr; kn += (1.71 + 0.3 * amt * Math.max(0, c * sg) - kn) * cr; }
+  if (air) { th += (-0.55 - th) * air; kn += (1.0 - kn) * air; }
+  return [th, kn, -(th + kn) * (0.6 + 0.4 * Math.max(cr, air))];
+}
+function armPose(i, amt, run, s, sg, tIdle, X) {   // [前後, ひじ, 外へ]
+  const aA = run ? 0.95 : 0.36, cr = X ? X.cr || 0 : 0, air = X ? X.air || 0 : 0, it = X && X.it ? ITEMS[X.it] : null, ia = it && it.arm;
+  let ax = aA * amt * s * sg + (1 - amt) * 0.035 * Math.sin(tIdle * 1.3 + i), el = -((run ? 1.25 : 0.22) * amt + 0.1), az = 0;
+  if (cr) { ax += (-0.35 + 0.12 * amt * s * sg - ax) * cr; el += (-0.75 - el) * cr; }
+  if (air) { ax += (-0.85 - ax) * air; el += (-0.45 - el) * air; az = 0.3 * air; }
+  if (ia && i === 1) { ax = -ia.up + (ia.sw || 0) * ax; el = ia.el; az = 0; }   // 右手に 持ち物
+  return [ax, el, az];
+}
+function poseBase(P, ph, amt, run, tIdle, X) {
+  const s = Math.sin(ph), c = Math.cos(ph), cr = X ? X.cr || 0 : 0, air = X ? X.air || 0 : 0;
   for (let i = 0; i < 2; i++) {
-    const sg = i === 0 ? 1 : -1, L = P.legs[i], th = -sA * amt * s * sg, kn = (kA * Math.max(0, c * sg) + (run ? 0.28 : 0.05)) * amt;
-    L.leg.rotation.x = th; L.knee.rotation.x = kn; L.foot.rotation.x = -(th + kn) * 0.6;
-    const A = P.arms[i];
-    A.arm.rotation.x = aA * amt * s * sg + (1 - amt) * 0.035 * Math.sin(tIdle * 1.3 + i);
-    A.arm.rotation.z = 0.07 * A.sd;
-    A.elbow.rotation.x = -((run ? 1.25 : 0.22) * amt + 0.1);
+    const sg = i === 0 ? 1 : -1, L = P.legs[i], lp = legPose(amt, run, s, c, sg, X);
+    L.leg.rotation.x = lp[0]; L.knee.rotation.x = lp[1]; L.foot.rotation.x = lp[2];
+    const A = P.arms[i], ap = armPose(i, amt, run, s, sg, tIdle, X);
+    A.arm.rotation.x = ap[0];
+    A.arm.rotation.z = (0.07 + ap[2]) * A.sd;
+    A.elbow.rotation.x = ap[1];
   }
-  P.body.position.y = 0.93 + ((run ? 0.055 : 0.024) * Math.abs(c) - (run ? 0.035 : 0)) * amt + (1 - amt) * 0.004 * Math.sin(tIdle * 1.7);
-  P.chest.rotation.x = (run ? 0.2 : 0.05) * amt;
+  P.body.position.y = 0.93 + ((run ? 0.055 : 0.024) * Math.abs(c) - (run ? 0.035 : 0)) * amt * (1 - cr) + (1 - amt) * 0.004 * Math.sin(tIdle * 1.7) - 0.29 * cr;
+  P.chest.rotation.x = (run ? 0.2 : 0.05) * amt * (1 - cr) + 0.42 * cr + 0.08 * air;
+  if (P.head) P.head.rotation.x = -0.32 * cr;   // しゃがんでも 前を見る
 }
 
 /* ---------- MMD のモデル（map/skins）：はじめて使うときに map/vendor を読む ---------- */
@@ -161,7 +202,7 @@ function mmdLoad(sk) {
   if (!sk || !sk.file || !/^map\/skins\/[\w/.-]+\.pmx$/.test(sk.file)) return Promise.reject(new Error('モデルのファイルがありません'));
   let e = MMD.get(sk.file);
   if (e) return e.p;
-  e = { p: null, mesh: null };
+  e = { p: null, mesh: null, file: sk.file };
   MMD.set(sk.file, e);
   e.p = mmdLib().then(() => new Promise((ok, ng) => {
     const T = window.THREE, man = new T.LoadingManager();
@@ -174,6 +215,10 @@ function mmdLoad(sk) {
         // まばたきなど 使うモーフだけ（ほかは 大きいので すてる）・物理演算（剛体・ジョイント）は使わない
         const keep = new Set((sk.look && Array.isArray(sk.look.m) ? sk.look.m : []).map(String));
         data.morphs = data.morphs.filter(m => m.type === 1 && keep.has(m.name)); data.metadata.morphCount = data.morphs.length;
+        // 物理で ゆれる鎖（剛体が「物理」の骨で、親は物理でないもの）のうち、うでについている もの（袖など）は、物理のかわりに 下へたらす（poseMMD）
+        const bo = data.bones || [], ph = new Set((data.rigidBodies || []).filter(r => r.type >= 1 && r.boneIndex >= 0).map(r => r.boneIndex));
+        const onArm = i => { for (let j = bo[i].parentIndex, n = 0; j >= 0 && bo[j] && n < 64; j = bo[j].parentIndex, n++) if (/^(左|右)腕$/.test(bo[j].name)) return true; return false; };
+        e.hang = [...ph].filter(i => bo[i] && !ph.has(bo[i].parentIndex) && onArm(i)).map(i => bo[i].name);
         data.rigidBodies = []; data.metadata.rigidBodyCount = 0; data.constraints = []; data.metadata.constraintCount = 0;
         const mesh = L.meshBuilder.setCrossOrigin('anonymous').build(data, base, undefined, er => console.warn(er));
         const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
@@ -191,7 +236,7 @@ function mmdLoad(sk) {
 }
 // 動かすボーン（袖のボーン（左腕袖・左ひじ袖）は ふつう IK で うでについていく。IK は使わないので、うでと同じだけ回す）
 const BN = { legL: '左足', legR: '右足', kneeL: '左ひざ', kneeR: '右ひざ', ankL: '左足首', ankR: '右足首', armL: '左腕', armR: '右腕', elbL: '左ひじ', elbR: '右ひじ', up: '上半身', ctr: 'センター',
-             armL2: '左腕袖', armR2: '右腕袖', elbL2: '左ひじ袖', elbR2: '右ひじ袖' };
+             armL2: '左腕袖', armR2: '右腕袖', elbL2: '左ひじ袖', elbR2: '右ひじ袖', neck: '首' };
 function mkMMD(e) {
   const T = T3, mesh = T.SkeletonUtils.clone(e.mesh);
   mesh.scale.setScalar(e.k); mesh.frustumCulled = false;
@@ -199,7 +244,9 @@ function mkMMD(e) {
   const byName = new Map(mesh.skeleton.bones.map(b => [b.name, b])), B = {};
   for (const k in BN) { const b = byName.get(BN[k]); if (b) B[k] = { b, q: b.quaternion.clone(), p: b.position.clone() }; }
   const mi = mesh.morphTargetDictionary && mesh.morphTargetDictionary['まばたき'];
-  return { root, mesh, B, blink: mi == null ? -1 : mi, k: e.k, h: e.hgt * e.k, mmd: true, nb: now() + 2000 + Math.random() * 3000 };
+  const H = (e.hang || []).map(n => byName.get(n)).filter(Boolean);   // 下へたらす鎖の はじめの骨（袖など）
+  // 持ち物（t68）：右手首の骨の位置に
+  return { root, mesh, B, H, hand: byName.get('右手首') || null, file: e.file || '', blink: mi == null ? -1 : mi, k: e.k, h: e.hgt * e.k, mmd: true, nb: now() + 2000 + Math.random() * 3000 };
 }
 const _qa = { x: null, z: null, t: null };
 function qset(B, k, ax, ang, pre) {   // 休みの姿勢から ax（'x'・'z'）まわりに ang（pre：その前に かける回転）
@@ -210,20 +257,122 @@ function qset(B, k, ax, ang, pre) {   // 休みの姿勢から ax（'x'・'z'）
   if (pre) o.b.quaternion.multiply(pre);
   o.b.quaternion.premultiply(_qa.t);
 }
-function poseMMD(P, ph, amt, run, tIdle) {
-  const B = P.B, sA = run ? 0.8 : 0.46, kA = run ? 1.35 : 0.62, aA = run ? 0.9 : 0.34, s = Math.sin(ph), c = Math.cos(ph);
+function poseMMD(P, ph, amt, run, tIdle, X) {
+  const B = P.B, s = Math.sin(ph), c = Math.cos(ph), cr = X ? X.cr || 0 : 0, air = X ? X.air || 0 : 0;
   const T = T3; if (!P.qz) { P.qz = [new T.Quaternion(), new T.Quaternion()]; P.qz[0].setFromAxisAngle(new T.Vector3(0, 0, 1), -0.68); P.qz[1].setFromAxisAngle(new T.Vector3(0, 0, 1), 0.68); }   // 両うで（A ポーズ）を下げる
   for (let i = 0; i < 2; i++) {
-    const sg = i === 0 ? 1 : -1, Lr = i === 0 ? 'L' : 'R', th = -sA * amt * s * sg, kn = (kA * Math.max(0, c * sg) + (run ? 0.28 : 0.05)) * amt;
-    qset(B, 'leg' + Lr, 'x', th); qset(B, 'knee' + Lr, 'x', kn); qset(B, 'ank' + Lr, 'x', -(th + kn) * 0.6);
-    const sw = aA * amt * s * sg + (1 - amt) * 0.035 * Math.sin(tIdle * 1.3 + i), el = -((run ? 1.2 : 0.2) * amt + 0.08);
-    qset(B, 'arm' + Lr, 'x', sw, P.qz[i]); qset(B, 'arm' + Lr + '2', 'x', sw, P.qz[i]);
-    qset(B, 'elb' + Lr, 'x', el); qset(B, 'elb' + Lr + '2', 'x', el);
+    const sg = i === 0 ? 1 : -1, Lr = i === 0 ? 'L' : 'R', lp = legPose(amt, run, s, c, sg, X);
+    qset(B, 'leg' + Lr, 'x', lp[0]); qset(B, 'knee' + Lr, 'x', lp[1]); qset(B, 'ank' + Lr, 'x', lp[2]);
+    const ap = armPose(i, amt, run, s, sg, tIdle, X);
+    qset(B, 'arm' + Lr, 'x', ap[0], P.qz[i]); qset(B, 'arm' + Lr + '2', 'x', ap[0], P.qz[i]);
+    qset(B, 'elb' + Lr, 'x', ap[1]); qset(B, 'elb' + Lr + '2', 'x', ap[1]);
   }
-  qset(B, 'up', 'x', (run ? 0.16 : 0.04) * amt);
-  if (B.ctr) B.ctr.b.position.y = B.ctr.p.y + (((run ? 0.055 : 0.024) * Math.abs(c) - (run ? 0.035 : 0)) * amt) / P.k;
+  qset(B, 'up', 'x', (run ? 0.16 : 0.04) * amt * (1 - cr) + 0.42 * cr + 0.08 * air);
+  qset(B, 'neck', 'x', -0.3 * cr);
+  // しゃがむ：腰（センター）を 下げる（足の長さは 身長の だいたい 0.47）
+  if (B.ctr) B.ctr.b.position.y = B.ctr.p.y + (((run ? 0.055 : 0.024) * Math.abs(c) - (run ? 0.035 : 0)) * amt * (1 - cr) - 0.175 * P.h * cr) / P.k;
+  // 袖など（物理で ゆれる鎖）：うでといっしょに回すと 大きく のびるので、下へたらす。歩く・走るときは 少しうしろへ なびく
+  if (P.H && P.H.length) {
+    if (!P.qh) P.qh = { a: new T.Quaternion(), l: new T.Quaternion(), ax: new T.Vector3(1, 0, 0) };
+    const q = P.qh;
+    q.l.setFromAxisAngle(q.ax, ((run ? 0.42 : 0.12) + (run ? 0.08 : 0.03) * Math.sin(ph * 2)) * amt);
+    for (const b of P.H) {
+      q.a.identity();
+      for (let p = b.parent; p && p.isBone; p = p.parent) q.a.premultiply(p.quaternion);
+      b.quaternion.copy(q.a.invert()).multiply(q.l);
+    }
+  }
   // まばたき
   if (P.blink >= 0) { const t = now(); let v = 0; if (t > P.nb) { const d = t - P.nb; v = d < 70 ? d / 70 : d < 140 ? 1 - (d - 70) / 70 : 0; if (d >= 140) P.nb = t + 2200 + Math.random() * 3500; } P.mesh.morphTargetInfluences[P.blink] = v; }
+}
+
+/* ---------- 持ち物の形（t68。m。手が原点・+y 上・+z 前） ---------- */
+const ITG = new Map();
+// MMD の持ち物（お祓い棒など）：はじめて使うときに読む。物理・ボーンは使わない（そのままの形）
+const PROP = new Map();   // ファイル → { p, mesh }
+function propLoad(file) {
+  let e = PROP.get(file); if (e) return e;
+  e = { p: null, mesh: null }; PROP.set(file, e);
+  if (!/^map\/skins\/[\w/.-]+\.pmx$/.test(file)) { e.fail = true; return e; }
+  e.p = mmdLib().then(() => new Promise((ok, ng) => {
+    const T = window.THREE, man = new T.LoadingManager();
+    man.setURLModifier(u => /^(data|blob):/.test(u) ? u : u.replace(/\\/g, '/').replace(/\.(png|jpe?g|bmp|tga|spa|sph)$/i, '.webp'));
+    man.addHandler(/\.tga$/i, new T.TextureLoader(man));
+    const L = new T.MMDLoader(man);
+    L.loadPMX(file + '?v=' + mapv(), data => {
+      try {
+        data.morphs = []; data.metadata.morphCount = 0; data.rigidBodies = []; data.metadata.rigidBodyCount = 0; data.constraints = []; data.metadata.constraintCount = 0;
+        const sm = L.meshBuilder.setCrossOrigin('anonymous').build(data, file.replace(/[^/]*$/, ''), undefined, er => console.warn(er));
+        const mats = (Array.isArray(sm.material) ? sm.material : [sm.material]).map(m => { const c = m.clone(); c.skinning = false; c.morphTargets = false; return c; });
+        e.mesh = new T.Mesh(sm.geometry, mats.length === 1 ? mats[0] : mats);
+        ok(e);
+      } catch (er) { ng(er); }
+    }, undefined, er => ng(er instanceof Error ? er : new Error('モデルを読めません')));
+  }));
+  e.p.catch(er => { console.warn(er); e.fail = true; });
+  return e;
+}
+function mkItem(id, k) {
+  const it = ITEMS[id];
+  if (it && it.pmx) {   // MMD の持ち物：読めるまでは からっぽ（読めたら 作りなおす）
+    const g = new T3.Group(), e = propLoad(it.pmx);
+    if (e.mesh) { const m = e.mesh.clone(); m.scale.setScalar(k || 0.08); m.frustumCulled = false; g.add(m); } else g.userData.wait = it.pmx;
+    return g;
+  }
+  if (ITG.has(id)) return ITG.get(id).clone();
+  const T = T3, g = new T.Group(), M = (ge, c, two) => new T.Mesh(ge, mat(c, two));
+  const cyl = (r, h, y, n) => { const q = new T.CylinderGeometry(r, r, h, n || 6); q.translate(0, y, 0); return q; };
+  const box = (w, h, d, x, y, z) => { const q = new T.BoxGeometry(w, h, d); q.translate(x || 0, y || 0, z || 0); return q; };
+  if (id === 1) {   // 傘：柄・骨・布（ひらいた形）
+    g.add(M(cyl(0.009, 0.94, 0.39), '#2e2e30'));
+    g.add(M(cyl(0.016, 0.1, -0.08, 8), '#5a3a22'));
+    const cn = new T.ConeGeometry(0.52, 0.22, 16, 1, true); cn.translate(0, 0.79, 0); g.add(M(cn, '#2b3a67', true));
+    g.add(M(cyl(0.012, 0.05, 0.925), '#2e2e30'));
+  } else if (id === 2) {   // スマホ（画面が 自分のほうに）
+    g.add(M(box(0.072, 0.15, 0.009), '#24262b'));
+    g.add(M(box(0.062, 0.13, 0.002, 0, 0, -0.0055), '#6f8fb4'));
+  } else if (id === 3) {   // 買い物ぶくろ（紙）
+    g.add(M(box(0.3, 0.34, 0.12, 0, -0.29, 0), '#c9a46b'));
+    for (const x of [-0.06, 0.06]) g.add(M(box(0.012, 0.12, 0.012, x, -0.06, 0), '#8a6a3d'));
+  } else if (id === 4) {   // 風船
+    g.add(M(cyl(0.0025, 1.05, 0.52, 4), '#f4f4f4'));
+    const b = new T.SphereGeometry(0.17, 16, 12); b.scale(1, 1.15, 1); b.translate(0, 1.24, 0); g.add(M(b, '#e8434f'));
+    const k = new T.ConeGeometry(0.02, 0.04, 6); k.translate(0, 1.05, 0); g.add(M(k, '#e8434f'));
+  } else if (id === 5) {   // 花たば（つつみ・花）
+    const w = new T.ConeGeometry(0.075, 0.3, 10, 1, true); w.rotateX(Math.PI); w.translate(0, 0.08, 0); g.add(M(w, '#f2efe6', true));
+    const fl = [['#f07aa0', 0, 0.24, 0], ['#ffffff', 0.045, 0.22, 0.02], ['#ffd54a', -0.045, 0.22, 0.015], ['#f07aa0', 0.02, 0.23, -0.04], ['#c96adf', -0.03, 0.25, -0.03]];
+    for (const [c, x, y, z] of fl) { const q = new T.SphereGeometry(0.036, 8, 6); q.translate(x, y, z); g.add(M(q, c)); }
+    for (const x of [-0.06, 0.06]) { const q = new T.SphereGeometry(0.03, 6, 4); q.scale(1, 0.4, 1); q.translate(x, 0.2, 0); g.add(M(q, '#4f9a4f')); }
+  } else if (id === 6) {   // 本（ひらいて 読む）
+    for (const sd of [1, -1]) { const q = box(0.13, 0.19, 0.012, 0.065 * sd, 0, 0); g.add(M(q, '#7a3b2e')); g.add(M(box(0.12, 0.18, 0.01, 0.063 * sd, 0, -0.009), '#f3efe4')); }
+  } else if (id === 7) {   // カメラ（レンズが 前）
+    g.add(M(box(0.13, 0.085, 0.065), '#1f2023'));
+    const l = new T.CylinderGeometry(0.03, 0.033, 0.06, 12); l.rotateX(Math.PI / 2); l.translate(0.015, 0, 0.06); g.add(M(l, '#2e3034'));
+    g.add(M(box(0.03, 0.018, 0.02, -0.04, 0.05, 0), '#2e3034'));
+  }
+  ITG.set(id, g);
+  return g.clone();
+}
+// 持ち物を持たせる・手の位置に（毎フレーム）
+const _iv = { p: null, q: null };
+function itemTick(A, id, t) {
+  const P = A.P; if (!P) return;
+  const it = ITEMS[id] || ITEMS[0], ok = id > 0 && (!it.only || String(P.file || '').startsWith(it.only));   // その見た目（MMD のモデル）の 持ち物だけ
+  if (A.itO && A.itO.userData.wait) { const e = PROP.get(A.itO.userData.wait); if (e && (e.mesh || e.fail)) A.itId = -1; }   // MMD の持ち物が 読めた
+  if (A.itId !== id || A.itP !== P) {
+    if (A.itO && A.itO.parent) A.itO.parent.remove(A.itO);
+    A.itO = ok ? mkItem(id, P.k) : null; A.itId = id; A.itP = P;
+    if (A.itO) P.root.add(A.itO);
+  }
+  if (!A.itO || !P.hand) return;
+  if (!_iv.p) { _iv.p = new T3.Vector3(); _iv.m = new T3.Matrix4(); }
+  P.root.updateMatrixWorld(true);
+  _iv.m.copy(P.root.matrixWorld).invert();
+  _iv.p.setFromMatrixPosition(P.hand.matrixWorld).applyMatrix4(_iv.m);
+  const o = it.at || [0, 0, 0];
+  A.itO.position.set(_iv.p.x + o[0], _iv.p.y + o[1], _iv.p.z + o[2]);
+  A.itO.rotation.set(it.rx || 0, 0, 0);
+  if (id === 4) { A.itO.rotation.x = 0.08 * Math.sin(t / 900 + A.ph * 0.1); A.itO.rotation.z = 0.1 * Math.sin(t / 1300); }   // 風船は ゆれる
 }
 
 /* ---------- 人（自分・ほかの人）：見た目のかわりめ・MMD がまだのときは 組み立ての人 ---------- */
@@ -241,15 +390,21 @@ function mkAvatar(code, hl, self) {
   A.P = P; A.root.add(P.root);
   return A;
 }
-function poseAv(A, dt, spd, run) {
-  const P = A.P, tgt = clamp(spd / SPD.walk, 0, 1);
+// X：{ cr しゃがむ（0・1）, air ジャンプ（0・1）, it 持ち物 }（t68）。しゃがむ・ジャンプは なめらかに
+function poseAv(A, dt, spd, run, X) {
+  const P = A.P, cr = X && X.cr ? 1 : 0, sneak = cr && spd > 0.05, tgt = clamp(spd / (sneak ? SPD.sneak : SPD.walk), 0, 1);
   A.amt += (tgt - A.amt) * Math.min(1, dt * 8);
   A.run = run && spd > SPD.walk * 1.2;
-  const stride = A.run ? 1.35 : 0.75;
+  A.cr = (A.cr || 0) + (cr - (A.cr || 0)) * Math.min(1, dt * 10);
+  A.air = (A.air || 0) + ((X && X.air ? 1 : 0) - (A.air || 0)) * Math.min(1, dt * 14);
+  const stride = A.run ? 1.35 : sneak ? 0.5 : 0.75;
   A.ph += dt * Math.PI * Math.max(spd, 0.3 * A.amt) / stride;
   if (A.ph > 1e4) A.ph -= Math.PI * 2 * 1000;
-  const ti = now() / 1000;
-  if (P.mmd) poseMMD(P, A.ph, A.amt, A.run, ti); else poseBase(P, A.ph, A.amt, A.run, ti);
+  let it = X && X.it ? X.it | 0 : 0; const I = ITEMS[it];
+  if (!I || (I.only && !String(P.file || '').startsWith(I.only))) it = 0;   // その見た目では 持てない
+  const ti = now() / 1000, Y = A.cr > 0.01 || A.air > 0.01 || it ? { cr: A.cr, air: A.air, it } : null;
+  if (P.mmd) poseMMD(P, A.ph, A.amt, A.run, ti, Y); else poseBase(P, A.ph, A.amt, A.run, ti, Y);
+  if (it || A.itO) itemTick(A, it, now());
 }
 
 /* ---------- 歩ける面（道路・線路・橋・ホーム）と たてもの ---------- */
@@ -343,27 +498,39 @@ function input() {
   let ix = 0, iy = 0;
   const K = W.keys;
   if (K.KeyW || K.ArrowUp) iy += 1; if (K.KeyS || K.ArrowDown) iy -= 1; if (K.KeyD || K.ArrowRight) ix += 1; if (K.KeyA || K.ArrowLeft) ix -= 1;
-  let run = !!(K.ShiftLeft || K.ShiftRight) || W.runOn;
+  let run = W.runOn;   // Q・🏃（止まると もどる）
   if (W.stick.on) { ix += W.stick.x; iy += W.stick.y; if (Math.hypot(W.stick.x, W.stick.y) > 0.93) run = true; }
+  const cr = !!(K.ShiftLeft || K.ShiftRight) || W.crOn;   // Shift（おしているあいだ）・🧎
   const m = Math.hypot(ix, iy); if (m > 1) { ix /= m; iy /= m; }
-  return { ix, iy, m: Math.min(1, m), run };
+  return { ix, iy, m: Math.min(1, m), run: run && !cr, cr };
 }
+// ジャンプ（スペース・⤒）：足が 地面に ついているときだけ
+function jump() {
+  if (!W || W.air || (W.fv || 0) !== 0) return;
+  W.fv = -JUMP_V; W.air = true; W.jumpT = now(); W.net.next = 0;
+}
+function dashSet(on) { if (!W) return; W.runOn = !!on; const b = W.hud && W.hud.querySelector('[data-wk-run]'); if (b) b.classList.toggle('on', W.runOn); }
+function crSet(on) { if (!W) return; W.crOn = !!on; const b = W.hud && W.hud.querySelector('[data-wk-cr]'); if (b) b.classList.toggle('on', W.crOn); }
 function step() {
   if (!W || !M3.on) return;
   const t = now(), dt = Math.min(0.25, Math.max(0, (t - W.t) / 1000)); W.t = t;
   if (W.ixKey !== M3.bKey || Math.hypot(W.x - W.ixAt[0], W.y - W.ixAt[1]) > 3) {
-    try { idxBuild(); unstuck(); } catch (e) { console.error(e); }
+    try { idxBuild(); if (W.spawn) spawnPlace(); unstuck(); } catch (e) { console.error(e); }
   }
+  if (W.spawn && t > W.spawn.until) { W.spawn = null; MI.hint(''); }
   { const t0 = M3.surf(W.x, W.y); if (W.f < t0) { W.f = t0; W.fv = 0; } }   // 地形の網が こまかくなって 地面の下に なったら 上へ
   const I = input(), yaw = M3.yaw;
   let spd = 0;
+  W.cr = I.cr;
+  if (I.m > 0.05) { W.idleT = 0; if (W.spawn) { W.spawn = null; MI.hint(''); } }   // うごいたら 歩きはじめる場所に よせない
+  else if (W.runOn && (W.idleT = (W.idleT || 0) + dt) > 0.8) dashSet(false);   // 止まったら 走るのを やめる
   if (I.m > 0.05) {
     const fx = -Math.sin(yaw), fz = -Math.cos(yaw), rx = Math.cos(yaw), rz = -Math.sin(yaw);
     let dx = fx * I.iy + rx * I.ix, dz = fz * I.iy + rz * I.ix; const dl = Math.hypot(dx, dz) || 1; dx /= dl; dz /= dl;
     // 向き：すぐに（1秒に 10 ラジアン）
     let da = Math.atan2(dx, dz) - W.h; while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI;
     W.h += clamp(da, -10 * dt, 10 * dt);
-    const v = I.m * (I.run ? SPD.run : SPD.walk), d = v * dt * U, wet0 = wetAt(W.x, W.y);
+    const v = I.m * (I.cr ? SPD.sneak : I.run ? SPD.run : SPD.walk), d = v * dt * U, wet0 = wetAt(W.x, W.y);
     const tryTo = (nx, ny) => { if (blocked(nx, ny)) return null; const g = groundAt(nx, ny, W.f, wet0); return g == null ? null : [nx, ny, g]; };
     let r = tryTo(W.x + dx * d, W.y + dz * d);
     if (!r && Math.abs(dx) > 0.15) r = tryTo(W.x + Math.sign(dx) * d * Math.abs(dx), W.y);   // かべに そって
@@ -371,17 +538,19 @@ function step() {
     if (r) { spd = Math.hypot(r[0] - W.x, r[1] - W.y) / U / Math.max(dt, 1e-3); W.x = r[0]; W.y = r[1]; W.gt = r[2]; }
     W.lastRun = I.run;
   }
-  // 高さ：のぼるのは すぐ・おりるのは 落ちる（重力）
+  // 高さ：のぼるのは すぐ・おりるのは 落ちる（重力）。ジャンプ（fv < 0）で 上へ
   const g = W.gt != null && spd > 0 ? W.gt : groundAt(W.x, W.y, W.f, true);
   W.gt = null;
   if (g != null) {
-    if (g >= W.f) { W.f = g; W.fv = 0; }
-    else { W.fv = (W.fv || 0) + 9.8 * dt; W.f = Math.max(g, W.f - W.fv * dt * U); if (W.f === g) W.fv = 0; }
+    W.fg = g;
+    if (g >= W.f && !(W.fv < 0)) { W.f = g; W.fv = 0; }
+    else { W.fv = (W.fv || 0) + 9.8 * dt; W.f = Math.max(g, W.f - W.fv * dt * U); if (W.f === g && W.fv > 0) W.fv = 0; }
   }
+  W.air = W.f > (W.fg != null ? W.fg : W.f) + 0.03 * U;
   W.spd = spd;
   const A = W.av;
   A.root.position.set(W.x, W.f, W.y); A.root.rotation.y = W.h;
-  poseAv(A, dt, spd, !!W.lastRun);
+  poseAv(A, dt, spd, !!W.lastRun, { cr: W.cr, air: W.air, it: W.item | 0 });
   M3.tx = W.x; M3.ty = W.y;
   if (A.wait && !A.P.mmd) { const e = MMD.get(skinOf(A.code).file); if (e && (e.mesh || e.fail)) avSelf(); }
   others(dt);
@@ -400,7 +569,7 @@ function camReach(yaw, p, ty) {   // ピッチ p で カメラを どこまで �
   return d;
 }
 function cam() {
-  const C = M3.cam, yaw = M3.yaw, ty = W.f + HEAD * U, t = now(), dt = Math.min(0.25, Math.max(0, (t - (W.ct || t)) / 1000)); W.ct = t;
+  const C = M3.cam, yaw = M3.yaw, ty = W.f + HEAD * (1 - 0.3 * ((W.av && W.av.cr) || 0)) * U, t = now(), dt = Math.min(0.25, Math.max(0, (t - (W.ct || t)) / 1000)); W.ct = t;
   let p = W.pitch, d = camReach(yaw, p, ty);
   if (d < W.cd * U * 0.6 && d < 3 * U) for (const dp of [0.25, 0.5]) {   // うしろが 低い たてものなら 上から（高い たてものなら 近くに よせる）
     const p2 = Math.min(0.95, W.pitch + dp), d2 = camReach(yaw, p2, ty);
@@ -431,12 +600,20 @@ function zoom(f) { if (!W) return; W.cd = clamp(W.cd / f, 1.4, 30); }
 //   自分の位置・向き・うごきだけを送って、近く（400m）の人の 位置・向き・うごきを受けとる（サーバーと この端末のあいだだけ）。
 //   自分が うごいているときは 0.5秒・近くの人が うごいているときは 0.6秒・止まっているときは 1.5秒（まわりに だれもいなければ 3秒）ごと。
 //   名前と見た目は 知らない人のぶんだけ サーバーがつける。受けとった位置と 速さ（はじめは 向きと うごき）で、つぎの位置まで なめらかに動かす（その人を この端末で組み立てる）
+//   うごき m（DB の更新122）：0 止まる・1 歩く・2 走る・3 しゃがむ・4 しゃがんで歩く・5 ジャンプした（受けとった端末が とぶ形を つくる）。持ち物 i。
+//   チャット：近く（400m）の 1分以内のものを いっしょに受けとる（c：受けとった いちばん大きい番号のあと）
 const WHO = new Map();   // しるし → { n, c, l, v }
 const r4 = v => Math.round(v * 1e4) / 1e4;
+const v122 = () => ((MI && MI.S && MI.S.dbv) || 0) >= 122;   // サーバーの更新122 のあと（しゃがむ・ジャンプ・持ち物・チャットを ほかの人に）
+const mvSt = m => m === 1 || m === 2 || m === 4;   // 進んでいる うごき
 function stepArgs(m) {
   const known = [];
   for (const o of W.others.values()) { const w = WHO.get(o.k); if (w && w.v === o.v && known.length < 60) known.push(o.k); }
-  return { p_k: W.me.k, p_x: r4(W.x), p_y: r4(W.y), p_f: r4(W.f), p_h: Math.round(W.h * 100) / 100, p_m: m, p_v: W.lv, p_known: known };
+  const f = W.air && W.fg != null ? W.fg : W.f;   // ジャンプ中は 足もとの地面（とぶ形は 受けとった端末で）
+  const a = { p_k: W.me.k, p_x: r4(W.x), p_y: r4(W.y), p_f: r4(f), p_h: Math.round(W.h * 100) / 100, p_m: m, p_v: W.lv, p_known: known };
+  if (v122()) { a.p_i = W.item | 0; a.p_c = W.chat.since || null; }
+  else a.p_m = m === 3 ? 0 : m === 4 ? 1 : m === 5 ? (W.spd > 0.05 ? 1 : 0) : m;   // 更新122 の前：止まる・歩く・走る だけ
+  return a;
 }
 function onStep(r, t) {
   if (!W || !r || !Array.isArray(r.o)) return;
@@ -458,9 +635,11 @@ function onStep(r, t) {
       if (o.vm) { o.vx = (x - o.x) / d; o.vy = (y - o.y) / d; }
       o.x = x; o.y = y; o.f = f; o.h = h; o.ts = ts;
     }
-    o.m = m.m === 2 ? 2 : m.m === 1 ? 1 : 0;
-    if (!o.m) { o.vx = 0; o.vy = 0; o.vm = false; }
-    else if (!o.vm) { const v = (o.m === 2 ? SPD.run : SPD.walk) * U; o.vx = Math.sin(h) * v; o.vy = Math.cos(h) * v; }   // はじめは 向きと うごきから
+    const pm = o.m; o.m = clamp(Number(m.m) | 0, 0, 5);
+    if (o.m === 5 && pm !== 5) o.jt = t;   // ジャンプした：この端末で とぶ
+    if (!mvSt(o.m) && o.m !== 5) { o.vx = 0; o.vy = 0; o.vm = false; }
+    else if (!o.vm && mvSt(o.m)) { const v = (o.m === 2 ? SPD.run : o.m === 4 ? SPD.sneak : SPD.walk) * U; o.vx = Math.sin(h) * v; o.vy = Math.cos(h) * v; }   // はじめは 向きと うごきから
+    o.it = clamp(Number(m.i) | 0, 0, ITEMS.length - 1);
     o.v = Number(m.v) | 0; o.t = t; o.miss = 0;
     if (m.c != null) {   // 名前と見た目（知らない人・見た目を変えた人のぶんだけ）
       WHO.set(m.k, { n: String(m.n || '').slice(0, 40), c: String(m.c || 'base'), l: m.l && typeof m.l === 'object' ? m.l : {}, v: o.v });
@@ -468,13 +647,20 @@ function onStep(r, t) {
     }
   }
   for (const o of W.others.values()) if (!seen.has(o.k)) o.miss = (o.miss || 0) + 1;
+  // チャット（DB の更新122）
+  if (Array.isArray(r.c)) for (const c of r.c) {
+    const id = Number(c && c.id); if (!(id > (W.chat.since || 0))) continue;
+    W.chat.since = id;
+    if (typeof c.k !== 'string' || (W.me && c.k === W.me.k) || W.chat.mute.has(c.k)) continue;
+    chatAdd({ k: c.k, n: String(c.n || '').slice(0, 40), t: String(c.t || '').slice(0, 80), at: now() - clamp(Number(c.a) || 0, 0, 60000) });
+  }
 }
 function others(dt) {
   const t = now(), list = [];
   for (const o of W.others.values()) {
     if (o.miss >= (o.dist < 6 ? 1 : 2) || t - o.t > LOST) { if (o.av) M3.sc.remove(o.av.root); W.others.delete(o.k); continue; }   // 来なかったら いなくなった（400m のふちは 2回）
     // 受けとった位置 ＋ 速さ × すぎた時間（1.2秒まで）に なめらかに（0.2秒ほどで おいつく。遠いと とぶ）
-    const ex = o.m ? Math.min(1, (t - o.ts) / 1000) : 0, tx = o.x + o.vx * ex, ty = o.y + o.vy * ex;
+    const ex = mvSt(o.m) || (o.m === 5 && o.vm) ? Math.min(1, (t - o.ts) / 1000) : 0, tx = o.x + o.vx * ex, ty = o.y + o.vy * ex;
     const k = 1 - Math.exp(-dt / 0.2), jump = Math.hypot(tx - o.dx, ty - o.dy) > 1;
     const px = o.dx, py = o.dy;
     if (jump) { o.dx = tx; o.dy = ty; o.df = o.f; o.dh = o.h; }
@@ -494,14 +680,20 @@ function others(dt) {
       if (o.av) M3.sc.remove(o.av.root);
       o.av = mkAvatar(w.c, w.l, false); M3.sc.add(o.av.root);
     }
-    o.av.root.position.set(o.dx, o.df, o.dy); o.av.root.rotation.y = o.dh;
-    poseAv(o.av, dt, o.m ? Math.max(o.spd, 0.3) : o.spd * 0.5, o.m === 2);
+    // ジャンプ：受けとったときから この端末で とぶ（上へ JUMP_V・重力）
+    let jy = 0;
+    if (o.jt) { const tj = (t - o.jt) / 1000; if (tj < 2 * JUMP_V / 9.8) jy = Math.max(0, JUMP_V * tj - 4.9 * tj * tj); else o.jt = 0; }
+    o.av.root.position.set(o.dx, o.df + jy * U, o.dy); o.av.root.rotation.y = o.dh;
+    poseAv(o.av, dt, mvSt(o.m) ? Math.max(o.spd, 0.3) : o.spd * 0.5, o.m === 2, { cr: o.m === 3 || o.m === 4, air: jy > 0.03, it: o.it || 0 });
   }
   W.near = n;
 }
 function net(t) {
   const N = W.net; if (!W.me || !W.me.k || N.off) return;
-  const st = W.spd > 0.05 ? (W.lastRun && W.spd > SPD.walk * 1.2 ? 2 : 1) : 0;
+  const mv = W.spd > 0.05;
+  let st = W.cr ? (mv ? 4 : 3) : mv ? (W.lastRun && W.spd > SPD.walk * 1.2 ? 2 : 1) : 0;
+  if (W.air && W.jumpT && t - W.jumpT < 1200) st = 5;
+  if (W.item !== N.it && t - N.sent > 250) { N.it = W.item; N.next = 0; }   // 持ち物を かえた：すぐ送る
   if (st !== N.st && N.st >= 0 && t - N.sent > 250) N.next = 0;   // 歩きだした・止まった：すぐ送る
   if (N.busy || t < N.next) return;
   N.busy = true; N.st = st; N.sent = t;
@@ -514,7 +706,7 @@ function net(t) {
   }).finally(() => {
     N.busy = false;
     // つぎ：自分が うごいている 0.5秒・近くの人が うごいている 0.6秒・近くに人がいる 1.5秒・だれもいない 3秒
-    if (W) { let mv = false; for (const o of W.others.values()) if (o.m && o.dist < SEE) { mv = true; break; } N.next = now() + (N.err ? 3000 : W.spd > 0.05 ? 500 : mv ? 600 : W.others.size ? 1500 : 3000); }
+    if (W) { let mv = false; for (const o of W.others.values()) if ((mvSt(o.m) || o.m === 5) && o.dist < SEE) { mv = true; break; } N.next = now() + (N.err ? 3000 : W.spd > 0.05 ? 500 : mv ? 600 : W.others.size ? 1500 : 3000); }
   });
 }
 function netLeave(w) {   // やめた：自分の位置を消す（送れなくても 12秒で 見えなくなる）
@@ -522,16 +714,66 @@ function netLeave(w) {   // やめた：自分の位置を消す（送れなく�
   rpc('av_step', { p_k: w.me.k, p_x: 0, p_y: 0, p_f: 0, p_h: 0, p_m: -1, p_v: 0, p_known: null }).catch(() => {});
 }
 
-/* ---------- 名前（map3d の m3Labels が 描く） ---------- */
+/* ---------- チャット（DB の更新122）：近く（400m）の人に。ふきだし（8秒）と 左の ログ ---------- */
+const SAY_T = 8000;
+function chatAdd(c) {
+  if (!W) return;
+  W.chat.log.push(c); if (W.chat.log.length > 40) W.chat.log.shift();
+  if (c.me) W.say = { t: c.t, at: c.at };
+  else { const o = W.others.get(c.k); if (o) o.say = { t: c.t, at: c.at }; }
+  chatDraw();
+}
+function chatDraw() {
+  const box = W && W.hud && W.hud.querySelector('.wk-log'); if (!box) return;
+  const t = now(), open = !!W.chat.open, L = W.chat.log.filter(c => open || t - c.at < 45000).slice(open ? -10 : -5);
+  box.hidden = !L.length;
+  box.innerHTML = L.map((c, i) => `<p class="${c.me ? 'me' : ''}" data-i="${W.chat.log.indexOf(c)}"><b translate="no">${esc2(c.n || '')}</b><span translate="no">${esc2(c.t)}</span>${!c.me && W.chat.sel === c ? `<button data-mute="${esc2(c.k)}">${esc2(tt('🔇 この人を かくす'))}</button>` : ''}</p>`).join('');
+  box.querySelectorAll('p[data-i]').forEach(p => p.onclick = e => { if (e.target.closest('[data-mute]')) return; const c = W.chat.log[Number(p.dataset.i)]; W.chat.sel = W.chat.sel === c ? null : c; chatDraw(); });
+  box.querySelectorAll('[data-mute]').forEach(b => b.onclick = () => {   // 歩いているあいだ、この人の チャットを かくす
+    const k = b.dataset.mute; W.chat.mute.add(k); W.chat.log = W.chat.log.filter(c => c.k !== k); W.chat.sel = null;
+    const o = W.others.get(k); if (o) o.say = null;
+    chatDraw();
+  });
+}
+function chatOpen(on) {
+  if (!W || !W.hud) return;
+  const bar = W.hud.querySelector('.wk-say'), inp = bar.querySelector('input');
+  if (on && !v122()) { if (typeof toast === 'function') toast(tt('💬 チャットは サーバーの更新のあとで 使えます')); return; }
+  if (on && (!W.me || !W.me.k || W.net.off)) { if (typeof toast === 'function') toast(tt('いまは チャットを使えません')); return; }
+  W.chat.open = !!on; bar.hidden = !on;
+  W.keys = {};
+  if (on) { setTimeout(() => { try { inp.focus(); } catch (e) {} }, 0); } else { inp.blur(); }
+  chatDraw();
+}
+async function chatSend() {
+  if (!W || W.chat.busy) return;
+  const inp = W.hud.querySelector('.wk-say input'), t = inp.value.replace(/\s+/g, ' ').trim();
+  if (!t) { chatOpen(false); return; }
+  W.chat.busy = true;
+  try {
+    const r = await rpc('av_say', { p_k: W.me.k, p_t: t });
+    if (!W) return;
+    inp.value = '';
+    chatAdd({ k: W.me.k, n: (W.me && W.me.n) || '', t: String((r && r.t) || t), at: now(), me: true });
+    W.net.next = 0;
+    chatOpen(false);
+  } catch (e) { if (typeof toast === 'function') toast(String((e && e.message) || e).replace(/^walk_k：/, '')); }
+  finally { if (W) W.chat.busy = false; }
+}
+
+/* ---------- 名前・ふきだし（map3d の m3Labels が 描く） ---------- */
 function tags() {
   if (!W) return null;
-  const L = [];
+  const L = [], t = now(), sayOf = x => (x && t - x.at < SAY_T ? x.t : '');
   for (const o of W.others.values()) {
     if (!o.av || o.dist > TAG) continue;
     const w = WHO.get(o.k); if (!w || !w.n) continue;
-    L.push({ x: o.dx, y: o.dy, h: o.df + ((o.av.P && o.av.P.h) || 1.75) * U + 0.25 * U, n: w.n, d: o.dist });
+    L.push({ x: o.dx, y: o.dy, h: o.df + ((o.av.P && o.av.P.h) || 1.75) * U + 0.25 * U, n: w.n, d: o.dist, s: sayOf(o.say) });
   }
-  return L.sort((a, b) => a.d - b.d).slice(0, 12);
+  L.sort((a, b) => a.d - b.d);
+  const out = L.slice(0, 12), me = sayOf(W.say);
+  if (me && W.av) out.push({ x: W.x, y: W.y, h: W.f + ((W.av.P && W.av.P.h) || 1.75) * U + 0.2 * U, n: '', d: 0, s: me });   // 自分の ふきだし
+  return out;
 }
 
 /* ---------- 画面（スティック・ボタン・見た目をえらぶ） ---------- */
@@ -540,9 +782,33 @@ const CSS = `
 .wk-hud>*{pointer-events:auto}
 .wk-stick{position:absolute;left:18px;bottom:calc(18px + env(safe-area-inset-bottom));width:116px;height:116px;border-radius:50%;background:rgba(255,255,255,.22);border:2px solid rgba(255,255,255,.75);box-shadow:0 2px 10px rgba(0,0,0,.25);touch-action:none}
 .wk-stick i{position:absolute;left:50%;top:50%;width:50px;height:50px;margin:-25px 0 0 -25px;border-radius:50%;background:rgba(255,255,255,.92);box-shadow:0 1px 4px rgba(0,0,0,.3);pointer-events:none}
-.wk-btns{position:absolute;right:12px;bottom:calc(18px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:10px}
-.wk-btns button{width:52px;height:52px;border-radius:50%;border:1px solid rgba(0,0,0,.15);background:rgba(255,255,255,.94);font-size:22px;padding:0;box-shadow:0 1px 4px rgba(0,0,0,.25)}
+.wk-btns{position:absolute;right:12px;bottom:calc(18px + env(safe-area-inset-bottom));display:grid;grid-template-columns:repeat(2,50px);gap:9px}
+.wk-btns button{width:50px;height:50px;border-radius:50%;border:1px solid rgba(0,0,0,.15);background:rgba(255,255,255,.94);font-size:21px;padding:0;box-shadow:0 1px 4px rgba(0,0,0,.25);touch-action:manipulation}
 .wk-btns button.on{background:#1f5fbf;color:#fff;border-color:#1f5fbf}
+.wk-btns .wk-jump{grid-column:1 / span 2;width:auto;border-radius:25px;font-size:15px;font-weight:800}
+.wk-keys{display:block;font-weight:400;opacity:.8;font-size:10.5px;margin-top:2px}
+.wk-log{position:absolute;left:8px;bottom:calc(186px + env(safe-area-inset-bottom));width:min(62%,340px);display:flex;flex-direction:column;gap:3px;pointer-events:auto}
+.wk-log[hidden],.wk-say[hidden],.wk-wheel[hidden],.wk-spawn[hidden]{display:none}
+.wk-log p{margin:0;background:rgba(20,24,30,.6);color:#fff;border-radius:9px;padding:3px 8px;font-size:12.5px;line-height:1.35;word-break:break-word;cursor:pointer}
+.wk-log p.me{background:rgba(31,95,191,.72)}
+.wk-log b{font-size:11px;opacity:.85;margin-right:6px}
+.wk-log button{margin-left:6px;border:0;border-radius:7px;background:#fff;color:#222;font-size:11px;padding:1px 6px}
+.wk-say{position:absolute;left:8px;right:8px;top:calc(var(--mp-top-h, 38px) + 52px);display:flex;gap:6px;z-index:3}
+.wk-say input{flex:1;min-width:0;font-size:16px;padding:8px 10px;border-radius:10px;border:2px solid #1f5fbf;background:#fff;color:#222}
+.wk-say button{border:0;border-radius:10px;padding:0 12px;font-weight:800;background:#1f5fbf;color:#fff;font-size:14px}
+.wk-say button[data-wk-sx]{background:rgba(255,255,255,.94);color:#333;border:1px solid rgba(0,0,0,.15)}
+.wk-wheel{position:absolute;left:50%;top:50%;width:270px;height:270px;margin:-135px 0 0 -135px;border-radius:50%;background:rgba(18,22,30,.72);box-shadow:0 4px 24px rgba(0,0,0,.35);z-index:3;touch-action:none}
+.wk-wheel button{position:absolute;width:58px;height:58px;margin:-29px 0 0 -29px;border-radius:50%;border:2px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);font-size:26px;padding:0;color:#fff}
+.wk-wheel button.sel{background:#fff;border-color:#fff;color:#1d2330;transform:scale(1.12)}
+.wk-wheel button.on{border-color:#ffd54a}
+.wk-wheel div{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:#fff;font-weight:800;font-size:14px;text-align:center;pointer-events:none;width:110px}
+.wk-wheel div small{display:block;font-weight:400;font-size:10.5px;opacity:.8;margin-top:2px}
+.wk-spawn{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(92%,330px);background:var(--panel,#fff);color:var(--ink,#222);border-radius:16px;box-shadow:0 6px 26px rgba(0,0,0,.35);padding:14px 14px 12px;z-index:7}
+.wk-spawn b{display:block;font-size:16px;margin-bottom:10px}
+.wk-spawn button{display:flex;align-items:center;gap:10px;width:100%;margin:0 0 8px;border:1px solid rgba(0,0,0,.14);border-radius:12px;background:#f3f5f8;padding:11px 12px;font-size:15px;font-weight:700;color:inherit;text-align:left}
+.wk-spawn button i{font-style:normal;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:#1f5fbf;color:#fff;font-size:14px}
+.wk-spawn button[data-sp-x]{justify-content:center;background:transparent;font-weight:400;font-size:13.5px;margin:2px 0 0}
+.mp-wrap.mp-walk .mp-zoom [data-find],.mp-wrap.mp-walk .mp-zoom [data-home],.mp-wrap.mp-walk .mp-zoom [data-opt]{display:none}
 .wk-info{position:absolute;left:8px;top:calc(var(--mp-top-h, 38px) + 12px);background:rgba(20,24,30,.62);color:#fff;border-radius:10px;padding:5px 9px;font-size:12px;font-weight:700;max-width:62%;pointer-events:none}
 .wk-info small{display:block;font-weight:400;opacity:.85;font-size:10.5px;margin-top:2px}
 .wk-info small[hidden],.wk-cr[hidden]{display:none}
@@ -573,9 +839,16 @@ function hudMake() {
   if (!document.getElementById('wkCss')) { const s = document.createElement('style'); s.id = 'wkCss'; s.textContent = CSS; document.head.appendChild(s); }
   const S = MI.S, h = document.createElement('div');
   h.className = 'wk-hud';
-  h.innerHTML = `<div class="wk-info"><span data-wk-n>🚶 歩いています</span><small data-wk-s></small><button class="wk-cr" data-wk-cr hidden></button></div>
+  const pc = !!(window.matchMedia && window.matchMedia('(pointer: fine)').matches);   // パソコン：キーの説明
+  h.innerHTML = `<div class="wk-info"><span data-wk-n>🚶 歩いています</span><small data-wk-s></small><button class="wk-cr" data-wk-cr hidden></button>${pc ? '<small class="wk-keys">Q 走る・Shift しゃがむ・スペース ジャンプ・E 持ち物・Z チャット</small>' : ''}</div>
     <div class="wk-stick" data-wk-stick title="うごく（いっぱいに たおすと 走る）"><i></i></div>
-    <div class="wk-btns"><button data-wk-run title="走る">🏃</button><button data-wk-look title="見た目">👕</button><button data-wk-x title="歩くのをやめる">✕</button></div>
+    <div class="wk-btns"><button data-wk-chat title="チャット（Z・/）">💬</button><button data-wk-x title="歩くのをやめる">✕</button>
+      <button data-wk-item title="持ち物（E）">🎒</button><button data-wk-look title="見た目">👕</button>
+      <button data-wk-crb title="しゃがむ（Shift）">🧎</button><button data-wk-run title="走る（Q）">🏃</button>
+      <button class="wk-jump" data-wk-jump title="ジャンプ（スペース）">⤒ ジャンプ</button></div>
+    <div class="wk-log" hidden></div>
+    <div class="wk-say" hidden><input type="text" maxlength="60" enterkeyhint="send" autocomplete="off" placeholder="近くの人に（60文字まで）"><button data-wk-ss>送る</button><button data-wk-sx title="とじる">✕</button></div>
+    <div class="wk-wheel" hidden></div>
     <div class="wk-pick" hidden></div>`;
   S.wrap.appendChild(h); S.wrap.classList.add('mp-walk');
   W.hud = h;
@@ -591,18 +864,127 @@ function hudMake() {
   st.addEventListener('pointermove', e => { if (e.pointerId === pid && W) mv(e); });
   st.addEventListener('pointerup', e => { if (e.pointerId === pid && W) end(); });
   st.addEventListener('pointercancel', e => { if (e.pointerId === pid && W) end(); });
-  const rb = h.querySelector('[data-wk-run]');
-  rb.onclick = () => { W.runOn = !W.runOn; rb.classList.toggle('on', W.runOn); };
-  h.querySelector('[data-wk-look]').onclick = () => pickOpen();
-  h.querySelector('[data-wk-x]').onclick = () => stop();
+  const tap = (sel, f) => { const b = h.querySelector(sel); b.onclick = e => { f(e); try { b.blur(); } catch (er) {} }; };   // ボタンに フォーカスを のこさない（スペースで おされないように）
+  tap('[data-wk-run]', () => dashSet(!W.runOn));
+  tap('[data-wk-crb]', () => crSet(!W.crOn));
+  tap('[data-wk-jump]', () => jump());
+  tap('[data-wk-item]', () => wheelOpen(!W.wheel, false));
+  tap('[data-wk-chat]', () => chatOpen(!W.chat.open));
+  tap('[data-wk-look]', () => pickOpen());
+  tap('[data-wk-x]', () => stop());
   h.querySelector('[data-wk-cr]').onclick = () => { W.crOpen = !W.crOpen; W.hudT = 0; hudTick(now()); };
+  // チャットの入力：Enter で送る（日本語の変換中は 送らない）・Esc で とじる
+  const inp = h.querySelector('.wk-say input');
+  inp.addEventListener('keydown', e => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === 'Enter') { e.preventDefault(); chatSend(); }
+    else if (e.key === 'Escape') { e.preventDefault(); chatOpen(false); }
+    e.stopPropagation();
+  });
+  h.querySelector('[data-wk-ss]').onclick = () => chatSend();
+  h.querySelector('[data-wk-sx]').onclick = () => chatOpen(false);
   W.kd = e => {
     if (!W || (e.target && e.target.closest && e.target.closest('input,textarea,select,[contenteditable]'))) return;
-    if (/^(Key[WASD]|Arrow(Up|Down|Left|Right)|Shift(Left|Right))$/.test(e.code)) { W.keys[e.code] = e.type === 'keydown'; if (/^Arrow/.test(e.code)) e.preventDefault(); }
+    const dn = e.type === 'keydown', c = e.code;
+    if (/^(Key[WASD]|Arrow(Up|Down|Left|Right)|Shift(Left|Right))$/.test(c)) { W.keys[c] = dn; if (/^Arrow/.test(c)) e.preventDefault(); return; }
+    if (c === 'Space') { e.preventDefault(); if (dn && !e.repeat) jump(); return; }
+    if (c === 'KeyE') { if (dn && !e.repeat) wheelOpen(!W.wheel, true, e.timeStamp); else if (!dn) wheelKeyUp(e.timeStamp); return; }
+    if (!dn || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (c === 'KeyQ') dashSet(!W.runOn);
+    else if (c === 'KeyZ' || c === 'Slash' || e.key === '/') { e.preventDefault(); chatOpen(true); }
+    else if (/^Digit[0-9]$/.test(c) && W.wheel) { const L = itemList(), n = Number(c.slice(5)); if (L[n]) itemPick(L[n].id); }
+    else if (c === 'Escape') { if (W.wheel) wheelOpen(false); else if (!W.hud.querySelector('.wk-pick').hidden) W.hud.querySelector('.wk-pick').hidden = true; }
   };
   W.blur = () => { if (W) W.keys = {}; };
   window.addEventListener('keydown', W.kd); window.addEventListener('keyup', W.kd); window.addEventListener('blur', W.blur);
 }
+// 持ち物の輪（E。グラセフの 武器の輪のように）：E を おしたまま マウスを 向けて はなす・タップで えらぶ。数字の キーでも
+function itemList() { const f = W && W.av && W.av.P ? String(W.av.P.file || '') : ''; return ITEMS.map((x, id) => ({ ...x, id })).filter(x => !x.only || f.startsWith(x.only)); }
+function itemPick(id) {
+  if (!W) return;
+  W.item = clamp(id | 0, 0, ITEMS.length - 1); W.net.next = 0;
+  wheelOpen(false);
+  if (MI.hint) { MI.hint(ITEMS[W.item].ico + ' ' + tt(ITEMS[W.item].name)); clearTimeout(W.itHint); W.itHint = setTimeout(() => { if (W && MI.hint) MI.hint(''); }, 1200); }
+}
+function wheelOpen(on, byKey, ts) {
+  if (!W || !W.hud) return;
+  const wh = W.hud.querySelector('.wk-wheel');
+  if (!on) { W.wheel = null; wh.hidden = true; window.removeEventListener('pointermove', wheelMove); return; }
+  const L = itemList(), n = L.length, R = 98;
+  W.wheel = { byKey: !!byKey, at: ts || now(), sel: L.findIndex(x => x.id === (W.item | 0)), L };   // at：E を おした時刻（キーの時刻。重い端末でも 長さを まちがえない）
+  wh.innerHTML = L.map((x, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / n; return `<button data-it="${x.id}" style="left:${135 + Math.cos(a) * R}px;top:${135 + Math.sin(a) * R}px" title="${esc2(tt(x.name))}（${i}）">${x.ico}</button>`; }).join('') + '<div></div>';
+  wh.hidden = false;
+  wh.querySelectorAll('[data-it]').forEach(b => {
+    b.onclick = e => { e.stopPropagation(); itemPick(Number(b.dataset.it)); };
+    b.onpointerenter = () => { if (!W || !W.wheel) return; W.wheel.sel = L.findIndex(x => x.id === Number(b.dataset.it)); wheelDraw(); };
+  });
+  wh.onclick = e => { if (e.target === wh) wheelOpen(false); };
+  window.addEventListener('pointermove', wheelMove);
+  wheelDraw();
+}
+function wheelDraw() {
+  const wh = W.hud.querySelector('.wk-wheel'), Wh = W.wheel; if (!Wh) return;
+  wh.querySelectorAll('[data-it]').forEach((b, i) => { b.classList.toggle('sel', i === Wh.sel); b.classList.toggle('on', Number(b.dataset.it) === (W.item | 0)); });
+  const x = Wh.L[Wh.sel] || Wh.L[0];
+  wh.querySelector('div').innerHTML = `${esc2(tt(x.name))}<small>${esc2(tt(Wh.byKey ? 'E を はなすと 持つ' : 'えらんで タップ'))}</small>`;
+}
+function wheelMove(e) {   // E を おしたまま：輪の まん中から マウスの向きで えらぶ
+  if (!W || !W.wheel || !W.wheel.byKey) return;
+  const wh = W.hud.querySelector('.wk-wheel'), r = wh.getBoundingClientRect(), dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+  if (Math.hypot(dx, dy) < 30) return;
+  const n = W.wheel.L.length; let a = Math.atan2(dy, dx) + Math.PI / 2; if (a < 0) a += 2 * Math.PI;
+  const i = Math.round(a / (2 * Math.PI / n)) % n;
+  if (i !== W.wheel.sel) { W.wheel.sel = i; wheelDraw(); }
+}
+function wheelKeyUp(ts) {   // E を はなした：おしていたら（0.25秒より長く）えらんだものを持つ・すぐ はなしたら 輪は のこす（クリック・数字で）
+  if (!W || !W.wheel || !W.wheel.byKey) return;
+  if ((ts || now()) - W.wheel.at < 250) { W.wheel.byKey = false; wheelDraw(); return; }
+  const x = W.wheel.L[W.wheel.sel]; if (x) itemPick(x.id); else wheelOpen(false);
+}
+
+/* ---------- 歩きはじめる場所（t68）：3つから えらぶ（数字の キーでも） ---------- */
+function spawnPick() {
+  return new Promise(ok => {
+    const S = MI.S, d = document.createElement('div');
+    if (!document.getElementById('wkCss')) { const st = document.createElement('style'); st.id = 'wkCss'; st.textContent = CSS; document.head.appendChild(st); }
+    d.className = 'wk-spawn';
+    d.innerHTML = `<b>${esc2(tt('🚶 どこから 歩きますか？'))}</b>${SPAWN.map((x, i) => `<button data-sp="${i}"><i>${i + 1}</i><span>${esc2(tt(x.n))}</span></button>`).join('')}<button data-sp-x>${esc2(tt('やめる'))}</button>`;
+    S.wrap.appendChild(d);
+    const done = v => { clearInterval(iv); window.removeEventListener('keydown', kd, true); d.remove(); ok(v); };
+    const iv = setInterval(() => { if (!M3.on || !MI.S.v3) done(null); }, 500);   // 3D を とじた
+    const kd = e => { if (/^Digit[1-9]$/.test(e.code) && SPAWN[Number(e.code.slice(5)) - 1]) { e.preventDefault(); done(Number(e.code.slice(5)) - 1); } else if (e.code === 'Escape') done(null); };
+    window.addEventListener('keydown', kd, true);
+    d.querySelectorAll('[data-sp]').forEach(b => b.onclick = () => done(Number(b.dataset.sp)));
+    d.querySelector('[data-sp-x]').onclick = () => done(null);
+  });
+}
+// 建物の前に 立つ：建物の まん中から 外へ さがして、いちばん近い 道路・ホームなどの面（たてものの外）。建物のほうを向く
+function onWalk(x, y) {
+  const ix = W.ix; if (!ix) return false;
+  const a = ix.cells.get(Math.floor(x / IG) * 100003 + Math.floor(y / IG)); if (!a) return false;
+  const P = ix.tri;
+  for (const n of a) {
+    const ax = P[n], az = P[n + 2], bx = P[n + 3], bz = P[n + 5], cx = P[n + 6], cz = P[n + 8];
+    const d = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz); if (Math.abs(d) < 1e-14) continue;
+    const l1 = ((bz - cz) * (x - cx) + (cx - bx) * (y - cz)) / d, l2 = ((cz - az) * (x - cx) + (ax - cx) * (y - cz)) / d;
+    if (l1 >= -1e-6 && l2 >= -1e-6 && 1 - l1 - l2 >= -1e-6) return true;
+  }
+  return false;
+}
+function spawnPlace() {
+  const sp = W.spawn; if (!sp || !W.ix) return;
+  for (let r = 0.2; r <= 3.2; r += 0.1) for (let k = 0; k < 48; k++) {   // 10m〜160m・48の向き
+    const a = k * Math.PI * 2 / 48, x = sp.x + Math.sin(a) * r, y = sp.y + Math.cos(a) * r;
+    if (blocked(x, y) || !onWalk(x, y)) continue;
+    const g = groundAt(x, y, M3.surf(x, y) + 2 * U, false); if (g == null) continue;
+    W.x = x; W.y = y; W.f = g; W.fv = 0;
+    W.h = Math.atan2(sp.x - x, sp.y - y); M3.yaw = W.h + Math.PI;   // 建物のほうを向く（カメラは うしろ）
+    M3.tx = x; M3.ty = y;
+    if (!sp.ok) { sp.ok = true; MI.hint('📍 ' + tt(sp.n)); clearTimeout(W.spHint); W.spHint = setTimeout(() => { if (W && MI.hint) MI.hint(''); }, 2500); }
+    return;
+  }
+}
+
 function hudTick(t) {
   if (!W.hud || t - (W.hudT || 0) < 500) return;
   W.hudT = t;
@@ -682,14 +1064,23 @@ async function start() {
   await catLoad();
   if (!M3.on) { MI.hint(''); return false; }
   if (CAT && CAT.soon && CAT.soon.walk && !CAT.admin) { MI.hint(''); if (typeof toast === 'function') toast(tt('🚶 街を歩くのは もうすぐ できるようになります（カミングスーン）')); return false; }   // 準備中（DB の更新121）
-  W = { x: M3.tx, y: M3.ty, f: 0, fv: 0, h: M3.yaw + Math.PI, pitch: 0.32, cd: 4.5, d0: M3.d, t: now(), keys: {}, stick: { x: 0, y: 0, on: false }, runOn: false,
-        others: new Map(), net: { busy: false, next: 0, sent: 0, st: -1, err: 0, off: false }, me: null, lv: 0, ix: null, blk: null, ixAt: [Infinity, Infinity], ixKey: null, near: 0 };
+  MI.hint('');
+  // 歩きはじめる場所（t68）：瑠璃府庁前・美東区役所前・蛍石県庁前 から えらぶ
+  if (spawnBusy) return false;
+  spawnBusy = true;
+  let si = null; try { si = await spawnPick(); } finally { spawnBusy = false; }
+  if (si == null || !M3.on || W) return !!W;
+  const SP = SPAWN[si];
+  M3.tx = SP.x; M3.ty = SP.y; M3.glide = null; M3.dirty = true; MI.S.dirty = true;
+  W = { x: SP.x, y: SP.y, f: 0, fv: 0, h: M3.yaw + Math.PI, pitch: 0.32, cd: 4.5, d0: M3.d, t: now(), keys: {}, stick: { x: 0, y: 0, on: false }, runOn: false, crOn: false, cr: false, air: false, item: 0,
+        others: new Map(), net: { busy: false, next: 0, sent: 0, st: -1, err: 0, off: false }, me: null, lv: 0, ix: null, blk: null, ixAt: [Infinity, Infinity], ixKey: null, near: 0,
+        chat: { since: 0, log: [], mute: new Set(), open: false, busy: false, sel: null }, spawn: { x: SP.x, y: SP.y, n: SP.n, until: now() + 20000 } };
+  MI.hint('📍 ' + tt(SP.n) + ' …');
   W.f = M3.surf(W.x, W.y);
   M3.d = 1.2; M3.glide = null; M3.dirty = true; MI.S.dirty = true;
   avSelf();
   hudMake();
   M3.walk = { step, cam, look, zoom, tags, stop };
-  MI.hint('');
   // しるし（DB の更新118 のあと）：ほかの人と見せあう
   try { const r = await rpc('av_walk_start'); if (W && r && typeof r.k === 'string') { W.me = r; if (r.c && CAT && !CAT.off) { const ch = r.c !== CAT.me.c || JSON.stringify(r.l || {}) !== JSON.stringify(CAT.me.l || {}); CAT.me = { c: r.c, l: r.l || {} }; if (ch) avSelf(); } } } catch (e) { if (W) W.me = null; }
   if (!W) return false;
@@ -707,6 +1098,8 @@ function stop(fromClose) {
   netLeave(w);
   clearInterval(w.refresh);
   if (w.pagehide) window.removeEventListener('pagehide', w.pagehide);
+  window.removeEventListener('pointermove', wheelMove); clearTimeout(w.spHint); clearTimeout(w.itHint);
+  if (w.spawn || w.itHint) MI.hint('');
   window.removeEventListener('keydown', w.kd); window.removeEventListener('keyup', w.kd); window.removeEventListener('blur', w.blur);
   if (w.av) M3.sc.remove(w.av.root);
   for (const o of w.others.values()) if (o.av) M3.sc.remove(o.av.root);
@@ -718,6 +1111,6 @@ function stop(fromClose) {
   if (onChange) onChange(false);
 }
 
-window.Walk = { start, stop, on: () => !!W, dbg: () => (W ? { x: W.x, y: W.y, f: W.f, ix: W.ix ? { n: W.ix.tri.length / 9, ms: W.ix.ms } : null, blk: W.blk ? W.blk.size : 0, others: W.others.size, me: !!(W.me && W.me.k) } : null), cat: catLoad, onChange: f => { onChange = f; }, mmd: mmdLoad, mkBase: (look, hl) => { T3 = T3 || window.THREE; return mkBase(look, hl); }, poseBase,
-  mkMMD: e => { T3 = T3 || window.THREE; return mkMMD(e); }, poseMMD, HAIR, SKIN };
+window.Walk = { start, stop, on: () => !!W, dbg: () => (W ? { x: W.x, y: W.y, f: W.f, ix: W.ix ? { n: W.ix.tri.length / 9, ms: W.ix.ms } : null, blk: W.blk ? W.blk.size : 0, others: W.others.size, ol: [...W.others.values()].map(o => [o.m, o.it || 0, !!o.say]), me: !!(W.me && W.me.k), item: W.item, cr: !!W.cr, air: !!W.air } : null), cat: catLoad, onChange: f => { onChange = f; }, mmd: mmdLoad, mkBase: (look, hl) => { T3 = T3 || window.THREE; return mkBase(look, hl); }, poseBase,
+  mkMMD: e => { T3 = T3 || window.THREE; return mkMMD(e); }, poseMMD, poseAv, ITEMS, HAIR, SKIN };
 })();

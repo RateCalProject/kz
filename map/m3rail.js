@@ -325,7 +325,12 @@ function staLayout(t, C, flip) {
   }
   for (const p of plats) { Wl = Math.max(Wl, p.hi + 0.3); Wr = Math.max(Wr, -p.lo + 0.3); }
   let Rmax = 0; for (const q of sids) Rmax = Math.max(Rmax, q.R);
-  return { pl, Lh, sids, plats, Wl, Wr, Rmax, nM };
+  // 番線（t68）：駅の向きの左から 1番線・2番線…（地図と同じ）。待避線は slot、本線は mains に（列車が ダイヤの番線に入る）
+  const all = M.map(o => ({ o, m: true })).concat(sids.map(q => ({ o: q.of, q })));
+  all.sort((x, y) => flip * y.o - flip * x.o);
+  const mains = [];
+  all.forEach((x, k) => { if (x.q) x.q.slot = k; else mains.push({ of: x.o, slot: k }); });
+  return { pl, Lh, sids, plats, Wl, Wr, Rmax, nM, mains };
 }
 /* ---------- 駅：ホームの形を決めた駅（DB の更新107・t66）----------
    番線は 駅の向きの左から 1番線・2番線…（2D と同じ）。pf：番線のあいだ（両はしも）ごとに 'P'（ホーム）か '-'（なし）を 番線の数＋1 文字。
@@ -373,7 +378,7 @@ function staLayoutPf(t, C, flip, pf) {
   for (const q of mo.concat(sids)) { Wl = Math.max(Wl, q.of + sp.wt / 2 + 0.3); Wr = Math.max(Wr, -q.of + sp.wt / 2 + 0.3); Rmax = Math.max(Rmax, q.R); }
   for (const q of mo) { Wl = Math.max(Wl, q.om + sp.wt / 2 + 0.3); Wr = Math.max(Wr, -q.om + sp.wt / 2 + 0.3); }
   for (const p of plats) { Wl = Math.max(Wl, p.hi + 0.3); Wr = Math.max(Wr, -p.lo + 0.3); }
-  return { pl, Lh, sids, plats, Wl, Wr, Rmax, nM, mo, slot: c.map(v => flip * v), ms, term, pf: true };
+  return { pl, Lh, sids, plats, Wl, Wr, Rmax, nM, mo, slot: c.map(v => flip * v), ms, term, pf: true, mains: mo.map(m => ({ of: m.of, slot: m.slot })) };
 }
 // 本線 j の o（線 C の s）：ホームの形を決めた駅では 駅の中で ひろげる（DB の更新107）
 function mainOff(C, s, j) {
@@ -1372,6 +1377,18 @@ function xBuild() {
         v.box(px - rx * 0.12 * U, py - ry * 0.12 * U, rx, ry, 0.07 * U, 0.7 * U, gz + 2.5 * U, gz + 3.0 * U, CL.blk);   // 灯の板
         v.box(px - rx * 0.14 * U, py - ry * 0.14 * U, rx, ry, 0.09 * U, 0.3 * U, gz + 2.05 * U, gz + 2.4 * U, CL.blk);   // 方向の箱
         for (const sgx of [1, -1]) c.lamps.push([px - rx * 0.2 * U + lx * 0.38 * sgx * U, gz + 2.75 * U, py - ry * 0.2 * U + ly * 0.38 * sgx * U, Math.atan2(ry, rx)]);
+        // すぐそば（t68。街を歩くとき）：灯の ひさし（上と よこ）・柱の 黒黄の帯を ていねいに・非常ボタン（黄の箱・赤いボタン）・灯の板の ふち
+        if (S.lod >= 3) {
+          for (const sgx of [1, -1]) {
+            const hx = px - rx * 0.32 * U + lx * 0.38 * sgx * U, hy = py - ry * 0.32 * U + ly * 0.38 * sgx * U;
+            v.box(hx, hy, rx, ry, 0.13 * U, 0.22 * U, gz + 2.95 * U, gz + 2.98 * U, CL.blk);
+            for (const sd of [1, -1]) v.box(hx + lx * 0.21 * sd * U, hy + ly * 0.21 * sd * U, rx, ry, 0.13 * U, 0.012 * U, gz + 2.62 * U, gz + 2.98 * U, CL.blk);
+          }
+          v.box(px - rx * 0.12 * U, py - ry * 0.12 * U, rx, ry, 0.075 * U, 0.72 * U, gz + 2.47 * U, gz + 2.5 * U, CL.yel);   // 灯の板の 下のふち
+          v.box(px - lx * 0.15 * U, py - ly * 0.15 * U, rx, ry, 0.09 * U, 0.05 * U, gz + 1.15 * U, gz + 1.5 * U, CL.yel);   // 非常ボタンの箱
+          v.box(px - lx * 0.205 * U, py - ly * 0.205 * U, rx, ry, 0.035 * U, 0.012 * U, gz + 1.28 * U, gz + 1.36 * U, CL.buf);   // 赤いボタン
+          v.box(px, py, rx, ry, 0.16 * U, 0.16 * U, gz, gz + 0.12 * U, CL.concD);   // 柱の 根もと
+        }
       }
       // 遮断機：箱と さお（しまると 道路の左半分を ふさぐ）
       const bx = px + rx * -0.7 * U, by = py + ry * -0.7 * U;
@@ -1546,21 +1563,28 @@ function flush() {
 /* ---------- 列車：レールの上に ---------- */
 // 左右のずれ（マス。進む向きの左が＋）：複線・複々線は 内がわの 2本（左を走る）・単線は まん中。s があれば 線のはしの よせ も。
 //   sd：線の s の向きに進むか（1）逆か（−1）。ホームの形を決めた駅（DB の更新107）では 本線が ひろがる。
-//   tr：とまる駅と番線［駅, 番線, 駅, 番線］（前の駅・つぎの駅）があれば、その駅では その番線に入る
+//   tr：とまる駅と番線［駅, 番線, 駅, 番線］（前の駅・つぎの駅）があれば、その駅では その番線に入る（待避線は 分かれ目で、
+//   ふだんと ちがう本線（折り返しなど）は わたり線で よせる。ホームの形を決めていない駅も。t68）
 function off(sg, k, s, sd, tr) {
   const C = segC(sg); if (!C.sp) C.sp = spec(sg);
   const n = C.sp.n, d = sd < 0 ? -1 : 1;
   if (s == null) return n === 1 ? 0 : C.sp.sp / 2 * U;
+  const j = n === 1 ? 0 : n === 2 ? (d > 0 ? 0 : 1) : (d > 0 ? 1 : 2);
+  const own = () => conv(C, s, C.sta.length ? mainOff(C, s, j) : C.sp.offs[j]);   // ふだんの本線（線 C の座標・m）
   if (tr && C.sta.length) for (const e of C.sta) {
-    const L = e.t._L; if (!L || !L.slot) continue;
+    const L = e.t._L; if (!L) continue;
     let no = 0; for (let i = 0; i + 1 < tr.length; i += 2) if (tr[i] === e.t.id) no = tr[i + 1];
     if (!no) continue;
-    const q = L.sids.find(x => x.slot === no - 1); if (!q) continue;   // 本線の番線は ふつうの本線（ひろげたもの）
-    const dm = e.dir * (s - e.sRef) * 50, o = sidO(q, L.Lh, dm, L);
-    if (o != null) return d * e.dir * o * U;
+    const dm = e.dir * (s - e.sRef) * 50, q = L.sids.find(x => x.slot === no - 1);
+    if (q) { const o = sidO(q, L.Lh, dm, L); if (o != null) return d * e.dir * o * U; continue; }
+    const m = L.mains && L.mains.find(x => x.slot === no - 1); if (!m) continue;
+    const ow = own(), tg = e.dir * m.of; if (Math.abs(tg - ow) < 0.05) continue;   // その本線
+    const a = Math.abs(dm), Rw = Math.max(40, Math.min(110, 30 + Math.abs(tg - ow) * 6));
+    if (L.stub && Math.sign(dm) === L.stub) return d * tg * U;   // 頭端式の行き止まりのがわ
+    if (a <= L.Lh) return d * tg * U;
+    if (a < L.Lh + Rw) return d * (ow + (tg - ow) * (1 - smooth((a - L.Lh) / Rw))) * U;
   }
-  const j = n === 1 ? 0 : n === 2 ? (d > 0 ? 0 : 1) : (d > 0 ? 1 : 2);
-  return d * conv(C, s, C.sta.length ? mainOff(C, s, j) : C.sp.offs[j]) * U;
+  return d * own() * U;
 }
 // 走る面の高さ（レールの上）。トンネルの中は見せない
 function runY(sg, s, x, y, k) {
