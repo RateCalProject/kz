@@ -149,7 +149,7 @@ function m3Sun(force) {
   else { if (M3.sc.background && M3.sc.background.isColor) M3.sc.background.copy(skyC); if (M3.sc.fog) M3.sc.fog.color.copy(skyC); }
   // 夜の明かり：建物の窓（夕方から）・列車
   const w = Math.max(0, Math.min(1, (2 - sn.el) / 8));
-  M3.nightW = w; if (window.M3A) window.M3A.nightW = w;   // 建物の型の 窓の明かり（t70）
+  M3.nightW = w; if (window.M3A) window.M3A.nightW = w; if (window.M3CAR && window.M3CAR.night) window.M3CAR.night(w);   // 建物の型の 窓の明かり（t70）
   for (const g of [M3.grpB, M3.grpL]) if (g) g.traverse(o => { for (const m of (Array.isArray(o.material) ? o.material : [o.material])) if (m && m.userData && m.userData.win) m.emissiveIntensity = 0.95 * w; if (o.userData && o.userData.spill) o.visible = w > 0.02; });
   if (M3.spillMat) M3.spillMat.opacity = 0.75 * w;   // 建物から もれる光（t70）
   if (M3.run && M3.run.material && M3.run.material.emissive) { const e = 0.16 + 0.5 * w; M3.run.material.emissive.setRGB(e, e * 0.95, e * 0.82); }
@@ -217,6 +217,7 @@ function m3Frame() {
   M3.nearQ = rc.near; m3Blds(rc.near);
   try { m3Lite(rc, nearOn); } catch (e) { console.error(e); }
   try { m3Runs(rc.near); } catch (e) { console.error(e); }   // 列車・バス（t61）
+  if (M3.walk && M3.walk.post) { try { M3.walk.post(); } catch (e) { console.error(e); } }   // 列車に 乗っている人を 車両に あわせる（t70）
   m3SigTick();   // 信号の灯（t64b）
   m3UgPass();   // 地下ビュー（DB の更新109）：地面・建物・道路を すかす
   m3Cam();
@@ -228,10 +229,11 @@ function m3Frame() {
 // うごくものだけ（t66）：視点が止まっているとき、列車・バス・踏切・信号を 毎フレーム（地形・建物は そのまま。m3Frame は ときどき）
 function m3RunFrame() {
   if (!M3.on || !M3.r) return;
-  if (M3.walk) { try { M3.walk.step(); } catch (e) { console.error(e); } m3Cam(); }   // 街を歩く（DB の更新118）
+  if (M3.walk) { try { M3.walk.step(); } catch (e) { console.error(e); } }   // 街を歩く（DB の更新118）
   if (M3.pn) m3PropNear(false);   // 近くの物を こまかく（t68）
   if (M3.pp) m3PropNear2(false);   // 近くの 小物を こまかく（t69）
   if (M3.nearQ) { try { m3Runs(M3.nearQ); } catch (e) { console.error(e); } }
+  if (M3.walk) { if (M3.walk.post) { try { M3.walk.post(); } catch (e) { console.error(e); } } m3Cam(); }   // 乗っている 列車に あわせてから カメラ（t70）
   m3SigTick();
   M3.r.render(M3.sc, M3.cam);
   m3Labels();
@@ -1799,7 +1801,9 @@ function m3Runs(v) {
       if (hide) { if (c === 0 && sel) selP = [px, m3Surf(px, pz) + hh, pz, ww]; continue; }   // トンネルの中：えらんだ列車は しるしだけ（地上に）
       pos.set(px, y + hh / 2, pz); q.setFromAxisAngle(up, -p[2]); sc.set(cl - gap, hh, ww);
       m.compose(pos, q, sc); M3.run.setMatrixAt(i, m); M3.run.setColorAt(i, col); i++;
-      M3.runHit.push({ o, x: px, y: y + hh / 2, z: pz, ...(k === 'rail' || k === 'bus' ? { ux: Math.cos(p[2]), uz: Math.sin(p[2]), hl: (cl - gap) / 2, hw: Math.min(ww / 2, (k === 'rail' ? 1.5 : 1.25) * M3_U), y0: y, y1: y + hh } : {}) });   // 歩く人の 当たり判定（t70）：向き・長さ・はば・高さ
+      { const dp = k === 'rail' ? m3DoorOpen(o) : 0, hm = (cl - gap) / 2 / M3_U;   // 歩く人の 当たり判定（t70）：向き・長さ・はば・高さ。乗りおり：止まっていれば 両がわの ドア（モデルのない列車）
+        M3.runHit.push({ o, x: px, y: y + hh / 2, z: pz, ...(k === 'rail' || k === 'bus' ? { ux: Math.cos(p[2]), uz: Math.sin(p[2]), hl: (cl - gap) / 2, hw: Math.min(ww / 2, (k === 'rail' ? 1.5 : 1.25) * M3_U), y0: y, y1: y + hh,
+          rid: o.R.id, tid: o.T.id, kc: c, oL: dp, oR: dp, dx: k === 'rail' ? { L: [-hm * 0.55, 0, hm * 0.55], R: [-hm * 0.55, 0, hm * 0.55] } : null, mv: o.at < 0 } : {}) }); }
       if (c === 0 && sel) selP = [px, y + hh, pz, ww];
     }
   }
@@ -1826,6 +1830,14 @@ function m3RunTrk(o) {
 // モデルの列車（t66。window.M3CAR）：両ごとに 台車の2点の高さで 向きと かたむき。編成は 下り方から（下りの列車は 下り方が前）。トンネルの中は見せない。
 //   えらんだ列車なら しるしの位置［x, y, z, はば］を返す
 const M3_RC = { m: null, q: null, q2: null, p: null, s: null, up: null, ax: null };
+// ドアの あき（0〜1。t70）：駅に止まっている列車（o.at・o.tt）。着いて 3秒から 2.5秒で ひらき、出る 4秒前までに しまる。終着駅は 10分
+const m3Sm = x => x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x);
+function m3DoorOpen(o) {
+  if (!o || o.yard || !(o.at >= 0) || o.tt == null || !o.T || !o.T.s) return 0;
+  const q = o.T.s[o.at]; if (!q || q[1] == null) return 0;
+  const ar = q[1], dp = q[2] != null ? q[2] : ar + 600;
+  return Math.min(m3Sm((o.tt - ar - 3) / 2.5), m3Sm((dp - 6.5 - o.tt) / 2.5));
+}
 function m3RunCars(o, md, it, sel) {
   const T3 = M3.T, C = M3_RC; if (!C.m) { C.m = new T3.Matrix4(); C.q = new T3.Quaternion(); C.q2 = new T3.Quaternion(); C.p = new T3.Vector3(); C.s = new T3.Vector3(); C.up = new T3.Vector3(0, 1, 0); C.ax = new T3.Vector3(0, 0, 1); C.col = [new T3.Color(), new T3.Color()]; C.hsl = {}; }
   const MOD = window.M3RAIL, MD = MOD && !MOD.fail ? MOD : null, CAR = window.M3CAR;
@@ -1844,8 +1856,12 @@ function m3RunCars(o, md, it, sel) {
     return [x, m3Surf(x, z) + M3_LIFT + 0.1 * M3_U, z, false];
   };
   let selP = null;
+  // ドア（t70）：駅に止まっているあいだ、着いて 3秒から ひらき、出る 4秒前に しまる。ホームのある がわだけ
+  const dp = m3DoorOpen(o); let sd = null;
+  if (dp > 0 && MD && MD.pfSide) { const rf = runRef(o.H, o.d - o.len / 2), sg = rf ? it.segs.get(rf[0]) : null; if (sg) sd = MD.pfSide(sg, rf[1], MD.off(sg, 'rail', rf[1], rf[2], trs), rf[2]); }
   for (let k = 0; k < n; k++) {
     const e = comp[fwd ? k : n - 1 - k], c = dC + ((n - 1) / 2 - k) * P, a = pt(c + Bg), b = pt(c - Bg);
+    const fl = fwd ? e.r : !e.r, X = { hd: !o.yard && k === 0 && !fl, tl: !o.yard && k === n - 1 && fl, oL: sd && (fl ? sd.r : sd.l) ? dp : 0, oR: sd && (fl ? sd.l : sd.r) ? dp : 0 };   // fl：運転台が うしろ向き（車両の +Z は 運転台から見て 右）
     if (a[3] || b[3]) { if (k === 0 && sel) selP = [a[0], m3Surf(a[0], a[2]) + hh, a[2], cw * M3_U]; continue; }   // トンネルの中
     const dx = a[0] - b[0], dz = a[2] - b[2], L = Math.hypot(dx, dz) || 1e-6, x = (a[0] + b[0]) / 2, y = (a[1] + b[1]) / 2, z = (a[2] + b[2]) / 2;
     C.q.setFromAxisAngle(C.up, -Math.atan2(dz, dx));
@@ -1853,8 +1869,10 @@ function m3RunCars(o, md, it, sel) {
     if (fwd ? e.r : !e.r) { C.q2.setFromAxisAngle(C.up, Math.PI); C.q.multiply(C.q2); }   // 運転台が うしろ向き
     C.p.set(x, y, z); C.s.set(M3_U, M3_U, M3_U); C.m.compose(C.p, C.q, C.s);
     const dd = Math.hypot(cam.x - x, cam.y - y, cam.z - z), lv = dd < nearD ? 'near' : dd < midD ? 'mid' : 'far';
-    CAR.put(md, e.c, lv, C.m, col);
-    M3.runHit.push({ o, x, y: y + hh / 2, z, ux: dx / L, uz: dz / L, hl: P / 2, hw: cw / 2 * M3_U, y0: y, y1: y + hh });   // 歩く人の 当たり判定（t70）
+    CAR.put(md, e.c, lv, C.m, col, X);
+    const sx = fl ? -1 : 1;   // 車両の +X の向き（運転台が うしろ向きなら 反対）
+    M3.runHit.push({ o, x, y: y + hh / 2, z, ux: sx * dx / L, uz: sx * dz / L, hl: P / 2, hw: cw / 2 * M3_U, y0: y, y1: y + hh,   // 歩く人の 当たり判定・乗りおり（t70）
+      rid: o.R.id, tid: o.T.id, kc: k, oL: X.oL, oR: X.oR, dx: CAR.doors ? CAR.doors(md, e.c) : null, mv: o.at < 0 });
     if (k === 0 && sel) selP = [x, y + hh, z, cw * M3_U];
   }
   return selP;

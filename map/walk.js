@@ -158,9 +158,10 @@ function mkBase(look, hl) {
 }
 // X（t68）：{ cr しゃがむ 0〜1・air ジャンプ 0〜1・it 持ち物 }。しゃがむ：腰を下げて ひざを まげる（足のうらは 地面に）
 function legPose(amt, run, s, c, sg, X) {
-  const sA = run ? 0.8 : 0.46, kA = run ? 1.35 : 0.62, cr = X ? X.cr || 0 : 0, air = X ? X.air || 0 : 0;
+  const sA = run ? 0.8 : 0.46, kA = run ? 1.35 : 0.62, cr = X ? X.cr || 0 : 0, air = X ? X.air || 0 : 0, sit = X ? X.sit || 0 : 0;
   let th = -sA * amt * s * sg, kn = (kA * Math.max(0, c * sg) + (run ? 0.28 : 0.05)) * amt;
   if (cr) { th += (-1.15 + 0.28 * amt * s * sg - th) * cr; kn += (1.71 + 0.3 * amt * Math.max(0, c * sg) - kn) * cr; }
+  if (sit) { th += (-1.5 - th) * sit; kn += (1.45 - kn) * sit; }   // すわる（t70）：ももを前へ・ひざを まげる
   if (air) { th += (-0.55 - th) * air; kn += (1.0 - kn) * air; }
   return [th, kn, -(th + kn) * (0.6 + 0.4 * Math.max(cr, air))];
 }
@@ -168,6 +169,7 @@ function armPose(i, amt, run, s, sg, tIdle, X) {   // [前後, ひじ, 外へ]
   const aA = run ? 0.95 : 0.36, cr = X ? X.cr || 0 : 0, air = X ? X.air || 0 : 0, it = X && X.it ? ITEMS[X.it] : null, ia = it && it.arm;
   let ax = aA * amt * s * sg + (1 - amt) * 0.035 * Math.sin(tIdle * 1.3 + i), el = -((run ? 1.25 : 0.22) * amt + 0.1), az = 0;
   if (cr) { ax += (-0.35 + 0.12 * amt * s * sg - ax) * cr; el += (-0.75 - el) * cr; }
+  { const sit = X ? X.sit || 0 : 0; if (sit) { ax += (-0.5 - ax) * sit; el += (-0.55 - el) * sit; } }   // すわる：手は ひざの上
   if (air) { ax += (-0.85 - ax) * air; el += (-0.45 - el) * air; az = 0.3 * air; }
   if (ia && i === 1) { ax = -ia.up + (ia.sw || 0) * ax; el = ia.el; az = 0; }   // 右手に 持ち物
   return [ax, el, az];
@@ -182,7 +184,8 @@ function poseBase(P, ph, amt, run, tIdle, X) {
     A.arm.rotation.z = (0.07 + ap[2]) * A.sd;
     A.elbow.rotation.x = ap[1];
   }
-  P.body.position.y = 0.93 + ((run ? 0.055 : 0.024) * Math.abs(c) - (run ? 0.035 : 0)) * amt * (1 - cr) + (1 - amt) * 0.004 * Math.sin(tIdle * 1.7) - 0.29 * cr;
+  const sit = X ? X.sit || 0 : 0;
+  P.body.position.y = 0.93 + ((run ? 0.055 : 0.024) * Math.abs(c) - (run ? 0.035 : 0)) * amt * (1 - cr) + (1 - amt) * 0.004 * Math.sin(tIdle * 1.7) - 0.29 * cr * (1 - sit) - 0.44 * sit;   // すわる：腰を 座面（45cm）へ
   P.chest.rotation.x = (run ? 0.2 : 0.05) * amt * (1 - cr) + 0.42 * cr + 0.08 * air;
   if (P.head) P.head.rotation.x = -0.32 * cr;   // しゃがんでも 前を見る
 }
@@ -270,7 +273,8 @@ function poseMMD(P, ph, amt, run, tIdle, X) {
   qset(B, 'up', 'x', (run ? 0.16 : 0.04) * amt * (1 - cr) + 0.42 * cr + 0.08 * air);
   qset(B, 'neck', 'x', -0.3 * cr);
   // しゃがむ：腰（センター）を 下げる（足の長さは 身長の だいたい 0.47）
-  if (B.ctr) B.ctr.b.position.y = B.ctr.p.y + (((run ? 0.055 : 0.024) * Math.abs(c) - (run ? 0.035 : 0)) * amt * (1 - cr) - 0.175 * P.h * cr) / P.k;
+  const sit = X ? X.sit || 0 : 0;
+  if (B.ctr) B.ctr.b.position.y = B.ctr.p.y + (((run ? 0.055 : 0.024) * Math.abs(c) - (run ? 0.035 : 0)) * amt * (1 - cr) - 0.175 * P.h * cr * (1 - sit) - 0.25 * P.h * sit) / P.k;   // すわる（t70）
   // 袖など（物理で ゆれる鎖）：うでといっしょに回すと 大きく のびるので、下へたらす。歩く・走るときは 少しうしろへ なびく
   if (P.H && P.H.length) {
     if (!P.qh) P.qh = { a: new T.Quaternion(), l: new T.Quaternion(), ax: new T.Vector3(1, 0, 0) };
@@ -397,12 +401,13 @@ function poseAv(A, dt, spd, run, X) {
   A.run = run && spd > SPD.walk * 1.2;
   A.cr = (A.cr || 0) + (cr - (A.cr || 0)) * Math.min(1, dt * 10);
   A.air = (A.air || 0) + ((X && X.air ? 1 : 0) - (A.air || 0)) * Math.min(1, dt * 14);
+  A.sit = (A.sit || 0) + ((X && X.sit ? 1 : 0) - (A.sit || 0)) * Math.min(1, dt * 6);   // すわる（t70）
   const stride = A.run ? 1.35 : sneak ? 0.5 : 0.75;
   A.ph += dt * Math.PI * Math.max(spd, 0.3 * A.amt) / stride;
   if (A.ph > 1e4) A.ph -= Math.PI * 2 * 1000;
   let it = X && X.it ? X.it | 0 : 0; const I = ITEMS[it];
   if (!I || (I.only && !String(P.file || '').startsWith(I.only))) it = 0;   // その見た目では 持てない
-  const ti = now() / 1000, Y = A.cr > 0.01 || A.air > 0.01 || it ? { cr: A.cr, air: A.air, it } : null;
+  const ti = now() / 1000, Y = A.cr > 0.01 || A.air > 0.01 || A.sit > 0.01 || it ? { cr: A.cr, air: A.air, it, sit: A.sit } : null;
   if (P.mmd) poseMMD(P, A.ph, A.amt, A.run, ti, Y); else poseBase(P, A.ph, A.amt, A.run, ti, Y);
   if (it || A.itO) itemTick(A, it, now());
 }
@@ -525,17 +530,99 @@ function jump() {
 }
 function dashSet(on) { if (!W) return; W.runOn = !!on; const b = W.hud && W.hud.querySelector('[data-wk-run]'); if (b) b.classList.toggle('on', W.runOn); }
 function crSet(on) { if (!W) return; W.crOn = !!on; const b = W.hud && W.hud.querySelector('[data-wk-cr]'); if (b) b.classList.toggle('on', W.crOn); }
+/* ---------- 列車に乗る（t70）：駅に止まった列車の ひらいた ドアから 入る → 車両の中を 歩く・すわる（R）。ひらいた ドアから ホームへ 出る
+   W.ride：{ rid, tid, kc（何両目）, lx・lz（車両の中の位置 m。x：運転台の向き・z：右）, lh（車両に対する 向き）, sit } ---------- */
+const FLOOR = 1.18;   // 床の高さ（レールの上 m）
+function rideCar(R) { const L = M3.runHit; if (!L) return null; for (const h of L) if (h.rid === R.rid && h.tid === R.tid && h.kc === R.kc && h.hl != null) return h; return null; }
+const doorAt = (h, side, lx) => { const L = h.dx && h.dx[side]; if (!L) return null; for (const x of L) if (Math.abs(lx - x) < 0.62) return x; return null; };
+function rideTry(h, nx, ny) {
+  if (!h || h.mv || h.rid == null || W.ride) return false;
+  const ex = (nx - h.x) / U, ez = (ny - h.z) / U, lx = ex * h.ux + ez * h.uz, lz = -ex * h.uz + ez * h.ux, side = lz > 0 ? 'R' : 'L';
+  if (!((side === 'R' ? h.oR : h.oL) > 0.7) || doorAt(h, side, lx) == null) return false;
+  if (Math.abs(W.f - (h.y0 + FLOOR * U)) > 0.8 * U) return false;   // ホームの高さから
+  W.ride = { rid: h.rid, tid: h.tid, kc: h.kc, lx, lz: Math.sign(lz) * Math.max(0.2, h.hw / U - 0.5), lh: W.h - Math.atan2(h.ux, h.uz), sit: 0 };
+  W.fv = 0; W.air = false; crSet(false); W.hudT = 0;
+  return true;
+}
+function rideOff(x, y) {   // おりる：(x, y) の ホームへ（なければ 近くの 歩けるところ）
+  const R = W.ride; W.ride = null; W.hudT = 0; sitSet(false);
+  if (x != null) { const g = groundAt(x, y, W.f + 0.4 * U, false); W.x = x; W.y = y; if (g != null) { W.f = g; W.fg = g; } }
+  W.fv = 0; unstuck();
+  return R;
+}
+// 車両の中で うごく（入力 I。車両の 向き ux・uz に あわせる）
+function rideIn(I, dt, yaw) {
+  const R = W.ride, h = rideCar(R);
+  if (!h) { R.miss = (R.miss || 0) + dt; W.spd = 0; if (R.miss > 2) rideOff(); return; }   // 列車が 見えなくなった（とおくへ・終着）
+  R.miss = 0;
+  const Lh = h.hl / U - 0.45, Wh = h.hw / U - 0.4, ca = Math.atan2(h.ux, h.uz);
+  let spd = 0;
+  if (I.m > 0.05) {
+    if (R.sit) sitSet(false);
+    const fx = -Math.sin(yaw), fz = -Math.cos(yaw), rx = Math.cos(yaw), rz = -Math.sin(yaw);
+    let dx = fx * I.iy + rx * I.ix, dz = fz * I.iy + rz * I.ix; const dl = Math.hypot(dx, dz) || 1; dx /= dl; dz /= dl;
+    let da = Math.atan2(dx, dz) - W.h; while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI;
+    W.h += clamp(da, -10 * dt, 10 * dt); R.lh = W.h - ca;
+    const v = I.m * (I.cr ? SPD.sneak : I.run ? SPD.run * 0.7 : SPD.walk), d = v * dt;   // 車内は 走っても ゆっくり
+    let nx = clamp(R.lx + (dx * h.ux + dz * h.uz) * d, -Lh, Lh), nz = R.lz + (-dx * h.uz + dz * h.ux) * d;
+    const side = nz > 0 ? 'R' : 'L', open = !h.mv && (side === 'R' ? h.oR : h.oL) > 0.7 && doorAt(h, side, nx) != null;
+    if (open && Math.abs(nz) > Wh + 0.5) {   // ドアから ホームへ
+      const oz = Math.sign(nz) * (h.hw / U + 0.45);
+      W.lastRun = I.run; rideOff(h.x + (h.ux * nx - h.uz * oz) * U, h.z + (h.uz * nx + h.ux * oz) * U); W.spd = v; return;
+    }
+    nz = clamp(nz, -(open ? Wh + 0.6 : Wh), open ? Wh + 0.6 : Wh);
+    spd = Math.hypot(nx - R.lx, nz - R.lz) / Math.max(dt, 1e-3); R.lx = nx; R.lz = nz;
+  } else if (Math.abs(R.lz) > Wh && (h.mv || !((R.lz > 0 ? h.oR : h.oL) > 0.7))) R.lz = Math.sign(R.lz) * Wh;   // ドアが しまったら 中へ
+  W.spd = spd; W.lastRun = I.run; W.cr = I.cr && !R.sit;
+}
+// 列車を うごかしたあと（map3d の m3Runs のあと）：車両の中の位置 → 地図の位置
+function post() {
+  if (!W || !W.ride || !W.av) return;
+  const R = W.ride, h = rideCar(R); W.rh = h; if (!h) return;
+  const x = h.x + (h.ux * R.lx - h.uz * R.lz) * U, y = h.z + (h.uz * R.lx + h.ux * R.lz) * U, t = now();
+  if (W.rp && t > W.rp[2]) W.wspd = Math.hypot(x - W.rp[0], y - W.rp[1]) / U / ((t - W.rp[2]) / 1000);
+  W.rp = [x, y, t];
+  W.x = x; W.y = y; W.f = h.y0 + FLOOR * U; W.fg = W.f; W.air = false; W.fv = 0;
+  W.h = R.sit ? (R.lz > 0 ? Math.atan2(h.uz, -h.ux) : Math.atan2(-h.uz, h.ux)) : Math.atan2(h.ux, h.uz) + R.lh;   // すわると 通路の向き
+  W.av.root.position.set(W.x, W.f, W.y); W.av.root.rotation.y = W.h;
+  M3.tx = W.x; M3.ty = W.y;
+}
+// すわる（R・🪑。t70）：乗っていれば 窓がわの 長いす（ドアの前は よける）、乗っていなければ その場に
+function sitSet(on) {
+  if (!W) return;
+  const R = W.ride;
+  if (on && R) {
+    const h = rideCar(R); if (!h) return;
+    const side = R.lz >= 0 ? 'R' : 'L', d = doorAt(h, side, R.lx), Lh = h.hl / U - 1.2;
+    if (d != null) R.lx = clamp(R.lx >= d ? d + 1.05 : d - 1.05, -Lh, Lh);
+    R.lz = (side === 'R' ? 1 : -1) * Math.max(0.2, h.hw / U - 0.62);
+  }
+  if (R) R.sit = on ? 1 : 0; else W.sitG = !!on;
+  const b = W.hud && W.hud.querySelector('[data-wk-sit]'); if (b) b.classList.toggle('on', !!on);
+  W.net.next = 0; W.hudT = 0;
+}
+const sitOn = () => !!(W && (W.ride ? W.ride.sit : W.sitG));
 function step() {
   if (!W || !M3.on) return;
   const t = now(), dt = Math.min(0.25, Math.max(0, (t - W.t) / 1000)); W.t = t;
   if (W.ixKey !== M3.bKey || Math.hypot(W.x - W.ixAt[0], W.y - W.ixAt[1]) > 3) {
-    try { idxBuild(); if (W.spawn) spawnPlace(); unstuck(); } catch (e) { console.error(e); }
+    try { idxBuild(); if (W.spawn) spawnPlace(); if (!W.ride) unstuck(); } catch (e) { console.error(e); }
   }
   if (W.spawn && t > W.spawn.until) { W.spawn = null; MI.hint(''); }
-  { const t0 = M3.surf(W.x, W.y); if (W.f < t0) { W.f = t0; W.fv = 0; } }   // 地形の網が こまかくなって 地面の下に なったら 上へ
+  if (!W.ride) { const t0 = M3.surf(W.x, W.y); if (W.f < t0) { W.f = t0; W.fv = 0; } }   // 地形の網が こまかくなって 地面の下に なったら 上へ
   const I = input(), yaw = M3.yaw;
   let spd = 0;
   W.cr = I.cr;
+  if (W.sitG && (I.m > 0.05 || W.air)) sitSet(false);   // その場に すわっていて うごいたら 立つ
+  if (W.ride) {   // 列車に 乗っている（t70）
+    rideIn(I, dt, yaw);
+    if (W.ride) {
+      const A = W.av;
+      poseAv(A, dt, W.spd, !!W.lastRun, { cr: W.cr, air: false, it: W.item | 0, sit: W.ride.sit });
+      others(dt); net(t); hudTick(t);
+      return;
+    }
+  }
   if (I.m > 0.05) { W.idleT = 0; if (W.spawn) { W.spawn = null; MI.hint(''); } }   // うごいたら 歩きはじめる場所に よせない
   else if (W.runOn && (W.idleT = (W.idleT || 0) + dt) > 0.8) dashSet(false);   // 止まったら 走るのを やめる
   if (I.m > 0.05) {
@@ -545,7 +632,10 @@ function step() {
     let da = Math.atan2(dx, dz) - W.h; while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI;
     W.h += clamp(da, -10 * dt, 10 * dt);
     const v = I.m * (I.cr ? SPD.sneak : I.run ? SPD.run : SPD.walk), d = v * dt * U, wet0 = wetAt(W.x, W.y);
-    const tryTo = (nx, ny) => { if (blocked(nx, ny)) return null; if (trainAt(nx, ny, W.f) && !trainAt(W.x, W.y, W.f)) return null; const g = groundAt(nx, ny, W.f, wet0); return g == null ? null : [nx, ny, g]; };   // 列車には 入れない（t70）
+    const tryTo = (nx, ny) => {
+      if (W.ride || blocked(nx, ny)) return null;
+      const th = trainAt(nx, ny, W.f); if (th && !trainAt(W.x, W.y, W.f)) { rideTry(th.h, nx, ny); return null; }   // 列車には 入れない（t70）。ひらいた ドアからは 乗る
+      const g = groundAt(nx, ny, W.f, wet0); return g == null ? null : [nx, ny, g]; };
     let r = tryTo(W.x + dx * d, W.y + dz * d);
     if (!r && Math.abs(dx) > 0.15) r = tryTo(W.x + Math.sign(dx) * d * Math.abs(dx), W.y);   // かべに そって
     if (!r && Math.abs(dz) > 0.15) r = tryTo(W.x, W.y + Math.sign(dz) * d * Math.abs(dz));
@@ -553,7 +643,7 @@ function step() {
     W.lastRun = I.run;
   }
   // 走ってくる列車に 当たったら、横へ おしだされる（t70。線路の上に 立たないで）
-  { const hc = trainAt(W.x, W.y, W.f); if (hc) { const nx = W.x + hc.nx * (hc.d + 0.02 * U), ny = W.y + hc.ny * (hc.d + 0.02 * U); if (!blocked(nx, ny)) { W.x = nx; W.y = ny; W.bump = t; } } }
+  if (!W.ride) { const hc = trainAt(W.x, W.y, W.f); if (hc) { const nx = W.x + hc.nx * (hc.d + 0.02 * U), ny = W.y + hc.ny * (hc.d + 0.02 * U); if (!blocked(nx, ny)) { W.x = nx; W.y = ny; W.bump = t; } } }
   // 高さ：のぼるのは すぐ・おりるのは 落ちる（重力）。ジャンプ（fv < 0）で 上へ
   const g = W.gt != null && spd > 0 ? W.gt : groundAt(W.x, W.y, W.f, true);
   W.gt = null;
@@ -566,7 +656,7 @@ function step() {
   W.spd = spd;
   const A = W.av;
   A.root.position.set(W.x, W.f, W.y); A.root.rotation.y = W.h;
-  poseAv(A, dt, spd, !!W.lastRun, { cr: W.cr, air: W.air, it: W.item | 0 });
+  poseAv(A, dt, spd, !!W.lastRun, { cr: W.cr, air: W.air, it: W.item | 0, sit: !!W.sitG });
   M3.tx = W.x; M3.ty = W.y;
   if (A.wait && !A.P.mmd) { const e = MMD.get(skinOf(A.code).file); if (e && (e.mesh || e.fail)) avSelf(); }
   others(dt);
@@ -580,12 +670,13 @@ function camReach(yaw, p, ty) {   // ピッチ p で カメラを どこまで �
   for (let k = 1; k <= 12; k++) {
     const f = k / 12, px = W.x + ox * d * f, pz = W.y + oz * d * f, py = ty + oy * d * f;
     let top = 0; if (W.blk) for (const [a, b] of [[-r, -r], [r, -r], [-r, r], [r, r]]) { const t = W.blk.get(cellK(px + a, pz + b)); if (t > top) top = t; }
-    if (top > py - 0.3 * U || M3.surf(px, pz) > py - 0.25 * U) { d = Math.max(0.6 * U, d * (k - 1) / 12); break; }
+    if (top > py - 0.3 * U || M3.surf(px, pz) > py - 0.25 * U || (W.ride && W.rh && !inCar(W.rh, px, pz, py))) { d = Math.max(0.6 * U, d * (k - 1) / 12); break; }   // 乗っているときは 車両の中だけ（t70）
   }
   return d;
 }
+const inCar = (h, x, z, y) => { const ex = (x - h.x) / U, ez = (z - h.z) / U; return Math.abs(ex * h.ux + ez * h.uz) < h.hl / U - 0.2 && Math.abs(-ex * h.uz + ez * h.ux) < h.hw / U - 0.15 && y < h.y0 + (FLOOR + 2.05) * U; };
 function cam() {
-  const C = M3.cam, yaw = M3.yaw, ty = W.f + HEAD * (1 - 0.3 * ((W.av && W.av.cr) || 0)) * U, t = now(), dt = Math.min(0.25, Math.max(0, (t - (W.ct || t)) / 1000)); W.ct = t;
+  const C = M3.cam, yaw = M3.yaw, ty = W.f + HEAD * (1 - 0.3 * ((W.av && W.av.cr) || 0) - 0.33 * ((W.av && W.av.sit) || 0)) * U, t = now(), dt = Math.min(0.25, Math.max(0, (t - (W.ct || t)) / 1000)); W.ct = t;
   let p = W.pitch, d = camReach(yaw, p, ty);
   if (d < W.cd * U * 0.6 && d < 3 * U) for (const dp of [0.25, 0.5]) {   // うしろが 低い たてものなら 上から（高い たてものなら 近くに よせる）
     const p2 = Math.min(0.95, W.pitch + dp), d2 = camReach(yaw, p2, ty);
@@ -602,8 +693,14 @@ function cam() {
   const cl = clamp((1.8 - d / U) / 1.8, 0, 1), fx = -Math.sin(yaw) * cl * 1.4 * U, fz = -Math.cos(yaw) * cl * 1.4 * U;
   cy += cl * 0.55 * U;
   const gc = M3.surf(cx, cz); if (cy < gc + 0.35 * U) cy = gc + 0.35 * U;
-  C.position.set(cx, cy, cz); C.lookAt(W.x + fx, ty + cl * 0.2 * U, W.y + fz);
-  if (W.av) W.av.root.visible = d > 0.75 * U;
+  if (W.ride && d < 1.3 * U) {   // 車内で せまい：自分の目から（t70）
+    const ex = -Math.sin(yaw), ez = -Math.cos(yaw);
+    C.position.set(W.x + ex * 0.12 * U, ty, W.y + ez * 0.12 * U); C.lookAt(W.x + ex * 3 * U, ty - Math.sin(W.pitch - 0.32) * 3 * U, W.y + ez * 3 * U);
+    if (W.av) W.av.root.visible = false;
+  } else {
+    C.position.set(cx, cy, cz); C.lookAt(W.x + fx, ty + cl * 0.2 * U, W.y + fz);
+    if (W.av) W.av.root.visible = d > 0.75 * U;
+  }
   C.near = 0.12 * U; C.far = 80; C.updateProjectionMatrix();
   // 遠くの海の大きな板（20km）は、カメラのまわりだけに（近い面が 0.1m なので、大きすぎる板は 奥行きが こわれて 手前に出る）
   if (M3.sea) { M3.sea.scale.set(0.012, 0.012, 1); M3.sea.position.x = cx; M3.sea.position.z = cz; }
@@ -707,8 +804,9 @@ function others(dt) {
 }
 function net(t) {
   const N = W.net; if (!W.me || !W.me.k || N.off) return;
-  const mv = W.spd > 0.05;
+  const rmv = !!W.ride && (W.wspd || 0) > 0.5, mv = W.spd > 0.05 || rmv;   // 乗っている列車が 走っている（t70）
   let st = W.cr ? (mv ? 4 : 3) : mv ? (W.lastRun && W.spd > SPD.walk * 1.2 ? 2 : 1) : 0;
+  if (sitOn()) st = 3;   // すわっている：ほかの人には しゃがんで見える
   if (W.air && W.jumpT && t - W.jumpT < 1200) st = 5;
   if (W.item !== N.it && t - N.sent > 250) { N.it = W.item; N.next = 0; }   // 持ち物を かえた：すぐ送る
   if (st !== N.st && N.st >= 0 && t - N.sent > 250) N.next = 0;   // 歩きだした・止まった：すぐ送る
@@ -723,7 +821,7 @@ function net(t) {
   }).finally(() => {
     N.busy = false;
     // つぎ：自分が うごいている 0.5秒・近くの人が うごいている 0.6秒・近くに人がいる 1.5秒・だれもいない 3秒
-    if (W) { let mv = false; for (const o of W.others.values()) if ((mvSt(o.m) || o.m === 5) && o.dist < SEE) { mv = true; break; } N.next = now() + (N.err ? 3000 : W.spd > 0.05 ? 500 : mv ? 600 : W.others.size ? 1500 : 3000); }
+    if (W) { let mv = false; for (const o of W.others.values()) if ((mvSt(o.m) || o.m === 5) && o.dist < SEE) { mv = true; break; } N.next = now() + (N.err ? 3000 : W.spd > 0.05 || (W.ride && (W.wspd || 0) > 0.5) ? 400 : mv ? 600 : W.others.size ? 1500 : 3000); }
   });
 }
 function netLeave(w) {   // やめた：自分の位置を消す（送れなくても 12秒で 見えなくなる）
@@ -868,11 +966,11 @@ function hudMake() {
   const S = MI.S, h = document.createElement('div');
   h.className = 'wk-hud';
   const pc = !!(window.matchMedia && window.matchMedia('(pointer: fine)').matches);   // パソコン：キーの説明
-  h.innerHTML = `<div class="wk-info"><span data-wk-n>🚶 歩いています</span><small data-wk-s></small><button class="wk-cr" data-wk-cr hidden></button>${pc ? '<small class="wk-keys">Q 走る・Shift しゃがむ・スペース ジャンプ・E 持ち物・Z チャット</small>' : ''}<button class="wk-inv" data-wk-inv ${v124() ? '' : 'hidden'}>👋 フレンドを よぶ</button></div>
+  h.innerHTML = `<div class="wk-info"><span data-wk-n>🚶 歩いています</span><small data-wk-s></small><button class="wk-cr" data-wk-cr hidden></button>${pc ? '<small class="wk-keys">Q 走る・Shift しゃがむ・R すわる・スペース ジャンプ・E 持ち物・Z チャット</small>' : ''}<button class="wk-inv" data-wk-inv ${v124() ? '' : 'hidden'}>👋 フレンドを よぶ</button></div>
     <div class="wk-stick" data-wk-stick title="うごく（いっぱいに たおすと 走る）"><i></i></div>
     <div class="wk-btns"><button data-wk-chat title="チャット（Z・/）">💬</button><button data-wk-x title="歩くのをやめる">✕</button>
       <button data-wk-item title="持ち物（E）">🎒</button><button data-wk-look title="見た目">👕</button>
-      <button data-wk-crb title="しゃがむ（Shift）">🧎</button><button data-wk-run title="走る（Q）">🏃</button>
+      <button data-wk-sit title="すわる（R）">🪑</button><button data-wk-crb title="しゃがむ（Shift）">🧎</button><button data-wk-run title="走る（Q）">🏃</button>
       <button class="wk-jump" data-wk-jump title="ジャンプ（スペース）">⤒ ジャンプ</button></div>
     <div class="wk-log" hidden></div>
     <div class="wk-say" hidden><input type="text" maxlength="60" enterkeyhint="send" autocomplete="off" placeholder="近くの人に（60文字まで）"><button data-wk-ss>送る</button><button data-wk-sx title="とじる">✕</button></div>
@@ -895,6 +993,7 @@ function hudMake() {
   const tap = (sel, f) => { const b = h.querySelector(sel); b.onclick = e => { f(e); try { b.blur(); } catch (er) {} }; };   // ボタンに フォーカスを のこさない（スペースで おされないように）
   tap('[data-wk-run]', () => dashSet(!W.runOn));
   tap('[data-wk-crb]', () => crSet(!W.crOn));
+  tap('[data-wk-sit]', () => sitSet(!sitOn()));
   tap('[data-wk-jump]', () => jump());
   tap('[data-wk-item]', () => wheelOpen(!W.wheel, false));
   tap('[data-wk-chat]', () => chatOpen(!W.chat.open));
@@ -920,6 +1019,7 @@ function hudMake() {
     if (c === 'KeyE') { if (dn && !e.repeat) wheelOpen(!W.wheel, true, e.timeStamp); else if (!dn) wheelKeyUp(e.timeStamp); return; }
     if (!dn || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
     if (c === 'KeyQ') dashSet(!W.runOn);
+    else if (c === 'KeyR') sitSet(!sitOn());   // すわる（t70。モーションの キー）
     else if (c === 'KeyZ' || c === 'Slash' || e.key === '/') { e.preventDefault(); chatOpen(true); }
     else if (/^Digit[0-9]$/.test(c) && W.wheel) { const L = itemList(), n = Number(c.slice(5)); if (L[n]) itemPick(L[n].id); }
     else if (c === 'Escape') { if (W.wheel) wheelOpen(false); else if (!W.hud.querySelector('.wk-pick').hidden) W.hud.querySelector('.wk-pick').hidden = true; }
@@ -1110,7 +1210,11 @@ function hudTick(t) {
   W.hudT = t;
   const N = W.net, n = W.near || 0;
   const a = W.hud.querySelector('[data-wk-n]'), s = W.hud.querySelector('[data-wk-s]');
-  a.textContent = n ? `🚶 近くに ${n}人` : '🚶 歩いています';
+  a.textContent = W.ride ? (W.ride.sit ? '🪑 列車で すわっています' : '🚃 列車に 乗っています') : n ? `🚶 近くに ${n}人` : '🚶 歩いています';
+  if (!W.ride) {   // ひらいた ドアの そば（6m）：乗れる ことを 知らせる
+    let near = false; for (const h of M3.runHit || []) { if (h.mv || h.rid == null || !(h.oL > 0.7 || h.oR > 0.7)) continue; if (Math.hypot(h.x - W.x, h.z - W.y) < h.hl + 6 * U && Math.abs(W.f - (h.y0 + FLOOR * U)) < 0.8 * U) { near = true; break; } }
+    if (near) a.textContent = '🚃 ドアから 列車に 乗れます';
+  }
   const cred = new Map();   // MMD のモデルの作者の表示（ライセンス）：ふだんは 短く・タップで 全文
   const addC = c => { const sk = skinOf(c); if (sk.kind === 'mmd' && sk.credit) cred.set(sk.code, sk); };
   if (W.av && W.av.P && W.av.P.mmd) addC(W.av.code);
@@ -1213,7 +1317,7 @@ async function start(o) {   // o：{ inv（フレンドの 招待の番号。DB 
   M3.d = 1.2; M3.glide = null; M3.dirty = true; MI.S.dirty = true;
   avSelf();
   hudMake();
-  M3.walk = { step, cam, look, zoom, tags, stop };
+  M3.walk = { step, post, cam, look, zoom, tags, stop };
   // しるし（DB の更新118 のあと）：ほかの人と見せあう
   try { const r = await rpc('av_walk_start'); if (W && r && typeof r.k === 'string') { W.me = r; if (r.c && CAT && !CAT.off) { const ch = r.c !== CAT.me.c || JSON.stringify(r.l || {}) !== JSON.stringify(CAT.me.l || {}); CAT.me = { c: r.c, l: r.l || {} }; if (ch) avSelf(); } } } catch (e) { if (W) W.me = null; }
   if (!W) return false;
@@ -1245,6 +1349,6 @@ function stop(fromClose) {
   if (onChange) onChange(false);
 }
 
-window.Walk = { start, stop, ask, join, on: () => !!W, hit: (x, y, f) => { const h = trainAt(x, y, f); return h ? { nx: h.nx, ny: h.ny, d: h.d } : null; }, dbg: () => (W ? { x: W.x, y: W.y, f: W.f, ix: W.ix ? { n: W.ix.tri.length / 9, ms: W.ix.ms } : null, blk: W.blk ? W.blk.size : 0, others: W.others.size, ol: [...W.others.values()].map(o => [o.m, o.it || 0, !!o.say]), me: !!(W.me && W.me.k), item: W.item, cr: !!W.cr, air: !!W.air } : null), cat: catLoad, onChange: f => { onChange = f; }, mmd: mmdLoad, mkBase: (look, hl) => { T3 = T3 || window.THREE; return mkBase(look, hl); }, poseBase,
+window.Walk = { start, stop, ask, join, on: () => !!W, ride: () => (W && W.ride ? { ...W.ride } : null), tp: (x, y) => { if (!W || W.ride) return false; W.x = x; W.y = y; const g = groundAt(x, y, M3.surf(x, y) + 3 * U, false); W.f = g != null ? g : M3.surf(x, y); W.fv = 0; W.spawn = null; return W.f; }, hit: (x, y, f) => { const h = trainAt(x, y, f); return h ? { nx: h.nx, ny: h.ny, d: h.d } : null; }, dbg: () => (W ? { x: W.x, y: W.y, f: W.f, ix: W.ix ? { n: W.ix.tri.length / 9, ms: W.ix.ms } : null, blk: W.blk ? W.blk.size : 0, others: W.others.size, ol: [...W.others.values()].map(o => [o.m, o.it || 0, !!o.say]), me: !!(W.me && W.me.k), item: W.item, cr: !!W.cr, air: !!W.air } : null), cat: catLoad, onChange: f => { onChange = f; }, mmd: mmdLoad, mkBase: (look, hl) => { T3 = T3 || window.THREE; return mkBase(look, hl); }, poseBase,
   mkMMD: e => { T3 = T3 || window.THREE; return mkMMD(e); }, poseMMD, poseAv, ITEMS, HAIR, SKIN };
 })();

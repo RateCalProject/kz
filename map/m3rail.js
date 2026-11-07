@@ -1597,6 +1597,16 @@ function off(sg, k, s, sd, tr) {
   }
   return d * own() * U;
 }
+// ホームのある がわ（t70。ドアを ひらく がわ）：線の s で、オフセット ot（マス。off の かえす値）・向き sd の 列車の 進む向きの 左（l）・右（r）に ホームがあるか
+function pfSide(sg, s, ot, sd) {
+  try {
+    const C = segC(sg); if (!C.sta.length) return null;
+    const d = sd < 0 ? -1 : 1, o = d * ot / U, P = platsAt(C, s); if (!P.length) return null;
+    let L = false, Rr = false;
+    for (const p of P) { if (p.a >= o - 0.3 && p.a - o < PE + 0.9) L = true; if (p.b <= o + 0.3 && o - p.b < PE + 0.9) Rr = true; }   // 線の左（a：ホームの右のはし）・右（b：左のはし）
+    return d > 0 ? { l: L, r: Rr } : { l: Rr, r: L };
+  } catch (e) { return null; }
+}
 // 走る面の高さ（レールの上）。トンネルの中は見せない
 function runY(sg, s, x, y, k) {
   if (!X) return null;
@@ -1611,7 +1621,7 @@ function runY2(sg, s) {
   return { y: rtS(C, s), hide: codeS(sg, s) === 'T' };
 }
 
-const R = window.M3RAIL = { build, off, runY, stations: true, car: { w: 2.95, h: 3.75 }, ms: 0, nv: 0, ver: 1 };
+const R = window.M3RAIL = { build, off, runY, pfSide, stations: true, car: { w: 2.95, h: 3.75 }, ms: 0, nv: 0, ver: 1 };
 // たしかめる用：踏切を しめる（v 1）・ひらく（v 0）
 R.dbg = { xa: XA, close(v) { for (const c of XA.list) { c.cl = v; c.tg = v; c.lit = !!v; setArms(c); if (XA.lamps) { const k = new T3.Color(); c.lamps.forEach((l, i) => { k.setRGB(v && i % 2 ? 1 : 0.22, v && i % 2 ? 0.12 : 0.05, v && i % 2 ? 0.08 : 0.04); XA.lamps.setColorAt(c.li + i, k); }); if (XA.lamps.instanceColor) XA.lamps.instanceColor.needsUpdate = true; } } if (M3) M3.dirty = true; return XA.list.length; } };
 })();

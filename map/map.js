@@ -2322,7 +2322,7 @@ function runList(it, v) {
       if (!runPass(R, tn)) continue;
       const p = runPos(R, tn, tm, it); if (!p) continue;
       if (p.x < v.x0 - pad || p.x > v.x1 + pad || p.y < v.y0 - pad || p.y > v.y1 + pad) continue;
-      out.push({ R, T: tn, H: p.H, d: p.d, x: p.x, y: p.y, a: p.a, at: p.at, nx: p.nx, len: carL * (R.k === 'rail' ? tn.fn : 1), car: carL, dl: p.dl || 0 });
+      out.push({ R, T: tn, H: p.H, d: p.d, x: p.x, y: p.y, a: p.a, at: p.at, nx: p.nx, len: carL * (R.k === 'rail' ? tn.fn : 1), car: carL, dl: p.dl || 0, tt: p.tt });
     }
     // 留置線で待つ編成（DB の更新105）：着いて3分〜出る3分前。留置線の その線の まん中に
     if (R.k === 'rail' && it.deps) for (const tn of R.tr) {

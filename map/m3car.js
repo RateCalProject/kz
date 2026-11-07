@@ -67,21 +67,27 @@
   function matKind(m, o) {
     const n = m.name || '', pb = m.pbrMetallicRoughness || {}, t = pb.baseColorTexture;
     if (/^tx_led/.test(n)) return { k: 'vc', c: [0.16, 0.11, 0.08] };   // 行先・種別の表示：字なしの くらい表示
+    // 明かり（t70）：前照灯・尾灯（つく・つかないは 1両ごと）・車内の 照明のカバー（いつも つく）
+    if (n === 'lamp_head_high' || n === 'lamp_head_low') return { k: 'lh' };
+    if (n === 'lamp_tail' || n === 'taillight_small') return { k: 'lt' };
+    if (n === 'light_cover') return { k: 'li' };
     if (o && o.line && (n === 'line_main' || n === 'line_sub')) return { k: n === 'line_main' ? 'ln1' : 'ln2' };
     if (o && o.lv === 'near' && m.alphaMode === 'BLEND') return { k: 'gl' };
     if (t && m._img != null) return { k: 'tx:' + m._img + ':' + (m.alphaMode === 'MASK' ? 'm' : 'o'), img: m._img, mask: m.alphaMode === 'MASK' };
     const f = pb.baseColorFactor || [1, 1, 1, 1];
-    if (m.alphaMode === 'BLEND') return { k: 'vc', c: [0.13, 0.17, 0.18] };   // ガラス：こい色の不透明に
+    if (m.alphaMode === 'BLEND' || n === 'far_window') return { k: 'gw', c: [0.13, 0.17, 0.18] };   // ガラス：こい色の不透明に（夜は 中の明かりで 光る。t70）
+    if (/^(int_|seat_|floor_|cab_|stainless_pipe|strap_|rack_mesh|curtain|fan_|handle_black|wc_)/.test(n)) return { k: 'vi', c: [lin2s(f[0]), lin2s(f[1]), lin2s(f[2])] };   // 車内（夜も 明るく）
     return { k: 'vc', c: [lin2s(f[0]), lin2s(f[1]), lin2s(f[2])] };
   }
   // 形を まとめる：{ k → { P, N, C|U, I } }（ノードの行列をかけて 1つの座標に）
   function bake(G, T3, op) {   // op：{ skip(ノードの名前), line, lv }
     const J = G.J, out = {}, skip = op && op.skip;
     for (const m of J.materials || []) { const t = m.pbrMetallicRoughness && m.pbrMetallicRoughness.baseColorTexture; m._img = t && J.textures[t.index] ? J.textures[t.index].source : null; }
-    const M = new T3.Matrix4(), NM = new T3.Matrix3(), v = new T3.Vector3();
-    const walk = (ni, parent) => {
+    const M = new T3.Matrix4(), NM = new T3.Matrix3(), v = new T3.Vector3(), DC = {};   // DC：ドア → x の合計・数（t70）
+    const walk = (ni, parent, part) => {
       const nd = J.nodes[ni], L = new T3.Matrix4();
       if (skip && nd.name && skip(nd.name)) return;   // つけない部品（下の部品も）
+      const dm = nd.name && /^door_([LR])(\d)([fr])$/.exec(nd.name); if (dm) part = { k: 'd' + dm[1] + dm[3], n: dm[1] + dm[2] + dm[3] };   // ドア（ひらく。t70）
       if (nd.matrix) L.fromArray(nd.matrix);
       else L.compose(new T3.Vector3().fromArray(nd.translation || [0, 0, 0]), new T3.Quaternion().fromArray(nd.rotation || [0, 0, 0, 1]), new T3.Vector3().fromArray(nd.scale || [1, 1, 1]));
       const W = new T3.Matrix4().multiplyMatrices(parent, L);
@@ -92,10 +98,10 @@
           const mt = J.materials[pr.material] || {}, mk = matKind(mt, op), P = acc(G, pr.attributes.POSITION), N = pr.attributes.NORMAL != null ? acc(G, pr.attributes.NORMAL) : null;
           const U = mk.img != null && pr.attributes.TEXCOORD_0 != null ? acc(G, pr.attributes.TEXCOORD_0) : null;
           const I = pr.indices != null ? acc(G, pr.indices) : null, nv = P.length / 3;
-          const o = out[mk.k] || (out[mk.k] = { P: [], N: [], C: [], U: [], I: [], mk });
-          const base = o.P.length / 3;
+          const ok = (part ? part.k + '|' : '') + mk.k, o = out[ok] || (out[ok] = { P: [], N: [], C: [], U: [], I: [], mk, part: part ? part.k : null });
+          const base = o.P.length / 3, dc = part ? (DC[part.n] || (DC[part.n] = [0, 0])) : null;
           for (let j = 0; j < nv; j++) {
-            v.set(P[3 * j], P[3 * j + 1], P[3 * j + 2]).applyMatrix4(W); o.P.push(v.x, v.y, v.z);
+            v.set(P[3 * j], P[3 * j + 1], P[3 * j + 2]).applyMatrix4(W); o.P.push(v.x, v.y, v.z); if (dc) { dc[0] += v.x; dc[1]++; }
             if (N) { v.set(N[3 * j], N[3 * j + 1], N[3 * j + 2]).applyMatrix3(NM).normalize(); o.N.push(v.x, v.y, v.z); } else o.N.push(0, 1, 0);
             if (mk.k === 'vc') o.C.push(mk.c[0], mk.c[1], mk.c[2]); else if (mk.img != null) o.U.push(U ? U[2 * j] : 0, U ? U[2 * j + 1] : 0);
           }
@@ -104,10 +110,16 @@
           if (W.determinant() < 0) for (let j = o.I.length - (I ? I.length : nv); j + 2 < o.I.length; j += 3) { const t = o.I[j + 1]; o.I[j + 1] = o.I[j + 2]; o.I[j + 2] = t; }
         }
       }
-      for (const c of nd.children || []) walk(c, W);
+      for (const c of nd.children || []) walk(c, W, part);
     };
     const sc = J.scenes ? J.scenes[J.scene || 0] : null;
-    for (const ni of sc ? sc.nodes : J.nodes.map((_, i) => i)) walk(ni, new T3.Matrix4());
+    for (const ni of sc ? sc.nodes : J.nodes.map((_, i) => i)) walk(ni, new T3.Matrix4(), null);
+    // ドア：f（前の扉）と r（うしろの扉）の まん中の x → ひらく向き（f が +x がわなら +x へ）・ドアの位置（t70）
+    const dx = {}, doors = { L: [], R: [] };
+    for (const n in DC) { if (!n.endsWith('f')) continue; const r = DC[n.slice(0, -1) + 'r'], f = DC[n]; if (!r || !f[1] || !r[1]) continue;
+      const xf = f[0] / f[1], xr = r[0] / r[1], sd = n[0]; dx['d' + sd + 'f'] = (dx['d' + sd + 'f'] || 0) + Math.sign(xf - xr); dx['d' + sd + 'r'] = (dx['d' + sd + 'r'] || 0) + Math.sign(xr - xf); doors[sd].push((xf + xr) / 2); }
+    for (const k in out) if (out[k].part) out[k].dx = Math.sign(dx[out[k].part] || 0) || 1;
+    out._doors = { L: doors.L.sort((a, b) => a - b), R: doors.R.sort((a, b) => a - b) };
     return out;
   }
   // 絵（GLB の中の PNG・JPEG）→ テクスチャ
@@ -123,19 +135,31 @@
   // 1つの GLB → [{ mesh（InstancedMesh）, n }]（材質のなかまごと）
   function groups(G, T3, op) {
     const B = bake(G, T3, op), out = [];
+    out.doors = B._doors; delete B._doors;
     for (const k in B) {
       const o = B[k], g = new T3.BufferGeometry();
       g.setAttribute('position', new T3.Float32BufferAttribute(o.P, 3));
       g.setAttribute('normal', new T3.Float32BufferAttribute(o.N, 3));
       let mat, ln = 0;
+      let lamp = 0, cen = null;
       if (o.mk.k === 'vc') { g.setAttribute('color', new T3.Float32BufferAttribute(o.C, 3)); mat = new T3.MeshLambertMaterial({ vertexColors: true }); }
+      else if (o.mk.k === 'vi' || o.mk.k === 'gw') {   // 車内・ガラス：夜は 明かり（night）
+        g.setAttribute('color', new T3.Float32BufferAttribute(o.C, 3));
+        mat = new T3.MeshLambertMaterial({ vertexColors: true, emissive: o.mk.k === 'gw' ? '#ffe7b8' : '#fff6e6', emissiveIntensity: 0 }); if (o.mk.k === 'vi') mat.onBeforeCompile = sh => { sh.fragmentShader = sh.fragmentShader.replace('vec3 totalEmissiveRadiance = emissive;', 'vec3 totalEmissiveRadiance = emissive * vColor;'); };   // 車内の明かり：もとの色で 明るく
+        mat.userData.nt = o.mk.k === 'gw' ? 0.78 : 0.35; mat.userData.n0 = o.mk.k === 'gw' ? 0 : 0.55; NIGHT.add(mat); mat.emissiveIntensity = mat.userData.n0 + mat.userData.nt * NW;   // 車内は 昼も 明かりがついている（n0）
+      }
+      else if (o.mk.k === 'lh' || o.mk.k === 'lt') {   // 前照灯・尾灯：1両ごとの色（instanceColor）で つける・けす
+        mat = new T3.MeshBasicMaterial({ color: '#ffffff' }); lamp = o.mk.k === 'lh' ? 1 : 2;
+        if (lamp === 1) { let x = 0, y = 0, z = 0; const n = o.P.length / 3; for (let j = 0; j < n; j++) { x += o.P[3 * j]; y += o.P[3 * j + 1]; z += o.P[3 * j + 2]; } if (n) cen = [x / n, y / n, z / n]; }
+      }
+      else if (o.mk.k === 'li') mat = new T3.MeshBasicMaterial({ color: '#fffaf0' });   // 車内の 照明（いつも つく）
       else if (o.mk.k === 'ln1' || o.mk.k === 'ln2') { mat = new T3.MeshLambertMaterial({ color: '#ffffff' }); ln = o.mk.k === 'ln1' ? 1 : 2; }   // 帯：色は 1両ごと（instanceColor）
-      else if (o.mk.k === 'gl') mat = new T3.MeshLambertMaterial({ color: '#33494a', transparent: true, opacity: 0.4, depthWrite: false });   // すぐそばの ガラス：中が見える
+      else if (o.mk.k === 'gl') { mat = new T3.MeshLambertMaterial({ color: '#33494a', transparent: true, opacity: 0.4, depthWrite: false, emissive: '#ffe7b8', emissiveIntensity: 0 }); mat.userData.nt = 0.12; NIGHT.add(mat); mat.emissiveIntensity = 0.12 * NW; }   // すぐそばの ガラス：中が見える
       else { g.setAttribute('uv', new T3.Float32BufferAttribute(o.U, 2)); mat = new T3.MeshLambertMaterial({ map: tex(G, T3, o.mk.img), alphaTest: o.mk.mask ? 0.5 : 0 }); }
       mat.userData.noUg = true;   // 地下ビュー（DB の更新109）でも すかさない
       g.setIndex(o.I.length > 65535 ? new T3.Uint32BufferAttribute(o.I, 1) : new T3.Uint16BufferAttribute(o.I, 1));
       g.computeBoundingSphere();
-      out.push({ g, mat, mesh: null, cap: 0, n: 0, ln });
+      out.push({ g, mat, mesh: null, cap: 0, n: 0, ln, lamp, cen, part: o.part, dx: o.dx || 0 });
     }
     return out;
   }
@@ -160,33 +184,58 @@
       .catch(e => { console.warn(e); s.ns[c] = 'fail'; });
   }
   /* ---------- 描く ---------- */
-  function begin(sc) { SC = sc; for (const k in ST) { const s = ST[k]; if (s.st !== 'ok') continue; for (const c in s.m) for (const lv in s.m[c]) for (const g of s.m[c][lv]) g.n = 0; } }
+  function begin(sc) { SC = sc; GL.n = 0; GL.s = 0; for (const k in ST) { const s = ST[k]; if (s.st !== 'ok') continue; for (const c in s.m) for (const lv in s.m[c]) for (const g of s.m[c][lv]) g.n = 0; } }
   // col：帯の色 [おもな色, 下の細い線の色]（THREE.Color。line のモデルだけ）
-  function put(md, car, lv, m4, col) {
+  // X（t70）：{ oL, oR（左・右の ドアの あき 0〜1。車両の +Z が右）, hd（前照灯）, tl（尾灯） }
+  const DOOR_W = 0.63;   // 扉の 1枚が うごく長さ（m）
+  function put(md, car, lv, m4, col, X) {
     const s = ST[md.key]; if (!s || s.st !== 'ok') return false;
     const m = s.m[car]; if (!m) return false;
     if (lv === 'near' && !m.near) { if (md.near && md.near.includes(car) && !s.ns[car]) loadNear(md, car); lv = 'mid'; }
     const L = m[lv] || m.mid || m.far; if (!L) return false;
-    const T3 = window.THREE; if (!M4) { M4 = new T3.Matrix4(); C0 = new T3.Color(); C1 = new T3.Color(1, 1, 1); }
+    const T3 = window.THREE; if (!M4) { M4 = new T3.Matrix4(); C0 = new T3.Color(); C1 = new T3.Color(1, 1, 1); MT = new T3.Matrix4(); V3 = new T3.Vector3();
+      CH1 = new T3.Color(1, 0.97, 0.86); CH0 = new T3.Color(0.34, 0.34, 0.32); CT1 = new T3.Color(1, 0.1, 0.05); CT0 = new T3.Color(0.3, 0.06, 0.05); }
     for (const g of L) {
       if (g.n >= g.cap) {
         const cap = Math.max(16, g.cap * 2), mesh = new T3.InstancedMesh(g.g, g.mat, cap);
         mesh.instanceMatrix.setUsage(T3.DynamicDrawUsage); mesh.frustumCulled = false;
-        if (g.ln) mesh.setColorAt(0, C1);   // はじめて描く前に 色の場所をつくる
+        if (g.ln || g.lamp) mesh.setColorAt(0, C1);   // はじめて描く前に 色の場所をつくる
         if (g.mesh) {
-          for (let i = 0; i < g.n; i++) { g.mesh.getMatrixAt(i, M4); mesh.setMatrixAt(i, M4); if (g.ln) { g.mesh.getColorAt(i, C0); mesh.setColorAt(i, C0); } }
+          for (let i = 0; i < g.n; i++) { g.mesh.getMatrixAt(i, M4); mesh.setMatrixAt(i, M4); if (g.ln || g.lamp) { g.mesh.getColorAt(i, C0); mesh.setColorAt(i, C0); } }
           if (g.mesh.parent) g.mesh.parent.remove(g.mesh); g.mesh.dispose && g.mesh.dispose();
         }
         g.mesh = mesh; g.cap = cap;
       }
       if (SC && g.mesh.parent !== SC) SC.add(g.mesh);
       if (g.ln) g.mesh.setColorAt(g.n, col ? col[g.ln - 1] : C1);
-      g.mesh.setMatrixAt(g.n++, m4);
+      if (g.lamp) { const on = X && (g.lamp === 1 ? X.hd : X.tl); g.mesh.setColorAt(g.n, g.lamp === 1 ? (on ? CH1 : CH0) : (on ? CT1 : CT0));
+        if (on && g.lamp === 1 && g.cen && GL.n < GL.max) { V3.set(g.cen[0] + 0.3, g.cen[1], g.cen[2]).applyMatrix4(m4); GL.p[3 * GL.n] = V3.x; GL.p[3 * GL.n + 1] = V3.y; GL.p[3 * GL.n + 2] = V3.z; GL.s = Math.max(GL.s, m4.getMaxScaleOnAxis()); GL.n++; } }
+      const op = g.part && X ? (g.part[1] === 'L' ? X.oL : X.oR) || 0 : 0;
+      if (op > 0) { MT.makeTranslation(g.dx * DOOR_W * op, 0, 0); M4.multiplyMatrices(m4, MT); g.mesh.setMatrixAt(g.n++, M4); }
+      else g.mesh.setMatrixAt(g.n++, m4);
     }
     return true;
   }
-  let M4 = null, C0 = null, C1 = null;
+  let M4 = null, C0 = null, C1 = null, MT = null, V3 = null, CH1, CH0, CT1, CT0;
+  const NIGHT = new Set(); let NW = 0;   // 夜の度合い（map3d の m3Sun → night）
+  function night(w) { NW = w; for (const m of NIGHT) m.emissiveIntensity = (m.userData.n0 || 0) + m.userData.nt * w; }
+  // 前照灯の 光（足していく 丸い光。夜ほど 明るい）
+  const GL = { max: 256, n: 0, s: 0, p: new Float32Array(256 * 3), pts: null };
+  function glowEnd() {
+    const T3 = window.THREE; if (!T3 || !SC) return;
+    if (!GL.pts) {
+      const cv = document.createElement('canvas'); cv.width = cv.height = 64; const g = cv.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+      gr.addColorStop(0, 'rgba(255,255,245,1)'); gr.addColorStop(0.25, 'rgba(255,245,215,.55)'); gr.addColorStop(1, 'rgba(255,240,200,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+      const ge = new T3.BufferGeometry(); ge.setAttribute('position', new T3.BufferAttribute(GL.p, 3));
+      GL.pts = new T3.Points(ge, new T3.PointsMaterial({ map: new T3.CanvasTexture(cv), size: 1, sizeAttenuation: true, transparent: true, depthWrite: false, blending: T3.AdditiveBlending }));
+      GL.pts.frustumCulled = false; GL.pts.renderOrder = 3;
+    }
+    if (GL.pts.parent !== SC) SC.add(GL.pts);
+    GL.pts.geometry.setDrawRange(0, GL.n); GL.pts.geometry.attributes.position.needsUpdate = true;
+    GL.pts.material.size = 2.6 * (GL.s || 0.02); GL.pts.material.opacity = 0.25 + 0.75 * NW; GL.pts.visible = GL.n > 0;
+  }
   function end() {
+    glowEnd();
     for (const k in ST) {
       const s = ST[k]; if (s.st !== 'ok') continue;
       for (const c in s.m) for (const lv in s.m[c]) for (const g of s.m[c][lv]) {
@@ -208,5 +257,7 @@
     const L = md.sets[fn] || (fn > 6 ? [].concat(...Array(Math.ceil(fn / 2)).fill(md.sets[2])).slice(0, fn) : md.sets[2]);
     return L.map(x => ({ c: x.replace('~', ''), r: x.endsWith('~') }));
   }
-  window.M3CAR = { ver: 2, fail: false, MODELS, of: s => BY.get(s) || null, need, comp, begin, put, end, get state() { return ST; } };
+  // ドアの位置（車両の x。m）：{ L: [...], R: [...] }（t70。歩く人が 乗りおりする）
+  function doors(md, car) { const s = ST[md.key], m = s && s.m[car]; const L = m && (m.mid || m.far); return L && L.doors ? L.doors : null; }
+  window.M3CAR = { ver: 3, fail: false, MODELS, of: s => BY.get(s) || null, need, comp, begin, put, end, night, doors, get state() { return ST; } };
 })();
