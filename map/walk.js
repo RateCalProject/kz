@@ -433,7 +433,8 @@ function idxBuild() {
     if (!ge.boundingBox) ge.computeBoundingBox();
     const bb = ge.boundingBox, me = o.matrixWorld.elements, id = me[0] === 1 && me[5] === 1 && me[10] === 1 && me[12] === 0 && me[13] === 0 && me[14] === 0 && me[1] === 0 && me[2] === 0 && me[4] === 0 && me[6] === 0 && me[8] === 0 && me[9] === 0;
     if (id && (bb.max.x < cx - R || bb.min.x > cx + R || bb.max.z < cy - R || bb.min.z > cy + R)) return;
-    const ix = ge.index, n = ix ? ix.count : pos.count, P = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+    const ix = ge.index, n = ix ? ix.count : pos.count, P = [0, 0, 0, 0, 0, 0, 0, 0, 0], col = ge.getAttribute('color');
+    const RT = window.M3RAIL && window.M3RAIL.roofC;   // ホームの 屋根の上は 歩かない（段を のぼるとき とびのらない。t70）
     for (let i = 0; i + 2 < n; i += 3) {
       for (let k = 0; k < 3; k++) {
         const j = ix ? ix.getX(i + k) : i + k;
@@ -441,6 +442,7 @@ function idxBuild() {
         else { v.fromBufferAttribute(pos, j).applyMatrix4(o.matrixWorld); P[k * 3] = v.x; P[k * 3 + 1] = v.y; P[k * 3 + 2] = v.z; }
       }
       if (Math.max(P[0], P[3], P[6]) < cx - R || Math.min(P[0], P[3], P[6]) > cx + R || Math.max(P[2], P[5], P[8]) < cy - R || Math.min(P[2], P[5], P[8]) > cy + R) continue;
+      if (RT && col && col.itemSize === 3) { const j = ix ? ix.getX(i) : i, r = col.getX(j), gg = col.getY(j), bb = col.getZ(j); if (RT.some(c => Math.abs(r - c[0]) < 0.004 && Math.abs(gg - c[1]) < 0.004 && Math.abs(bb - c[2]) < 0.004)) continue; }
       // 平らな面だけ（坂は 35° まで）
       const ux = P[3] - P[0], uy = P[4] - P[1], uz = P[5] - P[2], wx = P[6] - P[0], wy = P[7] - P[1], wz = P[8] - P[2];
       const nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx, nl = Math.hypot(nx, ny, nz);
@@ -459,8 +461,8 @@ function idxBuild() {
 }
 // (x, y) マスの 足もとの高さ（3D）。f：いまの足もと。のぼれないとき・水に入るとき null
 function groundAt(x, y, f, wet0) {
-  const t = M3.surf(x, y), lim = f + STEP * U, lim1 = f + 0.55 * U;
-  let g = t, on = false, g1 = -Infinity;   // g1：いまの足もとに いちばん近い面（0.55m の 上まで。あれば こちら。段の 坂を のぼっていて 上の 屋根に とびのらない。t70）
+  const t = M3.surf(x, y), lim = f + STEP * U;
+  let g = t, on = false;
   const ix = W.ix;
   if (ix) {
     const a = ix.cells.get(Math.floor(x / IG) * 100003 + Math.floor(y / IG));
@@ -472,11 +474,10 @@ function groundAt(x, y, f, wet0) {
         const l1 = ((bz - cz) * (x - cx) + (cx - bx) * (y - cz)) / d, l2 = ((cz - az) * (x - cx) + (ax - cx) * (y - cz)) / d, l3 = 1 - l1 - l2;
         if (l1 < -1e-6 || l2 < -1e-6 || l3 < -1e-6) continue;
         const h = l1 * P[n + 1] + l2 * P[n + 4] + l3 * P[n + 7];
-        if (h <= lim && h > t - 0.5 * U) { if (h > g || !on) { g = Math.max(g, h); on = true; } if (h <= lim1 && Math.abs(h - f) < Math.abs(g1 - f)) g1 = h; }
+        if (h <= lim && h > g - 0.5 * U) { if (h > g || !on) { g = Math.max(g, h); on = true; } }
       }
     }
   }
-  if (on && g1 > -Infinity && g1 >= t - 0.5 * U && g > lim1) g = Math.max(g1, t);
   if (!on && t > lim) return null;   // 地面の急な段（がけ）
   if (!on && !wet0) { const tl = MI.tileAt(Math.floor(x), Math.floor(y)); if (tl && (tl.t === 'D' || tl.t === 'S' || tl.t === 'R' || tl.t === 'L')) return null; }   // 水（橋の上は 歩ける）
   return g;

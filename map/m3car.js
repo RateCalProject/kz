@@ -71,12 +71,12 @@
     if (n === 'lamp_head_high' || n === 'lamp_head_low') return { k: 'lh' };
     if (n === 'lamp_tail' || n === 'taillight_small') return { k: 'lt' };
     if (n === 'light_cover') return { k: 'li' };
+    if (n === 'int_ceiling') { const f = (m.pbrMetallicRoughness || {}).baseColorFactor || [1, 1, 1]; return { k: 'cb', c: [lin2s(f[0]) * 0.86, lin2s(f[1]) * 0.86, lin2s(f[2]) * 0.86] }; }   // 車内の 天井：照明で 明るい（光を 計算しない）
     if (o && o.line && (n === 'line_main' || n === 'line_sub')) return { k: n === 'line_main' ? 'ln1' : 'ln2' };
     if (o && o.lv === 'near' && m.alphaMode === 'BLEND') return { k: 'gl' };
     if (t && m._img != null) return { k: 'tx:' + m._img + ':' + (m.alphaMode === 'MASK' ? 'm' : 'o'), img: m._img, mask: m.alphaMode === 'MASK' };
     const f = pb.baseColorFactor || [1, 1, 1, 1];
     if (m.alphaMode === 'BLEND' || n === 'far_window') return { k: 'gw', c: [0.13, 0.17, 0.18] };   // ガラス：こい色の不透明に（夜は 中の明かりで 光る。t70）
-    if (/^(int_|seat_|floor_|cab_|stainless_pipe|strap_|rack_mesh|curtain|fan_|handle_black|wc_)/.test(n)) return { k: 'vi', c: [lin2s(f[0]), lin2s(f[1]), lin2s(f[2])] };   // 車内（夜も 明るく）
     return { k: 'vc', c: [lin2s(f[0]), lin2s(f[1]), lin2s(f[2])] };
   }
   // 形を まとめる：{ k → { P, N, C|U, I } }（ノードの行列をかけて 1つの座標に）
@@ -103,7 +103,7 @@
           for (let j = 0; j < nv; j++) {
             v.set(P[3 * j], P[3 * j + 1], P[3 * j + 2]).applyMatrix4(W); o.P.push(v.x, v.y, v.z); if (dc) { dc[0] += v.x; dc[1]++; }
             if (N) { v.set(N[3 * j], N[3 * j + 1], N[3 * j + 2]).applyMatrix3(NM).normalize(); o.N.push(v.x, v.y, v.z); } else o.N.push(0, 1, 0);
-            if (mk.k === 'vc') o.C.push(mk.c[0], mk.c[1], mk.c[2]); else if (mk.img != null) o.U.push(U ? U[2 * j] : 0, U ? U[2 * j + 1] : 0);
+            if (mk.c) o.C.push(mk.c[0], mk.c[1], mk.c[2]); else if (mk.img != null) o.U.push(U ? U[2 * j] : 0, U ? U[2 * j + 1] : 0);
           }
           if (I) for (let j = 0; j < I.length; j++) o.I.push(base + I[j]); else for (let j = 0; j < nv; j++) o.I.push(base + j);
           // 左右が反転する行列（はさみかたが逆）なら 三角の向きを もどす
@@ -152,7 +152,8 @@
         mat = new T3.MeshBasicMaterial({ color: '#ffffff' }); lamp = o.mk.k === 'lh' ? 1 : 2;
         if (lamp === 1) { let x = 0, y = 0, z = 0; const n = o.P.length / 3; for (let j = 0; j < n; j++) { x += o.P[3 * j]; y += o.P[3 * j + 1]; z += o.P[3 * j + 2]; } if (n) cen = [x / n, y / n, z / n]; }
       }
-      else if (o.mk.k === 'li') mat = new T3.MeshBasicMaterial({ color: '#fffaf0' });   // 車内の 照明（いつも つく）
+      else if (o.mk.k === 'li') mat = new T3.MeshBasicMaterial({ color: '#fffaf0' });
+      else if (o.mk.k === 'cb') { g.setAttribute('color', new T3.Float32BufferAttribute(o.C, 3)); mat = new T3.MeshBasicMaterial({ vertexColors: true }); }   // 車内の 照明（いつも つく）
       else if (o.mk.k === 'ln1' || o.mk.k === 'ln2') { mat = new T3.MeshLambertMaterial({ color: '#ffffff' }); ln = o.mk.k === 'ln1' ? 1 : 2; }   // 帯：色は 1両ごと（instanceColor）
       else if (o.mk.k === 'gl') { mat = new T3.MeshLambertMaterial({ color: '#33494a', transparent: true, opacity: 0.4, depthWrite: false, emissive: '#ffe7b8', emissiveIntensity: 0 }); mat.userData.nt = 0.12; NIGHT.add(mat); mat.emissiveIntensity = 0.12 * NW; }   // すぐそばの ガラス：中が見える
       else { g.setAttribute('uv', new T3.Float32BufferAttribute(o.U, 2)); mat = new T3.MeshLambertMaterial({ map: tex(G, T3, o.mk.img), alphaTest: o.mk.mask ? 0.5 : 0 }); }

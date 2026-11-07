@@ -664,7 +664,7 @@ function overlaps(rails, sts, inSta) {
 let G = null;   // この作りなおしの 入れもの
 function build(cx) {
   const t0 = performance.now(), tm = R.tm = {};
-  X = cx; T3 = cx.T3; M3 = cx.M3; LIFT = cx.M3_LIFT; VEX = cx.M3_VEX; GEN++; UG = !!cx.ug; R.stairs = [];
+  X = cx; T3 = cx.T3; M3 = cx.M3; LIFT = cx.M3_LIFT; VEX = cx.M3_VEX; GEN++; UG = !!cx.ug; R.stairs = []; R.tos = [];
   const MQ = cx.MQ || {}, lv = Math.max(0, Math.min(3, Number(MQ.d3) || 0)), kq = lv <= 0 ? 0.6 : lv >= 3 ? 1.5 : lv >= 2 ? 1.2 : 1;
   LQ = [4 * kq, 8 * kq, 15 * kq];
   const v = cx.v; CEN = { x: v.cx != null ? v.cx : M3.tx, y: v.cy != null ? v.cy : M3.ty, h: Math.max(4, Math.round((v.x1 - v.x0) / 10)) * 0.5 };
@@ -940,13 +940,53 @@ function deckPiece(C, A, B, c, truss, lod, run) {
 }
 
 /* ---------- 線路（枕木とレールの絵・近くはレールの形）・第三軌条 ---------- */
+// 分かれ目（分岐器。t70）：本線と 待避線が 近いところ（すぐそば）は、まくらぎの絵を やめて 両方に またがる 長い まくらぎ・クロッシング（V字）・ガードレール・転てつ機
+function turnout(C, A, B, m, m2, t, t2) {
+  const sp = C.sp, L = Math.max(0.05, (B.s - A.s) * 50), ga = sp.ga / 1000, half = sp.slen / 2;
+  const tx = (B.x - A.x) / (L * U), ty = (B.y - A.y) / (L * U), g = G.v;
+  const P = (f, o, dl, h) => { const nx = A.nx + (B.nx - A.nx) * f, ny = A.ny + (B.ny - A.ny) * f; return [A.x + (B.x - A.x) * f + (nx * o + tx * dl) * U, h, A.y + (B.y - A.y) * f + (ny * o + ty * dl) * U]; };
+  const om = f => m.o + (m2.o - m.o) * f, ot = f => t.o + (t2.o - t.o) * f, rt = f => A.rt + (B.rt - A.rt) * f;
+  if (R.tos.length < 400) R.tos.push([A.x, A.y, tx, ty]);   // しらべる用
+  const n = Math.max(1, Math.round(L / 0.62));
+  for (let k = 0; k < n; k++) {   // 長い まくらぎ（PC。0.62m ごと）
+    const f = (k + 0.5) / n, a = om(f), b = ot(f), lo = Math.min(a, b) - half, hi = Math.max(a, b) + half, z = rt(f) + (ZT + 0.01) * U, zb = z - 0.16 * U;
+    g.q(P(f, lo, -0.12, z), P(f, lo, 0.12, z), P(f, hi, 0.12, z), P(f, hi, -0.12, z), CL.sleeper || [0.6, 0.59, 0.56]);
+    g.q(P(f, lo, -0.12, zb), P(f, lo, -0.12, z), P(f, hi, -0.12, z), P(f, hi, -0.12, zb), CL.concD);
+  }
+  // クロッシング（内がわの レールが 交わる：はなれが 軌間）・転てつ機（はなれ 0.15m）
+  const d0 = Math.abs(ot(0) - om(0)), d1 = Math.abs(ot(1) - om(1)), sg = Math.sign((ot(0.5) - om(0.5)) || 1);
+  const cross = (v) => (d0 - v) * (d1 - v) <= 0 && Math.abs(d1 - d0) > 1e-6 ? (v - d0) / (d1 - d0) : null;
+  const fF = cross(ga + 0.065), fT = cross(0.15);
+  if (fF != null) {
+    const a = om(fF), b = ot(fF), c = (a + b) / 2, z = rt(fF);
+    g.q(P(fF, c - 0.13, -1.2, z + 0.004 * U), P(fF, c - 0.13, 1.2, z + 0.004 * U), P(fF, c + 0.13, 1.2, z + 0.004 * U), P(fF, c + 0.13, -1.2, z + 0.004 * U), [0.22, 0.21, 0.2]);   // クロッシングの 台
+    for (const [o, s2] of [[a, -sg], [b, sg]]) {   // ガードレール：外がわの レールの 内がわ（クロッシングの むかい）
+      const og = o + s2 * (ga / 2 - 0.03);
+      g.q(P(fF, og - 0.025, -1.6, z), P(fF, og - 0.025, 1.6, z), P(fF, og + 0.025, 1.6, z), P(fF, og + 0.025, -1.6, z), CL.railT || [0.55, 0.55, 0.56]);
+      g.q(P(fF, og - 0.025, -1.6, z - 0.15 * U), P(fF, og - 0.025, 1.6, z - 0.15 * U), P(fF, og - 0.025, 1.6, z), P(fF, og - 0.025, -1.6, z), CL.railS || [0.4, 0.33, 0.28]);
+    }
+  }
+  if (fT != null) {   // 転てつ機（本線の 外がわ）と 転てつ棒
+    const a = om(fT), z = rt(fT) + ZT * U, o = a - sg * (ga / 2 + 0.75);
+    g.box(...(() => { const q = P(fT, o, 0, 0); return [q[0], q[2]]; })(), tx, ty, 0.35 * U, 0.22 * U, z, z + 0.32 * U, [0.36, 0.38, 0.4]);
+    g.q(P(fT, a - sg * (ga / 2 + 0.45), -0.03, z + 0.06 * U), P(fT, a - sg * (ga / 2 + 0.45), 0.03, z + 0.06 * U), P(fT, a + sg * (ga / 2), 0.03, z + 0.06 * U), P(fT, a + sg * (ga / 2), -0.03, z + 0.06 * U), [0.3, 0.3, 0.3]);
+  }
+}
 function trackPiece(C, A, B, lod) {
   const sp = C.sp; let tb = G.trk.get(sp.key); if (!tb) G.trk.set(sp.key, tb = { g: new GB(true), sp });
   const tex = trackTex(sp), rep = tex.rep, va = A.s * 50 / rep, vb = B.s * 50 / rep, w = sp.wt / 2;
+  const TO = new Set();   // 分かれ目の 線（まくらぎの絵を かかない）
+  if (lod >= 3 && !(A.xg || B.xg)) for (const t of A.tr) {
+    if (t.m) continue; const t2 = B.tr.find(q => q.id === t.id); if (!t2) continue;
+    for (const m of A.tr) {
+      if (!m.m) continue; const m2 = B.tr.find(q => q.id === m.id); if (!m2) continue;
+      if (Math.min(Math.abs(t.o - m.o), Math.abs(t2.o - m2.o)) < sp.wt + 0.4 && Math.abs(Math.abs(t.o - m.o) - Math.abs(t2.o - m2.o)) > 0.002) { TO.add(t.id); TO.add(m.id); turnout(C, A, B, m, m2, t, t2); }
+    }
+  }
   for (const t of A.tr) {
     let t2 = null; for (const q of B.tr) if (q.id === t.id) { t2 = q; break; } if (!t2) continue;
     const lift = (t.m ? 0.015 : 0.035) * U, za = A.rt + ZT * U + lift, zb = B.rt + ZT * U + lift;
-    tb.g.q(PT(A, t.o - w, za), PT(B, t2.o - w, zb), PT(B, t2.o + w, zb), PT(A, t.o + w, za), CL.white, [0, va, 0, vb, 1, vb, 1, va]);
+    if (!TO.has(t.id)) tb.g.q(PT(A, t.o - w, za), PT(B, t2.o - w, zb), PT(B, t2.o + w, zb), PT(A, t.o + w, za), CL.white, [0, va, 0, vb, 1, vb, 1, va]);
     if (lod >= 3 && !(A.xg && B.xg)) {   // レール（頭は光る・横は さび色）
       for (const r of sp.rails) {
         const a0 = t.o + r - 0.036, a1 = t.o + r + 0.036, b0 = t2.o + r - 0.036, b1 = t2.o + r + 0.036, ya = A.rt, yb = B.rt;
@@ -1632,7 +1672,7 @@ function runY2(sg, s) {
   return { y: rtS(C, s), hide: codeS(sg, s) === 'T' };
 }
 
-const R = window.M3RAIL = { build, off, runY, pfSide, stairs: [], stations: true, car: { w: 2.95, h: 3.75 }, ms: 0, nv: 0, ver: 1 };
+const R = window.M3RAIL = { build, off, runY, pfSide, stairs: [], tos: [], roofC: [CL.roofT, CL.roofB], stations: true, car: { w: 2.95, h: 3.75 }, ms: 0, nv: 0, ver: 1 };
 // たしかめる用：踏切を しめる（v 1）・ひらく（v 0）
 R.dbg = { xa: XA, close(v) { for (const c of XA.list) { c.cl = v; c.tg = v; c.lit = !!v; setArms(c); if (XA.lamps) { const k = new T3.Color(); c.lamps.forEach((l, i) => { k.setRGB(v && i % 2 ? 1 : 0.22, v && i % 2 ? 0.12 : 0.05, v && i % 2 ? 0.08 : 0.04); XA.lamps.setColorAt(c.li + i, k); }); if (XA.lamps.instanceColor) XA.lamps.instanceColor.needsUpdate = true; } } if (M3) M3.dirty = true; return XA.list.length; } };
 })();
