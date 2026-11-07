@@ -418,12 +418,13 @@ function poseAv(A, dt, spd, run, X) {
 //   M3.grpR（道路・線路の3D）の 平らな三角を 5m の目に。近くだけ（R マス）。たてものは 区画（10m）の集まり
 const IG = 0.1;   // 目（マス。5m）
 function idxBuild() {
-  const t0 = now(), T = T3, R = 7, cx = W.x, cy = W.y, cells = new Map(), tri = [];
-  const add = (ax, ay, az, bx, by, bz, cx2, cy2, cz2) => {
-    const n = tri.length; tri.push(ax, ay, az, bx, by, bz, cx2, cy2, cz2);
+  const t0 = now(), T = T3, R = 7, cx = W.x, cy = W.y, cells = new Map(), tri = [], rcells = new Map(), rtri = [];   // r…：ホームの屋根（歩かない。カメラが 頭の上の屋根を 知るため。t70）
+  const add = (ax, ay, az, bx, by, bz, cx2, cy2, cz2, roof) => {
+    const C = roof ? rcells : cells, Tr = roof ? rtri : tri;
+    const n = Tr.length; Tr.push(ax, ay, az, bx, by, bz, cx2, cy2, cz2);
     const x0 = Math.floor(Math.min(ax, bx, cx2) / IG), x1 = Math.floor(Math.max(ax, bx, cx2) / IG), z0 = Math.floor(Math.min(az, bz, cz2) / IG), z1 = Math.floor(Math.max(az, bz, cz2) / IG);
     if ((x1 - x0 + 1) * (z1 - z0 + 1) > 400) return;
-    for (let i = x0; i <= x1; i++) for (let j = z0; j <= z1; j++) { const k = i * 100003 + j; let a = cells.get(k); if (!a) cells.set(k, a = []); a.push(n); }
+    for (let i = x0; i <= x1; i++) for (let j = z0; j <= z1; j++) { const k = i * 100003 + j; let a = C.get(k); if (!a) C.set(k, a = []); a.push(n); }
   };
   const v = new T.Vector3();
   M3.grpR.updateMatrixWorld(true);
@@ -442,12 +443,13 @@ function idxBuild() {
         else { v.fromBufferAttribute(pos, j).applyMatrix4(o.matrixWorld); P[k * 3] = v.x; P[k * 3 + 1] = v.y; P[k * 3 + 2] = v.z; }
       }
       if (Math.max(P[0], P[3], P[6]) < cx - R || Math.min(P[0], P[3], P[6]) > cx + R || Math.max(P[2], P[5], P[8]) < cy - R || Math.min(P[2], P[5], P[8]) > cy + R) continue;
-      if (RT && col && col.itemSize === 3) { const j = ix ? ix.getX(i) : i, r = col.getX(j), gg = col.getY(j), bb = col.getZ(j); if (RT.some(c => Math.abs(r - c[0]) < 0.004 && Math.abs(gg - c[1]) < 0.004 && Math.abs(bb - c[2]) < 0.004)) continue; }
+      let roof = false;
+      if (RT && col && col.itemSize === 3) { const j = ix ? ix.getX(i) : i, r = col.getX(j), gg = col.getY(j), bb = col.getZ(j); roof = RT.some(c => Math.abs(r - c[0]) < 0.004 && Math.abs(gg - c[1]) < 0.004 && Math.abs(bb - c[2]) < 0.004); }
       // 平らな面だけ（坂は 35° まで）
       const ux = P[3] - P[0], uy = P[4] - P[1], uz = P[5] - P[2], wx = P[6] - P[0], wy = P[7] - P[1], wz = P[8] - P[2];
       const nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx, nl = Math.hypot(nx, ny, nz);
       if (!(nl > 1e-12) || Math.abs(ny) / nl < 0.82) continue;
-      add(P[0], P[1], P[2], P[3], P[4], P[5], P[6], P[7], P[8]);
+      add(P[0], P[1], P[2], P[3], P[4], P[5], P[6], P[7], P[8], roof);
     }
   });
   // たてもの（階のあるもの）：区画 "x,y"（10m）
@@ -457,7 +459,7 @@ function idxBuild() {
     const top = M3.surf(b.cx != null ? b.cx : (b.bb[0] + b.bb[2]) / 2, b.cy != null ? b.cy : (b.bb[1] + b.bb[3]) / 2) + (b.floors * 3.4 + 2.5) * U;   // 屋根の上（3D）
     for (const k of b.set) blk.set(k, Math.max(top, blk.get(k) || 0));
   }
-  W.ix = { cells, tri: new Float32Array(tri), ms: Math.round(now() - t0) }; W.blk = blk; W.ixAt = [cx, cy]; W.ixKey = M3.bKey;
+  W.ix = { cells, tri: new Float32Array(tri), rcells, rtri: new Float32Array(rtri), ms: Math.round(now() - t0) }; W.blk = blk; W.ixAt = [cx, cy]; W.ixKey = M3.bKey;
 }
 // (x, y) マスの 足もとの高さ（3D）。f：いまの足もと。のぼれないとき・水に入るとき null
 function groundAt(x, y, f, wet0) {
@@ -529,7 +531,10 @@ function input() {
 }
 // ジャンプ（スペース・⤒）：足が 地面に ついているときだけ
 function jump() {
-  if (!W || W.air || (W.fv || 0) !== 0) return;
+  if (!W || W.ride || W.veh || W.pas) return;
+  const gr = W.fg != null ? W.fg : W.f;
+  if ((W.fv || 0) < 0 || W.f - gr > 0.12 * U) return;   // 足が 地面に ついているとき（歩いて 坂や 段を おりている ときも。t70）
+  if (W.sitG) sitSet(false);
   W.fv = -JUMP_V; W.air = true; W.jumpT = now(); W.net.next = 0;
 }
 function dashSet(on) { if (!W) return; W.runOn = !!on; const b = W.hud && W.hud.querySelector('[data-wk-run]'); if (b) b.classList.toggle('on', W.runOn); }
@@ -660,22 +665,40 @@ function rideTry(h, nx, ny) {
   const ex = (nx - h.x) / U, ez = (ny - h.z) / U, lx = ex * h.ux + ez * h.uz, lz = -ex * h.uz + ez * h.ux, side = lz > 0 ? 'R' : 'L';
   if (!((side === 'R' ? h.oR : h.oL) > 0.7) || doorAt(h, side, lx) == null) return false;
   if (Math.abs(W.f - (h.y0 + FLOOR * U)) > 0.8 * U) return false;   // ホームの高さから
-  W.ride = { rid: h.rid, tid: h.tid, kc: h.kc, lx, lz: Math.sign(lz) * Math.max(0.2, h.hw / U - 0.5), lh: W.h - Math.atan2(h.ux, h.uz), sit: 0 };
+  W.ride = { rid: h.rid, tid: h.tid, kc: h.kc, lx, lz: Math.sign(lz) * Math.min(Math.abs(lz), h.hw / U + 0.15), lh: W.h - Math.atan2(h.ux, h.uz), sit: 0 };   // いまの ところから（ぴょんと 動かない）
   W.fv = 0; W.air = false; crSet(false); W.hudT = 0;
   return true;
 }
 function rideOff(x, y) {   // おりる：(x, y) の ホームへ（なければ 近くの 歩けるところ）
-  const R = W.ride; W.ride = null; W.hudT = 0; sitSet(false);
+  const R = W.ride; W.ride = null; M3.gwWant = null; W.hudT = 0; sitSet(false);
   if (x != null) { const g = groundAt(x, y, W.f + 0.4 * U, false); W.x = x; W.y = y; if (g != null) { W.f = g; W.fg = g; } }
   W.fv = 0; unstuck();
   return R;
 }
+// となりの 車両（sg：+1 は 車両の +x（F）の がわ）と、つなぎめの がわの はし（'F'・'R'）
+function rideNb(h, sg) {
+  for (const q of M3.runHit || []) {
+    if (q === h || q.rid !== h.rid || q.tid !== h.tid || Math.abs(q.kc - h.kc) !== 1 || q.hl == null) continue;
+    if (((q.x - h.x) * h.ux + (q.z - h.z) * h.uz) * sg <= 0) continue;
+    const jx = h.x + h.ux * sg * h.hl, jz = h.z + h.uz * sg * h.hl;
+    return { q, end: (jx - q.x) * q.ux + (jz - q.z) * q.uz > 0 ? 'F' : 'R' };
+  }
+  return null;
+}
+// はしの 歩ける ところ（m）：運転台の がわは 仕切りの 手前・ほかは 車両の はし
+const endLim = (h, sg) => { const c = h.dx && h.dx.cab; return c && c.end === (sg > 0 ? 'F' : 'R') ? Math.max(1, c.x - 2.2) : h.hl / U - 0.45; };
+const isCab = (h, end) => !!(h.dx && h.dx.cab && h.dx.cab.end === end);
+const gwOpen = (h, end) => !(h.dx && h.dx.gw && h.dx.gw[end]) || (end === 'F' ? h.gF : h.gR) > 0.75;   // 貫通扉が ない・ひらいている
 // 車両の中で うごく（入力 I。車両の 向き ux・uz に あわせる）
 function rideIn(I, dt, yaw) {
   const R = W.ride, h = rideCar(R);
   if (!h) { R.miss = (R.miss || 0) + dt; W.spd = 0; if (R.miss > 2) rideOff(); return; }   // 列車が 見えなくなった（とおくへ・終着）
   R.miss = 0;
   const Lh = h.hl / U - 0.45, Wh = h.hw / U - 0.4, ca = Math.atan2(h.ux, h.uz);
+  // 貫通扉（t70）：はしに ちかづくと ひらく（この車両と となりの車両の つなぎめの 扉）
+  const want = new Set(), sgE = R.lx >= 0 ? 1 : -1, endE = sgE > 0 ? 'F' : 'R', nbE = Math.abs(R.lx) > h.hl / U - 2.6 && Math.abs(R.lz) < 1.3 && !isCab(h, endE) ? rideNb(h, sgE) : null;
+  if (nbE) { want.add(h.rid + ':' + h.tid + ':' + h.kc + endE); want.add(h.rid + ':' + h.tid + ':' + nbE.q.kc + nbE.end); }
+  M3.gwWant = want;
   let spd = 0;
   if (I.m > 0.05) {
     if (R.sit) sitSet(false);
@@ -684,13 +707,26 @@ function rideIn(I, dt, yaw) {
     let da = Math.atan2(dx, dz) - W.h; while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI;
     W.h += clamp(da, -10 * dt, 10 * dt); R.lh = W.h - ca;
     const v = I.m * (I.cr ? SPD.sneak : I.run ? SPD.run * 0.7 : SPD.walk), d = v * dt;   // 車内は 走っても ゆっくり
-    let nx = clamp(R.lx + (dx * h.ux + dz * h.uz) * d, -Lh, Lh), nz = R.lz + (-dx * h.uz + dz * h.ux) * d;
+    const vz = -dx * h.uz + dz * h.ux;   // 車両の 横の 向きの うごき
+    let nx = R.lx + (dx * h.ux + dz * h.uz) * d, nz = R.lz + vz * d;
+    // はし：となりの 車両が あって 扉が ひらいていれば 通路（はば 0.7m）を 通って となりへ
+    const sgN = nx >= 0 ? 1 : -1, toEnd = (nx - R.lx) * sgN > 0 && Math.abs(nx) > h.hl / U - 2.6 && !isCab(h, sgN > 0 ? 'F' : 'R'), nb0 = toEnd ? rideNb(h, sgN) : null, nbA = nb0 && !isCab(nb0.q, nb0.end) ? nb0 : null;
+    if (nbA && !R.sit) nz += (0 - nz) * Math.min(1, dt * 3);   // はしの 通路へ むかうときは まん中へ よる（なめらかに）
+    const nb1 = Math.abs(nx) > Lh && !isCab(h, sgN > 0 ? 'F' : 'R') ? nbA || rideNb(h, sgN) : null, nb = nb1 && !isCab(nb1.q, nb1.end) ? nb1 : null, pass = nb && gwOpen(h, sgN > 0 ? 'F' : 'R') && gwOpen(nb.q, nb.end);
+    if (pass) {
+      if (Math.abs(nz) > 0.35) nx = sgN * Lh;   // 通路の 外：はしの かべ
+      if (Math.abs(nx) > h.hl / U && (nx - R.lx) * sgN > 0) {   // となりの 車両へ（外へ むかって すすむとき）
+        const q = nb.q, wx = h.x + (h.ux * nx - h.uz * nz) * U, wz = h.z + (h.uz * nx + h.ux * nz) * U;
+        R.kc = q.kc; R.lx = ((wx - q.x) * q.ux + (wz - q.z) * q.uz) / U; R.lz = clamp(((wx - q.x) * -q.uz + (wz - q.z) * q.ux) / U, -0.35, 0.35); R.lh = W.h - Math.atan2(q.ux, q.uz);
+        W.spd = v; W.lastRun = I.run; W.rcp = W.rcp; return;
+      }
+    } else nx = clamp(nx, -endLim(h, -1), endLim(h, 1));
     const side = nz > 0 ? 'R' : 'L', open = !h.mv && (side === 'R' ? h.oR : h.oL) > 0.7 && doorAt(h, side, nx) != null;
-    if (open && Math.abs(nz) > Wh + 0.5) {   // ドアから ホームへ
-      const oz = Math.sign(nz) * (h.hw / U + 0.45);
-      W.lastRun = I.run; rideOff(h.x + (h.ux * nx - h.uz * oz) * U, h.z + (h.uz * nx + h.ux * oz) * U); W.spd = v; return;
+    if (open && Math.abs(nz) > Wh + 0.7 && vz * nz > 0) {   // ドアから 外へ むかって：ホームへ（いまの ところから そのまま）
+      W.lastRun = I.run; rideOff(h.x + (h.ux * nx - h.uz * nz) * U, h.z + (h.uz * nx + h.ux * nz) * U); W.spd = v; return;
     }
-    nz = clamp(nz, -(open ? Wh + 0.6 : Wh), open ? Wh + 0.6 : Wh);
+    nz = clamp(nz, -(open ? Wh + 0.8 : Wh), open ? Wh + 0.8 : Wh);
+    if (Math.abs(nx) > Lh) nz = clamp(nz, -0.35, 0.35);   // 通路の 中
     spd = Math.hypot(nx - R.lx, nz - R.lz) / Math.max(dt, 1e-3); R.lx = nx; R.lz = nz;
   } else if (Math.abs(R.lz) > Wh && (h.mv || !((R.lz > 0 ? h.oR : h.oL) > 0.7))) R.lz = Math.sign(R.lz) * Wh;   // ドアが しまったら 中へ
   W.spd = spd; W.lastRun = I.run; W.cr = I.cr && !R.sit;
@@ -706,6 +742,7 @@ function post() {
   W.h = R.sit ? (R.lz > 0 ? Math.atan2(h.uz, -h.ux) : Math.atan2(-h.uz, h.ux)) : Math.atan2(h.ux, h.uz) + R.lh;   // すわると 通路の向き
   W.av.root.position.set(W.x, W.f, W.y); W.av.root.rotation.y = W.h;
   M3.tx = W.x; M3.ty = W.y;
+  if (W.lamp) W.lamp.intensity = 1.25 * (M3.nightW || 0);   // 場所は カメラの 上（camCar。見えるがわを 照らす）
 }
 // すわる（R・🪑。t70）：乗っていれば 窓がわの 長いす（ドアの前は よける）、乗っていなければ その場に
 function sitSet(on) {
@@ -713,8 +750,8 @@ function sitSet(on) {
   const R = W.ride;
   if (on && R) {
     const h = rideCar(R); if (!h) return;
-    const side = R.lz >= 0 ? 'R' : 'L', d = doorAt(h, side, R.lx), Lh = h.hl / U - 1.2;
-    if (d != null) R.lx = clamp(R.lx >= d ? d + 1.05 : d - 1.05, -Lh, Lh);
+    const side = R.lz >= 0 ? 'R' : 'L', d = doorAt(h, side, R.lx);
+    R.lx = clamp(d != null ? (R.lx >= d ? d + 1.05 : d - 1.05) : R.lx, -endLim(h, -1) + 0.6, endLim(h, 1) - 0.6);
     R.lz = (side === 'R' ? 1 : -1) * Math.max(0.2, h.hw / U - 0.62);
   }
   if (R) R.sit = on ? 1 : 0; else W.sitG = !!on;
@@ -756,6 +793,8 @@ function step() {
     poseAv(W.av, dt, V.pose === 'bike' ? sp * 0.5 : 0, false, { it: 0, sit: 1, bike: V.pose === 'bike' ? 1 : 0 });
     others(dt); net(t); hudTick(t); return;
   }
+  if (!W.ride && M3.gwWant) M3.gwWant = null;
+  if (!W.ride && W.lamp && W.lamp.intensity) W.lamp.intensity = 0;
   if (W.ride) {   // 列車に 乗っている（t70）
     rideIn(I, dt, yaw);
     if (W.ride) {
@@ -790,8 +829,10 @@ function step() {
   const g = W.gt != null && spd > 0 ? W.gt : groundAt(W.x, W.y, W.f, true);
   W.gt = null;
   if (g != null) {
+    const was = W.fg != null && W.f - W.fg < 0.05 * U && !(W.fv < 0);   // さっきまで 地面に ついていた
     W.fg = g;
     if (g >= W.f && !(W.fv < 0)) { W.f = g; W.fv = 0; }
+    else if (was && W.f - g < 0.4 * U) { W.f = g; W.fv = 0; }   // 坂・段を 歩いて おりる：足を 地面に つけたまま（ジャンプも できる。t70）
     else { W.fv = (W.fv || 0) + 9.8 * dt; W.f = Math.max(g, W.f - W.fv * dt * U); if (W.f === g && W.fv > 0) W.fv = 0; }
   }
   W.air = W.f > (W.fg != null ? W.fg : W.f) + 0.03 * U;
@@ -812,28 +853,74 @@ function camReach(yaw, p, ty) {   // ピッチ p で カメラを どこまで �
   for (let k = 1; k <= 12; k++) {
     const f = k / 12, px = W.x + ox * d * f, pz = W.y + oz * d * f, py = ty + oy * d * f;
     let top = 0; if (W.blk) for (const [a, b] of [[-r, -r], [r, -r], [-r, r], [r, r]]) { const t = W.blk.get(cellK(px + a, pz + b)); if (t > top) top = t; }
-    if (top > py - 0.3 * U || M3.surf(px, pz) > py - 0.25 * U || (W.ride && W.rh && !inCar(W.rh, px, pz, py))) { d = Math.max(0.6 * U, d * (k - 1) / 12); break; }   // 乗っているときは 車両の中だけ（t70）
+    const rh = W.ride ? null : roofH(px, pz, W.f);   // ホームの 屋根の下：屋根より 下に（t70）
+    if (top > py - 0.3 * U || M3.surf(px, pz) > py - 0.25 * U || (rh != null && py > rh - 0.25 * U)) { d = Math.max(0.6 * U, d * (k - 1) / 12); break; }
   }
   return d;
 }
 // 頭の上（1.8〜3.6m）に 屋根・天井がある（ホームの屋根の下・跨線橋の中。t70）：カメラを 自分の目に
+//   跨線橋・階段の 天井（歩ける面と おなじ 目）なら 自分の目から。ホームの 屋根（rcells）は 屋根の下に カメラを おさえる（camReach）
 function roofOver(x, y, f) {
   const ix = W.ix; if (!ix) return false;
-  const a = ix.cells.get(Math.floor(x / IG) * 100003 + Math.floor(y / IG)); if (!a) return false;
-  const P = ix.tri;
+  return roofIn(ix.cells.get(Math.floor(x / IG) * 100003 + Math.floor(y / IG)), ix.tri, x, y, f, 1.8, 3.6) != null;
+}
+// (x, y) の 頭の上の 屋根の 高さ（f から lo〜hi m の あいだで いちばん低い。なければ null）
+function roofH(x, y, f) {
+  const ix = W.ix; if (!ix) return null;
+  const k = Math.floor(x / IG) * 100003 + Math.floor(y / IG), a = roofIn(ix.cells.get(k), ix.tri, x, y, f, 1.8, 6), b = roofIn(ix.rcells && ix.rcells.get(k), ix.rtri, x, y, f, 1.8, 6);
+  return a == null ? b : b == null ? a : Math.min(a, b);
+}
+function roofIn(a, P, x, y, f, lo, hi) {
+  if (!a || !P) return null;
+  let best = null;
   for (const n of a) {
     const ax = P[n], az = P[n + 2], bx = P[n + 3], bz = P[n + 5], cx = P[n + 6], cz = P[n + 8];
     const d = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz); if (Math.abs(d) < 1e-14) continue;
     const l1 = ((bz - cz) * (x - cx) + (cx - bx) * (y - cz)) / d, l2 = ((cz - az) * (x - cx) + (ax - cx) * (y - cz)) / d, l3 = 1 - l1 - l2;
     if (l1 < -1e-6 || l2 < -1e-6 || l3 < -1e-6) continue;
     const h = l1 * P[n + 1] + l2 * P[n + 4] + l3 * P[n + 7];
-    if (h > f + 1.8 * U && h < f + 3.6 * U) return true;
+    if (h > f + lo * U && h < f + hi * U && (best == null || h < best)) best = h;
   }
-  return false;
+  return best;
 }
-const inCar = (h, x, z, y) => { const ex = (x - h.x) / U, ez = (z - h.z) / U; return Math.abs(ex * h.ux + ez * h.uz) < h.hl / U - 0.2 && Math.abs(-ex * h.uz + ez * h.ux) < h.hw / U - 0.15 && y < h.y0 + (FLOOR + 2.05) * U; };
+// 車内の カメラ（t70）：ふつうの 三人称。車両の 中だけ（かべ・天井の 内がわ）。横を向いて せまいときは 通路の 向きから。なめらかに うごかす
+function camCar(C, h, yaw, ty, dt) {
+  const ax = h.ux, az = h.uz, rx = -h.uz, rz = h.ux, Lx = h.hl / U - 0.3, Lz = h.hw / U - 0.22, top = h.y0 + (FLOOR + 2.0) * U;
+  const ex = (W.x - h.x) / U, ez = (W.y - h.z) / U, lx = ex * ax + ez * az, lz = ex * rx + ez * rz;
+  const p = clamp(W.pitch, -0.2, 0.42), want = clamp(W.cd, 1.6, 4.2);
+  const reach = (dx, dz) => {   // 車両の 中で (dx, dz)（車両の 向き）へ どこまで 引けるか（m）
+    let t = want;
+    if (dx > 1e-6) t = Math.min(t, (Lx - lx) / dx); else if (dx < -1e-6) t = Math.min(t, (-Lx - lx) / dx);
+    if (dz > 1e-6) t = Math.min(t, (Lz - lz) / dz); else if (dz < -1e-6) t = Math.min(t, (-Lz - lz) / dz);
+    const up = Math.sin(p) * Math.cos(0); if (up > 1e-6) t = Math.min(t, (top - ty) / U / up);
+    return Math.max(0, t);
+  };
+  const ox = Math.sin(yaw), oz = Math.cos(yaw);   // カメラの ある向き（人から）
+  let dx = ox * ax + oz * az, dz = ox * rx + oz * rz, d = reach(dx, dz);
+  if (d < 1.7) {   // 横を向いて せまい：通路の 向き（いまの カメラに 近いがわ。あいている ほう）から
+    const sg = Math.abs(dx) > 0.15 ? Math.sign(dx) : (Lx - lx > Lx + lx ? 1 : -1);
+    const tx = sg, tz = clamp(dz, -0.35, 0.35), tl = Math.hypot(tx, tz); let d2 = reach(tx / tl, tz / tl);
+    if (d2 < 1.2) { const d3 = reach(-tx / tl, tz / tl); if (d3 > d2) { dx = -tx / tl; d2 = d3; } else dx = tx / tl; } else dx = tx / tl;
+    dz = tz / tl; d = d2;
+  }
+  d = Math.max(0.5, d);
+  const cxw = W.x + (ax * dx + rx * dz) * Math.cos(p) * d * U, czw = W.y + (az * dx + rz * dz) * Math.cos(p) * d * U, cyw = Math.min(top - 0.05 * U, ty + Math.sin(p) * d * U + 0.15 * U);
+  const k = W.rcp ? Math.min(1, dt * 7) : 1;
+  if (!W.rcp) W.rcp = [C.position.x, C.position.y, C.position.z];
+  W.rcp[0] += (cxw - W.rcp[0]) * k; W.rcp[1] += (cyw - W.rcp[1]) * k; W.rcp[2] += (czw - W.rcp[2]) * k;
+  C.position.set(W.rcp[0], W.rcp[1], W.rcp[2]); C.lookAt(W.x, ty - 0.1 * U, W.y);
+  if (W.av) W.av.root.visible = true;
+  if (W.lamp) W.lamp.position.set((W.rcp[0] + W.x) / 2, top - 0.1 * U, (W.rcp[2] + W.y) / 2);   // 車内の 明かり：カメラと 自分の あいだの 天井
+}
 function cam() {
   const C = M3.cam, yaw = M3.yaw, ty = W.f + HEAD * (1 - 0.3 * ((W.av && W.av.cr) || 0) - 0.33 * ((W.av && W.av.sit) || 0)) * U, t = now(), dt = Math.min(0.25, Math.max(0, (t - (W.ct || t)) / 1000)); W.ct = t;
+  if (W.ride && W.rh) {   // 列車の 中（t70）
+    camCar(C, W.rh, yaw, ty, dt);
+    C.near = 0.08 * U; C.far = 80; C.updateProjectionMatrix();
+    const fog = M3.sc.fog; if (fog) { const q = MI.MQ ? MI.MQ.d3 : 1; fog.near = 6 + q * 2; fog.far = 30 + q * 10; }
+    return;
+  }
+  W.rcp = null;
   let p = W.pitch, d = camReach(yaw, p, ty);
   if (d < W.cd * U * 0.6 && d < 3 * U) for (const dp of [0.25, 0.5]) {   // うしろが 低い たてものなら 上から（高い たてものなら 近くに よせる）
     const p2 = Math.min(0.95, W.pitch + dp), d2 = camReach(yaw, p2, ty);
@@ -850,7 +937,7 @@ function cam() {
   const cl = clamp((1.8 - d / U) / 1.8, 0, 1), fx = -Math.sin(yaw) * cl * 1.4 * U, fz = -Math.cos(yaw) * cl * 1.4 * U;
   cy += cl * 0.55 * U;
   const gc = M3.surf(cx, cz); if (cy < gc + 0.35 * U) cy = gc + 0.35 * U;
-  if ((W.ride && d < 1.3 * U) || (!W.ride && !W.veh && !W.pas && roofOver(W.x, W.y, W.f))) {   // 車内で せまい・屋根の下：自分の目から（t70）
+  if (!W.veh && !W.pas && roofOver(W.x, W.y, W.f)) {   // 跨線橋・階段の 中：自分の目から（t70）
     const ex = -Math.sin(yaw), ez = -Math.cos(yaw);
     C.position.set(W.x + ex * 0.12 * U, ty, W.y + ez * 0.12 * U); C.lookAt(W.x + ex * 3 * U, ty - Math.sin(W.pitch - 0.32) * 3 * U, W.y + ez * 3 * U);
     if (W.av) W.av.root.visible = false;
@@ -1161,7 +1248,7 @@ function hudMake() {
   tap('[data-wk-crb]', () => crSet(!W.crOn));
   tap('[data-wk-sit]', () => sitSet(!sitOn()));
   tap('[data-wk-veh]', () => vehTap());
-  tap('[data-wk-jump]', () => jump());
+  { const b = h.querySelector('[data-wk-jump]'); b.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); jump(); }); b.onclick = () => { try { b.blur(); } catch (er) {} }; }   // おした しゅんかんに（スティックを おしながらでも。t70）
   tap('[data-wk-item]', () => wheelOpen(!W.wheel, false));
   tap('[data-wk-chat]', () => chatOpen(!W.chat.open));
   tap('[data-wk-look]', () => pickOpen());
@@ -1488,6 +1575,7 @@ async function start(o) {   // o：{ inv（フレンドの 招待の番号。DB 
   M3.d = 1.2; M3.glide = null; M3.dirty = true; MI.S.dirty = true;
   avSelf();
   hudMake();
+  W.lamp = new T3.PointLight('#f1f6ff', 0, 6 * U, 1.2); M3.sc.add(W.lamp);   // 車内の 蛍光灯の 明かり（乗っているとき 夜は 自分を 照らす。t70）
   M3.walk = { step, post, cam, look, zoom, tags, stop };
   // しるし（DB の更新118 のあと）：ほかの人と見せあう
   try { const r = await rpc('av_walk_start'); if (W && r && typeof r.k === 'string') { W.me = r; if (r.c && CAT && !CAT.off) { const ch = r.c !== CAT.me.c || JSON.stringify(r.l || {}) !== JSON.stringify(CAT.me.l || {}); CAT.me = { c: r.c, l: r.l || {} }; if (ch) avSelf(); } } } catch (e) { if (W) W.me = null; }
@@ -1511,11 +1599,13 @@ function stop(fromClose) {
   if (w.spawn || w.itHint) MI.hint('');
   window.removeEventListener('keydown', w.kd); window.removeEventListener('keyup', w.kd); window.removeEventListener('blur', w.blur);
   if (w.av) M3.sc.remove(w.av.root);
-  for (const o of w.others.values()) if (o.av) M3.sc.remove(o.av.root);
+  for (const o of w.others.values()) { if (o.av) M3.sc.remove(o.av.root); if (o.vm) M3.sc.remove(o.vm); }
+  if (w.vm) M3.sc.remove(w.vm);   // 乗り物の形（t70）
+  if (w.lamp) M3.sc.remove(w.lamp);
   if (w.hud) w.hud.remove();
   MI.S.wrap.classList.remove('mp-walk');
   if (M3.sea) { M3.sea.scale.set(1, 1, 1); M3.sea.position.x = 0; M3.sea.position.z = 0; }
-  M3.walk = null; W = null;
+  M3.walk = null; M3.gwWant = null; W = null;
   if (!fromClose && M3.on) { M3.tx = w.x; M3.ty = w.y; M3.d = clamp(w.d0 || 6, 3, 12); M3.dirty = true; MI.S.dirty = true; }
   if (onChange) onChange(false);
 }

@@ -3,6 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<script>/* iPhone・iPad：入力欄を さわったときに 画面が 拡大されないように（指で ひろげる 拡大は できる。t70） */
+(function () { try { var ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (ios) { var m = document.querySelector('meta[name=viewport]'); if (m) m.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover'); }
+  document.addEventListener('gesturestart', function (e) { var t = e.target; if (t && t.closest && t.closest('.mp-wrap, canvas, .wk-hud')) e.preventDefault(); }, { passive: false });   // 地図・3D・ゲームの上では ページを 拡大しない
+} catch (e) {} })();</script>
 <meta name="author" content="Airln_7 (https://x.com/Airln_7)">
 <meta name="google-adsense-account" content="ca-pub-8527280731414386">
 <title>風の芽経済組</title>
@@ -20,6 +25,7 @@
 <link rel="alternate" type="text/markdown" href="/llms.txt" title="AI むけの説明">
 <link rel="preload" href="fonts/ax-emoji-ui-400.woff2" as="font" type="font/woff2" crossorigin>
 <style>
+*{touch-action:manipulation}   /* ダブルタップで 画面が 拡大されないように（t70。指で ひろげる 拡大・スクロールは そのまま） */
 /* 絵文字は白黒（文字と同じ色）で出す：画面で使う分だけの小さいフォント → それ以外の絵文字（Noto Emoji・SIL OFL） */
 @font-face{font-family:'AX Emoji UI';font-style:normal;font-weight:400;font-display:block;src:url(fonts/ax-emoji-ui-400.woff2) format('woff2');unicode-range:U+2600,U+2660,U+2663,U+2665-2666,U+2696,U+2699,U+26a0,U+2702,U+2709,U+2b50,U+fe0f,U+1f004,U+1f0cf,U+1f319,U+1f347,U+1f349,U+1f34b-1f34c,U+1f34e,U+1f352,U+1f359,U+1f35e,U+1f363,U+1f389,U+1f3ae,U+1f3c6-1f3c7,U+1f3db,U+1f3e2,U+1f3e6,U+1f44b,U+1f454,U+1f464-1f465,U+1f4ac,U+1f4b1,U+1f4b4,U+1f4b8-1f4b9,U+1f4c8-1f4cc,U+1f4ce-1f4cf,U+1f4d6,U+1f4da,U+1f4dc,U+1f4e2,U+1f4e6,U+1f4e8,U+1f4f0,U+1f50d-1f50e,U+1f512,U+1f514,U+1f527-1f528,U+1f5c2,U+1f5de,U+1f5e8,U+1f6a9,U+1f6cd,U+1f6d2,U+1f6e0-1f6e1,U+1f955,U+1f96b,U+1f9c0,U+1f9c3,U+1f9ee,U+1f9f4,U+1f9f9,U+1f9fb,U+1f9fd-1f9fe,U+1fa9a-1fa9b}
 @font-face{font-family:'AX Emoji UI';font-style:normal;font-weight:700;font-display:block;src:url(fonts/ax-emoji-ui-700.woff2) format('woff2');unicode-range:U+2600,U+2660,U+2663,U+2665-2666,U+2696,U+2699,U+26a0,U+2702,U+2709,U+2b50,U+fe0f,U+1f004,U+1f0cf,U+1f319,U+1f347,U+1f349,U+1f34b-1f34c,U+1f34e,U+1f352,U+1f359,U+1f35e,U+1f363,U+1f389,U+1f3ae,U+1f3c6-1f3c7,U+1f3db,U+1f3e2,U+1f3e6,U+1f44b,U+1f454,U+1f464-1f465,U+1f4ac,U+1f4b1,U+1f4b4,U+1f4b8-1f4b9,U+1f4c8-1f4cc,U+1f4ce-1f4cf,U+1f4d6,U+1f4da,U+1f4dc,U+1f4e2,U+1f4e6,U+1f4e8,U+1f4f0,U+1f50d-1f50e,U+1f512,U+1f514,U+1f527-1f528,U+1f5c2,U+1f5de,U+1f5e8,U+1f6a9,U+1f6cd,U+1f6d2,U+1f6e0-1f6e1,U+1f955,U+1f96b,U+1f9c0,U+1f9c3,U+1f9ee,U+1f9f4,U+1f9f9,U+1f9fb,U+1f9fd-1f9fe,U+1fa9a-1fa9b}
@@ -6007,7 +6013,7 @@ const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
 // 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
-const MAPV = '193';
+const MAPV = '194';
 const STAGE = 'Pre';   // 正式公開の前（Pre）。名前のよこと、バージョンの表記に出す。正式公開のときは '' にする
 document.querySelectorAll('.kz-stage').forEach(e => { e.textContent = STAGE; e.hidden = !STAGE; });
 const DBV = 126;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）

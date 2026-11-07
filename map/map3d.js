@@ -1830,6 +1830,15 @@ function m3RunTrk(o) {
 // モデルの列車（t66。window.M3CAR）：両ごとに 台車の2点の高さで 向きと かたむき。編成は 下り方から（下りの列車は 下り方が前）。トンネルの中は見せない。
 //   えらんだ列車なら しるしの位置［x, y, z, はば］を返す
 const M3_RC = { m: null, q: null, q2: null, p: null, s: null, up: null, ax: null };
+// 貫通扉の あき（0〜1。t70）：歩く人が ちかづくと ひらく（M3.gwWant：ひらきたい はしの キー。walk.js が 毎フレーム 決める）。0.7秒で ひらく・しまる
+function m3Gw(key) {
+  const W = M3.gws || (M3.gws = new Map()), t = performance.now(), want = !!(M3.gwWant && M3.gwWant.has(key));
+  let g = W.get(key); if (!g) { if (!want) return 0; g = { v: 0, t }; W.set(key, g); }
+  const dt = Math.min(0.25, (t - g.t) / 1000); g.t = t;
+  g.v = Math.max(0, Math.min(1, g.v + (want ? 1 : -1) * dt / 0.7));
+  if (!want && g.v <= 0) W.delete(key);
+  return g.v * g.v * (3 - 2 * g.v);
+}
 // ドアの あき（0〜1。t70）：駅に止まっている列車（o.at・o.tt）。着いて 3秒から 2.5秒で ひらき、出る 4秒前までに しまる。終着駅は 10分
 const m3Sm = x => x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x);
 function m3DoorOpen(o) {
@@ -1858,10 +1867,14 @@ function m3RunCars(o, md, it, sel) {
   let selP = null;
   // ドア（t70）：駅に止まっているあいだ、着いて 3秒から ひらき、出る 4秒前に しまる。ホームのある がわだけ
   const dp = m3DoorOpen(o); let sd = null;
-  if (dp > 0 && MD && MD.pfSide) { const rf = runRef(o.H, o.d - o.len / 2), sg = rf ? it.segs.get(rf[0]) : null; if (sg) sd = MD.pfSide(sg, rf[1], MD.off(sg, 'rail', rf[1], rf[2], trs), rf[2]); }
+  if ((dp > 0 || (M3.nightW || 0) > 0.03) && MD && MD.pfSide) {   // ホームのある がわ（ドア・夜の 窓の光）
+    const rf = runRef(o.H, o.d - o.len / 2), sg = rf ? it.segs.get(rf[0]) : null; if (sg) sd = MD.pfSide(sg, rf[1], MD.off(sg, 'rail', rf[1], rf[2], trs), rf[2]); }
+  const led = o.yard ? { key: o.R.id + ':' + o.T.id + ':y', kind: '回送', dest: '', num: '' } : { key: o.R.id + ':' + o.T.id, kind: o.T.kind || '普通', dest: runDest(o.R, o.T), num: o.T.num };   // 行先表示器（t70）
   for (let k = 0; k < n; k++) {
     const e = comp[fwd ? k : n - 1 - k], c = dC + ((n - 1) / 2 - k) * P, a = pt(c + Bg), b = pt(c - Bg);
-    const fl = fwd ? e.r : !e.r, X = { hd: !o.yard && k === 0 && !fl, tl: !o.yard && k === n - 1 && fl, oL: sd && (fl ? sd.r : sd.l) ? dp : 0, oR: sd && (fl ? sd.l : sd.r) ? dp : 0 };   // fl：運転台が うしろ向き（車両の +Z は 運転台から見て 右）
+    const fl = fwd ? e.r : !e.r, pL = !!(sd && (fl ? sd.r : sd.l)), pR = !!(sd && (fl ? sd.l : sd.r));
+    const gk = o.R.id + ':' + o.T.id + ':' + k;
+    const X = { hd: !o.yard && k === 0 && !fl, tl: !o.yard && k === n - 1 && fl, oL: pL ? dp : 0, oR: pR ? dp : 0, pL, pR, gF: m3Gw(gk + 'F'), gR: m3Gw(gk + 'R'), led };   // fl：運転台が うしろ向き（車両の +Z は 運転台から見て 右）
     if (a[3] || b[3]) { if (k === 0 && sel) selP = [a[0], m3Surf(a[0], a[2]) + hh, a[2], cw * M3_U]; continue; }   // トンネルの中
     const dx = a[0] - b[0], dz = a[2] - b[2], L = Math.hypot(dx, dz) || 1e-6, x = (a[0] + b[0]) / 2, y = (a[1] + b[1]) / 2, z = (a[2] + b[2]) / 2;
     C.q.setFromAxisAngle(C.up, -Math.atan2(dz, dx));
@@ -1872,7 +1885,7 @@ function m3RunCars(o, md, it, sel) {
     CAR.put(md, e.c, lv, C.m, col, X);
     const sx = fl ? -1 : 1;   // 車両の +X の向き（運転台が うしろ向きなら 反対）
     M3.runHit.push({ o, x, y: y + hh / 2, z, ux: sx * dx / L, uz: sx * dz / L, hl: P / 2, hw: cw / 2 * M3_U, y0: y, y1: y + hh,   // 歩く人の 当たり判定・乗りおり（t70）
-      rid: o.R.id, tid: o.T.id, kc: k, oL: X.oL, oR: X.oR, dx: CAR.doors ? CAR.doors(md, e.c) : null, mv: o.at < 0 });
+      rid: o.R.id, tid: o.T.id, kc: k, oL: X.oL, oR: X.oR, gF: X.gF, gR: X.gR, dx: CAR.doors ? CAR.doors(md, e.c) : null, mv: o.at < 0 });
     if (k === 0 && sel) selP = [x, y + hh, z, cw * M3_U];
   }
   return selP;
