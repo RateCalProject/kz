@@ -664,7 +664,7 @@ function overlaps(rails, sts, inSta) {
 let G = null;   // この作りなおしの 入れもの
 function build(cx) {
   const t0 = performance.now(), tm = R.tm = {};
-  X = cx; T3 = cx.T3; M3 = cx.M3; LIFT = cx.M3_LIFT; VEX = cx.M3_VEX; GEN++; UG = !!cx.ug;
+  X = cx; T3 = cx.T3; M3 = cx.M3; LIFT = cx.M3_LIFT; VEX = cx.M3_VEX; GEN++; UG = !!cx.ug; R.stairs = [];
   const MQ = cx.MQ || {}, lv = Math.max(0, Math.min(3, Number(MQ.d3) || 0)), kq = lv <= 0 ? 0.6 : lv >= 3 ? 1.5 : lv >= 2 ? 1.2 : 1;
   LQ = [4 * kq, 8 * kq, 15 * kq];
   const v = cx.v; CEN = { x: v.cx != null ? v.cx : M3.tx, y: v.cy != null ? v.cy : M3.ty, h: Math.max(4, Math.round((v.x1 - v.x0) / 10)) * 0.5 };
@@ -1286,12 +1286,13 @@ function staBuild(t) {
       } else if (L.big) {   // 橋上駅舎：線路をまたぐ建物・ホームから階段・外へ 自由通路の階段
         const f0 = S.rt + 7.0 * U, f1 = S.rt + 12.2 * U, hw = (Wl + Wr) / 2 + 4;
         g.box(cx, cy, S.tx, S.ty, (bl / 2) * U, hw * U, f0, f1, CL.bldW, true);
+        { const c = (a, b) => [cx + (S.tx * a + S.nx * b) * U, f0 + 0.03 * U, cy + (S.ty * a + S.ny * b) * U], a = bl / 2 - 0.3, b = hw - 0.3; g.q(c(a, -b), c(-a, -b), c(-a, b), c(a, b), [0.66, 0.64, 0.6]); }   // 駅舎の 床（歩ける。t70）
         g.box(cx, cy, S.tx, S.ty, (bl / 2 + 0.6) * U, (hw + 0.6) * U, f1, f1 + 0.5 * U, CL.bldR, true);
         glassBand(S, cx, cy, bl / 2, hw, f0 + 1.0 * U, f0 + 3.6 * U);
         for (const p of L.plats) {   // ホームから 上へ（屋根のある 階段）
           const o = (p.lo + p.hi) / 2, w = Math.min(1.7, (p.hi - p.lo) / 2 - 1.2); if (w < 0.6) continue;
           const S2 = staAt(t, db + bl / 2 + 7); if (!S2) continue;
-          const x = S2.x + S2.nx * o * U, y = S2.y + S2.ny * o * U; stairWedge(x, y, S2, 7, w, S2.rt + PH * U, S2.rt + (PH + 2.7) * U, f0 + 3.0 * U);
+          const x = S2.x + S2.nx * o * U, y = S2.y + S2.ny * o * U; stairWedge(x, y, S2, 7, w, S2.rt + PH * U, S2.rt + (PH + 2.7) * U, f0 + 3.0 * U, [cx, cy], S2.rt + PH * U, f0);
         }
         if (lod >= 1) for (const sd of [1, -1]) {   // 自由通路の階段（駅の外へ おりる）
           const o = sd > 0 ? Wl + 4 + 1.2 : -(Wr + 4 + 1.2), x = S.x + S.nx * o * U, y = S.y + S.ny * o * U, gz = X.m3Surf(x, y) + LIFT * 0.5;
@@ -1307,8 +1308,9 @@ function staBuild(t) {
           const S2 = staAt(t, db + 14); if (S2) {
             const f0 = S2.rt + 6.6 * U, lo = L.plats.reduce((m, p) => Math.min(m, p.lo), 0), hi = top, m2 = (lo + hi) / 2, x2 = S2.x + S2.nx * m2 * U, y2 = S2.y + S2.ny * m2 * U;
             g.box(x2, y2, S2.tx, S2.ty, 1.6 * U, ((hi - lo) / 2 - 1) * U, f0, f0 + 2.9 * U, CL.bldW, true);
+            { const c = (a, b) => [x2 + (S2.tx * a + S2.nx * b) * U, f0 + 0.03 * U, y2 + (S2.ty * a + S2.ny * b) * U], a = 1.45, b = (hi - lo) / 2 - 1.1; g.q(c(a, -b), c(-a, -b), c(-a, b), c(a, b), [0.6, 0.6, 0.58]); }   // 跨線橋の 床（歩ける。t70）
             g.box(x2, y2, S2.tx, S2.ty, 1.8 * U, ((hi - lo) / 2 - 0.8) * U, f0 + 2.9 * U, f0 + 3.15 * U, CL.bldR, true);
-            for (const p of L.plats) { const op = p.flo && !p.isl ? p.hi - 1.6 : p.fhi && !p.isl ? p.lo + 1.6 : (p.lo + p.hi) / 2, S3 = staAt(t, db + 14 - 7.5); if (!S3) continue; stairWedge(S3.x + S3.nx * op * U, S3.y + S3.ny * op * U, S3, 6, 1.1, S3.rt + PH * U, S3.rt + (PH + 2.6) * U, f0 + 2.7 * U); }
+            for (const p of L.plats) { const op = p.flo && !p.isl ? p.hi - 1.6 : p.fhi && !p.isl ? p.lo + 1.6 : (p.lo + p.hi) / 2, S3 = staAt(t, db + 14 - 7.5); if (!S3) continue; stairWedge(S3.x + S3.nx * op * U, S3.y + S3.ny * op * U, S3, 6, 1.1, S3.rt + PH * U, S3.rt + (PH + 2.6) * U, f0 + 2.7 * U, [x2, y2], S3.rt + PH * U, f0); }
             topH = Math.max(topH, f0 + 4 * U);
           }
         }
@@ -1331,8 +1333,17 @@ function glassBand(S, x, y, hl, hw, y0, y1) {
 }
 function stairBox(x, y, S, hl, hw, y0, y1) { G.v.box(x, y, S.tx, S.ty, hl * U, hw * U, y0, y1, CL.bldB); G.v.box(x, y, S.tx, S.ty, (hl + 0.3) * U, (hw + 0.3) * U, y1, y1 + 0.25 * U, CL.bldR, true); }
 // 屋根のある階段（長さの向きに、低いがわ y1a → 高いがわ y1b）
-function stairWedge(x, y, S, hl, hw, y0, y1a, y1b) {
-  const g = G.v, c = (a, b, h) => [x + S.tx * a * U + S.nx * b * U, h, y + S.ty * a * U + S.ny * b * U];
+//   hp：のぼった先（跨線橋・駅舎の まん中 [x, y]）。そちらが 高いがわ。fa・fb：中の 段（歩ける 坂）の 低いがわ・高いがわの 高さ（t70）
+function stairWedge(x, y, S, hl, hw, y0, y1a, y1b, hp, fa, fb) {
+  let sg = 1;
+  if (hp && Math.hypot(x + S.tx * hl * U - hp[0], y + S.ty * hl * U - hp[1]) < Math.hypot(x - S.tx * hl * U - hp[0], y - S.ty * hl * U - hp[1])) sg = -1;   // 180° まわす（面の向きは そのまま）
+  const g = G.v, c = (a, b, h) => [x + (S.tx * a + S.nx * b) * sg * U, h, y + (S.ty * a + S.ny * b) * sg * U];
+  if (fa != null && fb != null) {   // 中の 段：ホームから 上の 通路まで 歩いて のぼれる 坂（上は 通路へ 1m のばす）
+    const w = hw - 0.12, e = 0.03 * U;
+    g.q(c(hl, -w, fa + e), c(-hl, -w, fb + e), c(-hl, w, fb + e), c(hl, w, fa + e), CL.stair || [0.58, 0.58, 0.56]);
+    g.q(c(-hl, -w, fb + e), c(-hl - 1, -w, fb + e), c(-hl - 1, w, fb + e), c(-hl, w, fb + e), CL.stair || [0.58, 0.58, 0.56]);
+    if (R.stairs.length < 400) { const A = c(hl, 0, fa), B = c(-hl, 0, fb); R.stairs.push([A[0], A[2], A[1], B[0], B[2], B[1]]); }   // 段の 下と 上（しらべる用）
+  }
   const ya = y1a, yb = y1b;   // a がわ（+長さ）が低い・b がわ（−長さ）が高い
   g.q(c(hl, -hw, ya), c(-hl, -hw, yb), c(-hl, hw, yb), c(hl, hw, ya), CL.bldR);
   g.q(c(hl, -hw, y0), c(-hl, -hw, y0), c(-hl, -hw, yb), c(hl, -hw, ya), CL.bldB);
@@ -1621,7 +1632,7 @@ function runY2(sg, s) {
   return { y: rtS(C, s), hide: codeS(sg, s) === 'T' };
 }
 
-const R = window.M3RAIL = { build, off, runY, pfSide, stations: true, car: { w: 2.95, h: 3.75 }, ms: 0, nv: 0, ver: 1 };
+const R = window.M3RAIL = { build, off, runY, pfSide, stairs: [], stations: true, car: { w: 2.95, h: 3.75 }, ms: 0, nv: 0, ver: 1 };
 // たしかめる用：踏切を しめる（v 1）・ひらく（v 0）
 R.dbg = { xa: XA, close(v) { for (const c of XA.list) { c.cl = v; c.tg = v; c.lit = !!v; setArms(c); if (XA.lamps) { const k = new T3.Color(); c.lamps.forEach((l, i) => { k.setRGB(v && i % 2 ? 1 : 0.22, v && i % 2 ? 0.12 : 0.05, v && i % 2 ? 0.08 : 0.04); XA.lamps.setColorAt(c.li + i, k); }); if (XA.lamps.instanceColor) XA.lamps.instanceColor.needsUpdate = true; } } if (M3) M3.dirty = true; return XA.list.length; } };
 })();

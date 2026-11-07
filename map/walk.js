@@ -459,8 +459,8 @@ function idxBuild() {
 }
 // (x, y) マスの 足もとの高さ（3D）。f：いまの足もと。のぼれないとき・水に入るとき null
 function groundAt(x, y, f, wet0) {
-  const t = M3.surf(x, y), lim = f + STEP * U;
-  let g = t, on = false;
+  const t = M3.surf(x, y), lim = f + STEP * U, lim1 = f + 0.55 * U;
+  let g = t, on = false, g1 = -Infinity;   // g1：いまの足もとに いちばん近い面（0.55m の 上まで。あれば こちら。段の 坂を のぼっていて 上の 屋根に とびのらない。t70）
   const ix = W.ix;
   if (ix) {
     const a = ix.cells.get(Math.floor(x / IG) * 100003 + Math.floor(y / IG));
@@ -472,10 +472,11 @@ function groundAt(x, y, f, wet0) {
         const l1 = ((bz - cz) * (x - cx) + (cx - bx) * (y - cz)) / d, l2 = ((cz - az) * (x - cx) + (ax - cx) * (y - cz)) / d, l3 = 1 - l1 - l2;
         if (l1 < -1e-6 || l2 < -1e-6 || l3 < -1e-6) continue;
         const h = l1 * P[n + 1] + l2 * P[n + 4] + l3 * P[n + 7];
-        if (h <= lim && h > g - 0.5 * U) { if (h > g || !on) { g = Math.max(g, h); on = true; } }
+        if (h <= lim && h > t - 0.5 * U) { if (h > g || !on) { g = Math.max(g, h); on = true; } if (h <= lim1 && Math.abs(h - f) < Math.abs(g1 - f)) g1 = h; }
       }
     }
   }
+  if (on && g1 > -Infinity && g1 >= t - 0.5 * U && g > lim1) g = Math.max(g1, t);
   if (!on && t > lim) return null;   // 地面の急な段（がけ）
   if (!on && !wet0) { const tl = MI.tileAt(Math.floor(x), Math.floor(y)); if (tl && (tl.t === 'D' || tl.t === 'S' || tl.t === 'R' || tl.t === 'L')) return null; }   // 水（橋の上は 歩ける）
   return g;
@@ -775,7 +776,7 @@ function step() {
     const tryTo = (nx, ny) => {
       if (W.ride || blocked(nx, ny)) return null;
       const th = trainAt(nx, ny, W.f); if (th && !trainAt(W.x, W.y, W.f)) { rideTry(th.h, nx, ny); return null; }   // 列車には 入れない（t70）。ひらいた ドアからは 乗る
-      const g = groundAt(nx, ny, W.f, wet0); return g == null ? null : [nx, ny, g]; };
+      const g = groundAt(nx, ny, W.f, wet0); if (g == null || (!W.air && (g < W.f - 2.2 * U || (g < W.f - 0.6 * U && W.f - M3.surf(W.x, W.y) > 3 * U)))) return null; return [nx, ny, g]; };   // 高い ところ（跨線橋・段）からは 歩いて おりない（ジャンプなら おりられる。t70）
     let r = tryTo(W.x + dx * d, W.y + dz * d);
     if (!r && Math.abs(dx) > 0.15) r = tryTo(W.x + Math.sign(dx) * d * Math.abs(dx), W.y);   // かべに そって
     if (!r && Math.abs(dz) > 0.15) r = tryTo(W.x, W.y + Math.sign(dz) * d * Math.abs(dz));
@@ -814,6 +815,21 @@ function camReach(yaw, p, ty) {   // ピッチ p で カメラを どこまで �
   }
   return d;
 }
+// 頭の上（1.8〜3.6m）に 屋根・天井がある（ホームの屋根の下・跨線橋の中。t70）：カメラを 自分の目に
+function roofOver(x, y, f) {
+  const ix = W.ix; if (!ix) return false;
+  const a = ix.cells.get(Math.floor(x / IG) * 100003 + Math.floor(y / IG)); if (!a) return false;
+  const P = ix.tri;
+  for (const n of a) {
+    const ax = P[n], az = P[n + 2], bx = P[n + 3], bz = P[n + 5], cx = P[n + 6], cz = P[n + 8];
+    const d = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz); if (Math.abs(d) < 1e-14) continue;
+    const l1 = ((bz - cz) * (x - cx) + (cx - bx) * (y - cz)) / d, l2 = ((cz - az) * (x - cx) + (ax - cx) * (y - cz)) / d, l3 = 1 - l1 - l2;
+    if (l1 < -1e-6 || l2 < -1e-6 || l3 < -1e-6) continue;
+    const h = l1 * P[n + 1] + l2 * P[n + 4] + l3 * P[n + 7];
+    if (h > f + 1.8 * U && h < f + 3.6 * U) return true;
+  }
+  return false;
+}
 const inCar = (h, x, z, y) => { const ex = (x - h.x) / U, ez = (z - h.z) / U; return Math.abs(ex * h.ux + ez * h.uz) < h.hl / U - 0.2 && Math.abs(-ex * h.uz + ez * h.ux) < h.hw / U - 0.15 && y < h.y0 + (FLOOR + 2.05) * U; };
 function cam() {
   const C = M3.cam, yaw = M3.yaw, ty = W.f + HEAD * (1 - 0.3 * ((W.av && W.av.cr) || 0) - 0.33 * ((W.av && W.av.sit) || 0)) * U, t = now(), dt = Math.min(0.25, Math.max(0, (t - (W.ct || t)) / 1000)); W.ct = t;
@@ -833,7 +849,7 @@ function cam() {
   const cl = clamp((1.8 - d / U) / 1.8, 0, 1), fx = -Math.sin(yaw) * cl * 1.4 * U, fz = -Math.cos(yaw) * cl * 1.4 * U;
   cy += cl * 0.55 * U;
   const gc = M3.surf(cx, cz); if (cy < gc + 0.35 * U) cy = gc + 0.35 * U;
-  if (W.ride && d < 1.3 * U) {   // 車内で せまい：自分の目から（t70）
+  if ((W.ride && d < 1.3 * U) || (!W.ride && !W.veh && !W.pas && roofOver(W.x, W.y, W.f))) {   // 車内で せまい・屋根の下：自分の目から（t70）
     const ex = -Math.sin(yaw), ez = -Math.cos(yaw);
     C.position.set(W.x + ex * 0.12 * U, ty, W.y + ez * 0.12 * U); C.lookAt(W.x + ex * 3 * U, ty - Math.sin(W.pitch - 0.32) * 3 * U, W.y + ez * 3 * U);
     if (W.av) W.av.root.visible = false;
