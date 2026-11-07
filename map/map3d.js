@@ -1779,9 +1779,12 @@ function m3Runs(v) {
 // 列車の入る番線（DB の更新107 の ホームの形）：［駅, 番線］（止まっている駅）か［前の駅, 番線, つぎの駅, 番線］（走っている）
 function m3RunTrk(o) {
   const sc = o.T && o.T.s; if (!sc || o.yard) return null;
-  if (o.at >= 0) return sc[o.at] ? [sc[o.at][0], sc[o.at][3]] : null;
-  if (o.nx > 0 && sc[o.nx]) return [sc[o.nx - 1][0], sc[o.nx - 1][3], sc[o.nx][0], sc[o.nx][3]];
-  return null;
+  let r = null;
+  if (o.at >= 0) r = sc[o.at] ? [sc[o.at][0], sc[o.at][3]] : null;
+  else if (o.nx > 0 && sc[o.nx]) r = [sc[o.nx - 1][0], sc[o.nx - 1][3], sc[o.nx][0], sc[o.nx][3]];
+  // 複々線（t70）：特急・急行・快速（優先番号 3 まで）は 内がわの線（急行線）、ほかは 外がわの線（緩行線。DB の更新86 と同じ）
+  if (r) r.loc = !/特急|急行|快速/.test(o.T.kind || '');
+  return r;
 }
 // モデルの列車（t66。window.M3CAR）：両ごとに 台車の2点の高さで 向きと かたむき。編成は 下り方から（下りの列車は 下り方が前）。トンネルの中は見せない。
 //   えらんだ列車なら しるしの位置［x, y, z, はば］を返す

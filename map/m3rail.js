@@ -57,12 +57,12 @@ function spec(sg) {
 const SC = new WeakMap();
 function segC(sg) {
   let C = SC.get(sg);
-  if (C && C.P === sg.P && C.np === sg.np) return C;
+  if (C && C.P === sg.P && C.np === sg.np && (!window.MapCurve || C.cver === window.MapCurve.ver())) return C;
   const P = sg.P, n = sg.np, cl = new Float32Array(n);
   for (let i = 1; i < n; i++) cl[i] = cl[i - 1] + Math.hypot(P[2 * i] - P[2 * i - 2], P[2 * i + 1] - P[2 * i - 1]);
-  const ds = [];   // こまかい点：もとの点と、0.3マスより長い区間は等分（高さは ここで出して、あいだは まっすぐ）
-  for (let i = 0; i < n; i++) { ds.push(cl[i]); if (i < n - 1) { const D = cl[i + 1] - cl[i], m = Math.ceil(D / 0.3 - 1e-6); for (let k = 1; k < m; k++) ds.push(cl[i] + D * k / m); } }
-  C = { sg, P, np: n, cl, len: n ? cl[n - 1] : 0, ds: Float32Array.from(ds), rt: new Float32Array(ds.length), wf: new Uint8Array(ds.length), gen: -1,
+  const ds = [], MC = window.MapCurve;   // こまかい点：もとの点と、0.3マスより長い区間は等分。曲がっているところは もっと こまかく（なめらかな形。t70）
+  for (let i = 0; i < n; i++) { ds.push(cl[i]); if (i < n - 1) { const D = cl[i + 1] - cl[i], m = MC ? MC.parts(sg, i) : Math.ceil(D / 0.3 - 1e-6); for (let k = 1; k < m; k++) ds.push(cl[i] + D * k / m); } }
+  C = { sg, P, np: n, cl, len: n ? cl[n - 1] : 0, ds: Float32Array.from(ds), cver: MC ? MC.ver() : 0, rt: new Float32Array(ds.length), wf: new Uint8Array(ds.length), gen: -1,
         nrm: new Float32Array(2 * n), poles: null, sp: spec(sg), sta: [], xr: [], cv: [null, null], cuts: [] };
   SC.set(sg, C); return C;
 }
@@ -77,6 +77,9 @@ function loc(C, s) {
 // 線の上の s の点・向き（t）・左向き（n：つぎめで となりとそろえた法線。曲がりで少し長い）
 function at(C, s, o) {
   const P = C.P, i = loc(C, s), j = Math.min(C.np - 1, i + 1), D = C.cl[j] - C.cl[i], f = D > 1e-9 ? Math.max(0, Math.min(1, (s - C.cl[i]) / D)) : 0;
+  if (window.MapCurve && j > i) {   // なめらかな形（t70）：左向きは 向きに 直角（長さ 1）
+    window.MapCurve.seg(C.sg, i, f, o); o.nx = o.ty; o.ny = -o.tx; o.s = s; return o;
+  }
   const ax = P[2 * i], ay = P[2 * i + 1], bx = P[2 * j], by = P[2 * j + 1], L = Math.hypot(bx - ax, by - ay);
   o.x = ax + (bx - ax) * f; o.y = ay + (by - ay) * f;
   if (L > 1e-9) { o.tx = (bx - ax) / L; o.ty = (by - ay) / L; } else { o.tx = -C.nrm[2 * i + 1]; o.ty = C.nrm[2 * i]; }
@@ -1569,11 +1572,19 @@ function off(sg, k, s, sd, tr) {
   const C = segC(sg); if (!C.sp) C.sp = spec(sg);
   const n = C.sp.n, d = sd < 0 ? -1 : 1;
   if (s == null) return n === 1 ? 0 : C.sp.sp / 2 * U;
-  const j = n === 1 ? 0 : n === 2 ? (d > 0 ? 0 : 1) : (d > 0 ? 1 : 2);
+  // 複々線（t70）：各駅にとまる あいだは 外がわ（緩行線。ホームがある）・駅を とばす あいだは 内がわ（急行線）
+  const q4 = n === 4, j = n === 1 ? 0 : n === 2 ? (d > 0 ? 0 : 1) : (tr && tr.loc ? (d > 0 ? 0 : 3) : (d > 0 ? 1 : 2));
   const own = () => conv(C, s, C.sta.length ? mainOff(C, s, j) : C.sp.offs[j]);   // ふだんの本線（線 C の座標・m）
   if (tr && C.sta.length) for (const e of C.sta) {
     const L = e.t._L; if (!L) continue;
-    let no = 0; for (let i = 0; i + 1 < tr.length; i += 2) if (tr[i] === e.t.id) no = tr[i + 1];
+    let no = 0, stop = false; for (let i = 0; i + 1 < tr.length; i += 2) if (tr[i] === e.t.id) { no = tr[i + 1]; stop = true; }
+    if (!no && q4 && stop && L.mains) {   // 複々線の駅に とまる（番線が 決まっていない）：その向きの 外がわの本線（ホームのある線）へ。内がわ（中線）には とまらない
+      const ow = own(), tg = conv(C, s, mainOff(C, s, d > 0 ? 0 : 3)); if (Math.abs(tg - ow) < 0.05) continue;
+      const a = Math.abs(e.dir * (s - e.sRef) * 50), Rw = Math.max(40, Math.min(110, 30 + Math.abs(tg - ow) * 6));
+      if (a <= L.Lh) return d * tg * U;
+      if (a < L.Lh + Rw) return d * (ow + (tg - ow) * (1 - smooth((a - L.Lh) / Rw))) * U;
+      continue;
+    }
     if (!no) continue;
     const dm = e.dir * (s - e.sRef) * 50, q = L.sids.find(x => x.slot === no - 1);
     if (q) { const o = sidO(q, L.Lh, dm, L); if (o != null) return d * e.dir * o * U; continue; }

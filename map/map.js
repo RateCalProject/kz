@@ -486,12 +486,77 @@ function needCells() {
     for (const [k] of all.slice(0, S.cells.size - 400)) S.cells.delete(k);
   }
 }
+/* ---------- 線路の なめらかな形（t70）：点と点のあいだを エルミート曲線に（点の 1/100 マスの まるめで ガクガクしない）。
+   点での向き：前後の区間の向きの まん中。線のはし：節点で まっすぐ つづく線と そろえる（分かれる線は 本線の向きに そって 出る＝分岐）。
+   s（はじめからの 折れ線の長さ）で 場所を決める（駅・縦断の s は そのまま）。3D の線路（m3rail.js）・列車の線も これを使う（window.MapCurve） ---------- */
+const MapCurve = (() => {
+  const NI = new Map(); let ver = 0;   // 節点 → Map(線の id → 線)
+  function reg(s) { if (s.k !== 'rail') return; for (const nd of [s.n0, s.n1]) if (nd != null) { let m = NI.get(nd); if (!m) NI.set(nd, m = new Map()); if (m.get(s.id) !== s) { m.set(s.id, s); ver++; } } }
+  // 線のはしの向き（はしの点から 線の中へ。長さ 1）
+  function edir(s, e) {
+    const P = s.P, n = s.np, i0 = e ? n - 1 : 0;
+    for (let k = 1; k < n; k++) { const j = e ? n - 1 - k : k, dx = P[2 * j] - P[2 * i0], dy = P[2 * j + 1] - P[2 * i0 + 1], L = Math.hypot(dx, dy); if (L > 0.01) return [dx / L, dy / L]; }
+    return [1, 0];
+  }
+  // はし e の向き（s の ふえる向き。長さ 1）
+  function endTan(s, e) {
+    if (s._etv === ver && s._et) return s._et[e];
+    const out = [null, null];
+    for (const e2 of [0, 1]) {
+      const d0 = edir(s, e2), own = e2 ? [-d0[0], -d0[1]] : d0, nd = e2 ? s.n1 : s.n0, m = nd != null ? NI.get(nd) : null;
+      out[e2] = own;
+      if (!m || m.size < 2) continue;
+      const L = []; for (const o of m.values()) { if (!(o.np >= 2)) continue; if (o.n0 === nd) L.push({ o, d: edir(o, 0), me: o === s && e2 === 0 }); if (o.n1 === nd) L.push({ o, d: edir(o, 1), me: o === s && e2 === 1 }); }
+      let A = null, B = null, best = -0.6;   // 本線：いちばん まっすぐ つづく 2本
+      for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) { const dd = L[i].d[0] * L[j].d[0] + L[i].d[1] * L[j].d[1]; if (dd < best) { best = dd; A = L[i]; B = L[j]; } }
+      if (!A) continue;
+      let tx = B.d[0] - A.d[0], ty = B.d[1] - A.d[1]; const tl = Math.hypot(tx, ty); if (tl < 1e-6) continue; tx /= tl; ty /= tl;   // 本線の向き（A → B）
+      const isMain = A.me || B.me;
+      const c = own[0] * tx + own[1] * ty, sg = c >= 0 ? 1 : -1;
+      if (isMain || Math.abs(c) > 0.94) out[e2] = [tx * sg, ty * sg];   // 分かれる線：本線との角度が 20度まで なら 本線の向きで 出る
+    }
+    s._et = out; s._etv = ver; return out[e];
+  }
+  // 点 i の向き（s の ふえる向き）
+  function vTan(s, i) {
+    const P = s.P, n = s.np;
+    if (i <= 0) return endTan(s, 0);
+    if (i >= n - 1) return endTan(s, 1);
+    let ax = P[2 * i] - P[2 * i - 2], ay = P[2 * i + 1] - P[2 * i - 1], bx = P[2 * i + 2] - P[2 * i], by = P[2 * i + 3] - P[2 * i + 1];
+    const la = Math.hypot(ax, ay) || 1, lb = Math.hypot(bx, by) || 1; ax /= la; ay /= la; bx /= lb; by /= lb;
+    const tx = ax + bx, ty = ay + by, L = Math.hypot(tx, ty);
+    return L > 1e-6 ? [tx / L, ty / L] : [bx, by];
+  }
+  // 区間 i（点 i → i+1）の f（0〜1）の点と向き → o.x, o.y, o.tx, o.ty
+  function seg(s, i, f, o) {
+    const P = s.P, ax = P[2 * i], ay = P[2 * i + 1], bx = P[2 * i + 2], by = P[2 * i + 3], D = Math.hypot(bx - ax, by - ay);
+    if (!(D > 1e-9)) { o.x = ax; o.y = ay; const t = vTan(s, i); o.tx = t[0]; o.ty = t[1]; return o; }
+    const ta = vTan(s, i), tb = vTan(s, i + 1), t = f, t2 = t * t, t3 = t2 * t;
+    const h00 = 2 * t3 - 3 * t2 + 1, h10 = t3 - 2 * t2 + t, h01 = -2 * t3 + 3 * t2, h11 = t3 - t2;
+    o.x = h00 * ax + h10 * D * ta[0] + h01 * bx + h11 * D * tb[0];
+    o.y = h00 * ay + h10 * D * ta[1] + h01 * by + h11 * D * tb[1];
+    const d00 = 6 * t2 - 6 * t, d10 = 3 * t2 - 4 * t + 1, d01 = -6 * t2 + 6 * t, d11 = 3 * t2 - 2 * t;
+    let dx = d00 * ax + d10 * D * ta[0] + d01 * bx + d11 * D * tb[0], dy = d00 * ay + d10 * D * ta[1] + d01 * by + d11 * D * tb[1];
+    const L = Math.hypot(dx, dy); if (L > 1e-9) { dx /= L; dy /= L; } else { dx = (bx - ax) / D; dy = (by - ay) / D; }
+    o.tx = dx; o.ty = dy; return o;
+  }
+  // 区間 i を いくつに 分けると なめらか か（1つ 0.3度まで・0.3マスまで・1.5m より 短くしない）
+  function parts(s, i) {
+    const P = s.P, D = Math.hypot(P[2 * i + 2] - P[2 * i], P[2 * i + 3] - P[2 * i + 1]), a = vTan(s, i), b = vTan(s, i + 1);
+    const ch = D > 1e-9 ? [(P[2 * i + 2] - P[2 * i]) / D, (P[2 * i + 3] - P[2 * i + 1]) / D] : a;
+    const ang = Math.acos(Math.max(-1, Math.min(1, a[0] * ch[0] + a[1] * ch[1]))) + Math.acos(Math.max(-1, Math.min(1, b[0] * ch[0] + b[1] * ch[1])));
+    return Math.max(1, Math.min(Math.ceil(D / 0.03), Math.max(Math.ceil(D / 0.3 - 1e-6), Math.ceil(ang / 0.0052))));
+  }
+  return { reg, seg, parts, vTan, endTan, ver: () => ver };
+})();
+window.MapCurve = MapCurve;
 // 線を描きやすく（点をマスの小数に）
 function prepSeg(s) {
   const p = s.p, n = p.length / 2, P = new Float32Array(p.length);
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (let i = 0; i < p.length; i += 2) { const x = p[i] / 100, y = p[i + 1] / 100; P[i] = x; P[i + 1] = y; if (x < x0) x0 = x; if (y < y0) y0 = y; if (x > x1) x1 = x; if (y > y1) y1 = y; }
   s.P = P; s.bb = [x0, y0, x1, y1]; s.np = n;
+  MapCurve.reg(s);   // 線路の なめらかな形（t70）：節点の つながり
   // 高さ（t108）：縦断のある線は、点ごとの長さ（マス）と、つくりの区間 [はじめの点, おわりの点, G 地面（切り通し C もふくむ）・V 高架・T トンネル・B 橋]
   s.runs = null; s.L = null;
   if (s.pf) {
@@ -1732,13 +1797,15 @@ function subPts(s, s0, s1) {
 }
 // subPts と同じ点に、線の上の s（マス）をつけて：[[x, y, s], …]（3D の列車の高さ。t64）
 function subPtsS(s, s0, s1) {
-  const P = s.P, out = []; let acc = 0;
+  const P = s.P, out = [], rl = s.k === 'rail', o = {}; let acc = 0;   // 線路は なめらかな形の上の点を こまかく（t70）
+  const pt = (i, t, d) => { if (rl) { MapCurve.seg(s, i, t, o); return [o.x, o.y, acc + d * t]; } return [P[2 * i] + (P[2 * i + 2] - P[2 * i]) * t, P[2 * i + 1] + (P[2 * i + 3] - P[2 * i + 1]) * t, acc + d * t]; };
   for (let i = 0; i + 1 < s.np; i++) {
     const ax = P[2 * i], ay = P[2 * i + 1], bx = P[2 * i + 2], by = P[2 * i + 3], d = Math.hypot(bx - ax, by - ay);
     if (acc + d >= s0 && acc <= s1) {
       const t0 = clamp((s0 - acc) / (d || 1), 0, 1), t1 = clamp((s1 - acc) / (d || 1), 0, 1);
-      if (!out.length) out.push([ax + (bx - ax) * t0, ay + (by - ay) * t0, acc + d * t0]);
-      out.push([ax + (bx - ax) * t1, ay + (by - ay) * t1, acc + d * t1]);
+      if (!out.length) out.push(pt(i, t0, d));
+      if (rl) { const m = MapCurve.parts(s, i); for (let k = 1; k < m; k++) { const t = k / m; if (t > t0 + 1e-6 && t < t1 - 1e-6) out.push(pt(i, t, d)); } }
+      out.push(pt(i, t1, d));
     }
     acc += d;
   }
