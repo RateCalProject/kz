@@ -270,7 +270,7 @@
       else {   // 前・横：左に 種別（色の わく）・右に 行先
         const kw = Math.round(w * 0.32);
         g.fillStyle = kc; g.fillRect(3, y0 + 3, kw - 6, h - 6); g.fillStyle = '#0b0c0d'; fitText(g, kd, kw / 2, y0 + h / 2 + 1, kw - 12, h - 12);
-        g.fillStyle = '#f2f5f7'; fitText(g, dest ? dest + (kind === 'side' ? ' 行' : '') : '', kw + (w - kw) / 2, y0 + h / 2 + 1, w - kw - 10, h - 10, 600);
+        g.fillStyle = '#f2f5f7'; fitText(g, dest, kw + (w - kw) / 2, y0 + h / 2 + 1, w - kw - 10, h - 10, 600);   // 「行」は つけない（快速｜東京）
       }
       if (LED.tx[kind]) LED.tx[kind].needsUpdate = true;
     }

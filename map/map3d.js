@@ -1798,7 +1798,7 @@ function m3Runs(v) {
       else if (sg) { const th = m3OnLine(sg, ref[1], p[0], p[1]); hide = th.c === 'T' && !M3.ug; y = (th.c === 'V' || th.c === 'B' ? th.y : Math.max(th.y, m3Surf(px, pz))) + M3_LIFT + 0.1 * M3_U; }
       else y = m3Surf(px, pz) + M3_LIFT + 0.1 * M3_U;
       if (k === 'air') { const f = o.H.len > 0 ? o.d / o.H.len : 0; y = Math.max(y, Math.min(1, 6 * f, 6 * (1 - f)) * 900 * M3_U); }   // 飛行機：まん中は 900m の高さ
-      if (hide) { if (c === 0 && sel) selP = [px, m3Surf(px, pz) + hh, pz, ww]; continue; }   // トンネルの中：えらんだ列車は しるしだけ（地上に）
+      if (hide && M3.rideK !== o.R.id + ':' + o.T.id) { if (c === 0 && sel) selP = [px, m3Surf(px, pz) + hh, pz, ww]; continue; }   // トンネルの中：えらんだ列車は しるしだけ（地上に）。自分が 乗っている 列車は 見せる（t70）
       pos.set(px, y + hh / 2, pz); q.setFromAxisAngle(up, -p[2]); sc.set(cl - gap, hh, ww);
       m.compose(pos, q, sc); M3.run.setMatrixAt(i, m); M3.run.setColorAt(i, col); i++;
       { const dp = k === 'rail' ? m3DoorOpen(o) : 0, hm = (cl - gap) / 2 / M3_U;   // 歩く人の 当たり判定（t70）：向き・長さ・はば・高さ。乗りおり：止まっていれば 両がわの ドア（モデルのない列車）
@@ -1866,16 +1866,16 @@ function m3RunCars(o, md, it, sel) {
   };
   let selP = null;
   // ドア（t70）：駅に止まっているあいだ、着いて 3秒から ひらき、出る 4秒前に しまる。ホームのある がわだけ
-  const dp = m3DoorOpen(o); let sd = null;
-  if ((dp > 0 || (M3.nightW || 0) > 0.03) && MD && MD.pfSide) {   // ホームのある がわ（ドア・夜の 窓の光）
-    const rf = runRef(o.H, o.d - o.len / 2), sg = rf ? it.segs.get(rf[0]) : null; if (sg) sd = MD.pfSide(sg, rf[1], MD.off(sg, 'rail', rf[1], rf[2], trs), rf[2]); }
+  const dp = m3DoorOpen(o), wantSd = (dp > 0 || (M3.nightW || 0) > 0.03) && MD && MD.pfSide;
+  const sideAt = d => { const rf = runRef(o.H, d), sg = rf ? it.segs.get(rf[0]) : null; return sg ? MD.pfSide(sg, rf[1], MD.off(sg, 'rail', rf[1], rf[2], trs), rf[2]) : null; };   // ホームのある がわ（1両ごと：ホームが みじかい駅では ホームの外の 車両は ドアを ひらかない）
   const led = o.yard ? { key: o.R.id + ':' + o.T.id + ':y', kind: '回送', dest: '', num: '' } : { key: o.R.id + ':' + o.T.id, kind: o.T.kind || '普通', dest: runDest(o.R, o.T), num: o.T.num };   // 行先表示器（t70）
   for (let k = 0; k < n; k++) {
     const e = comp[fwd ? k : n - 1 - k], c = dC + ((n - 1) / 2 - k) * P, a = pt(c + Bg), b = pt(c - Bg);
+    const sd = wantSd ? sideAt(c) : null;
     const fl = fwd ? e.r : !e.r, pL = !!(sd && (fl ? sd.r : sd.l)), pR = !!(sd && (fl ? sd.l : sd.r));
     const gk = o.R.id + ':' + o.T.id + ':' + k;
     const X = { hd: !o.yard && k === 0 && !fl, tl: !o.yard && k === n - 1 && fl, oL: pL ? dp : 0, oR: pR ? dp : 0, pL, pR, gF: m3Gw(gk + 'F'), gR: m3Gw(gk + 'R'), led };   // fl：運転台が うしろ向き（車両の +Z は 運転台から見て 右）
-    if (a[3] || b[3]) { if (k === 0 && sel) selP = [a[0], m3Surf(a[0], a[2]) + hh, a[2], cw * M3_U]; continue; }   // トンネルの中
+    if ((a[3] || b[3]) && M3.rideK !== o.R.id + ':' + o.T.id) { if (k === 0 && sel) selP = [a[0], m3Surf(a[0], a[2]) + hh, a[2], cw * M3_U]; continue; }   // トンネルの中（自分が 乗っている 列車は 見せる。t70）
     const dx = a[0] - b[0], dz = a[2] - b[2], L = Math.hypot(dx, dz) || 1e-6, x = (a[0] + b[0]) / 2, y = (a[1] + b[1]) / 2, z = (a[2] + b[2]) / 2;
     C.q.setFromAxisAngle(C.up, -Math.atan2(dz, dx));
     C.q2.setFromAxisAngle(C.ax, Math.atan2(a[1] - b[1], L)); C.q.multiply(C.q2);   // 坂：前の台車が高ければ 前が上
