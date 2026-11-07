@@ -8613,6 +8613,9 @@ const dtL = at => { const t = new Date(at); return t.toLocaleDateString('sv-SE',
 const histL = h => { const d = h.d || {};
   return h.k === 'new' ? T(`新製（${d.dep || ''}に配置）`) : h.k === 'move' ? (d.how === '陸送' ? T(`転属：${d.dep || ''} → ${d.to || ''}（陸送）`) : T(`転属：${d.dep || ''} → ${d.to || ''}（回送）`))
     : h.k === 'xfer' ? T(`譲渡：${d.from || ''}から${d.to || ''}へ（${d.num0 || ''} → ${h.num}）`) : h.k === 'scrap' ? T(`${d.dep || ''}で廃車`) : h.k === 'renum' ? T(`改番：${d.num0 || ''} → ${h.num}`) : h.k; };
+const xlOn = () => (S.dbv || 0) >= 126, howT = h => T(h === '回送' ? '線路で回送' : h);   // 譲渡の輸送費・社長の会社の車庫・転属履歴（DB の更新126）
+const mvL = r => { const d = r.d || {};
+  return r.k === 'move' ? T(`転属：${d.dep || ''} → ${d.to || ''}（${howT(d.how || '回送')}）`) : T(`譲渡：${d.from || ''}から${d.to || ''}へ（${d.dep || ''}・${howT(d.how || '陸送')}）`); };
 function carLog(title, L) {
   modal([title, `<div class="mp-list">${L.map(c => `<div class="mp-item"><b translate="no">${esc(c.num)}</b> <small class="muted" translate="no">${esc(c.label || '')}</small>
       <div class="small" style="margin-top:4px">${(c.rows || []).map(h => `<div><span class="muted" style="margin-right:8px">${esc(dtL(h.at))}</span><span>${esc(histL(h))}</span></div>`).join('') || '<span class="muted">記録がありません</span>'}</div></div>`).join('')
@@ -8698,24 +8701,38 @@ async function openXfers() {
   const item = (x, inc) => { const p = x.perf || {}; return `<div class="mp-item">${x.loose ? `<b>${esc(T(`車両 ${x.n}両`))}</b>` : `<b>${esc(x.fname)}</b> <small><span>${p.air ? `長さ${p.len}m・${fmt(p.cap || 0)}席` : p.ship ? `長さ${p.len}m・旅客${fmt(p.cap || 0)}人` : p.rail === false ? `${p.n}台・${p.len}m・定員${fmt(p.cap || 0)}人` : `${p.n}両・${p.len}m・定員${fmt(p.cap || 0)}人・加速 ${p.acc}km/h/s・最高${p.vmax}km/h`}</span><span>・状態${p.cond}</span></small>`}<br>
       <small><span>${esc(x.from)}</span> → <span>${esc(x.to)}</span>・<span>${X(x.price)}</span>・<b class="${x.st === 'no' ? 'mp-warn' : ''}">${esc(XST[x.st] || x.st)}</b></small>
       ${x.cars ? `<br><small class="muted">${x.cars.map(esc).join('・')}</small>` : ''}${x.msg ? `<br><small>ひとこと：<span>${esc(x.msg)}</span></small>` : ''}
-      ${inc && x.st === 'offer' && open === x.id ? `<div class="mp-row small" style="align-items:center"><span>車庫</span><select class="mp-inp" style="flex:1 1 140px" data-xd>${deps.map(d => `<option value="${d.id}" ${d.n + (x.loose ? x.n : (p.n || 0)) > d.cap ? 'disabled' : ''}>${esc(d.name)}（${d.n}/${d.cap}）</option>`).join('') || '<option value="">（入れられる車庫がありません）</option>'}</select></div>
+      ${inc && x.st === 'offer' && open === x.id ? `<div class="mp-row small" style="align-items:center"><span>車庫</span><select class="mp-inp" style="flex:1 1 140px" data-xd>${deps.map(d => `<option value="${d.id}" ${d.n + (x.loose ? x.n : (p.n || 0)) > d.cap ? 'disabled' : ''}>${esc(d.name)}${d.co ? `［${esc(d.co)}］` : ''}（${d.n}/${d.cap}）${d.ship ? `・${esc(howT(d.ship.how))} ${fmt(d.ship.cost)} X・${d.ship.hours}${esc(T('時間'))}` : ''}</option>`).join('') || '<option value="">（入れられる車庫がありません）</option>'}</select></div>
+        ${deps.some(d => d.co) ? '<p class="muted small" style="margin:2px 0">［会社名］の車庫をえらぶと、その会社が受けとります（代金・輸送費も会社から）</p>' : ''}
         <div class="mp-row">${x.loose ? '' : '<input class="mp-inp" style="flex:1 1 120px" data-xn placeholder="新しい編成番号（なければ今のまま）">'}<button class="btn main" data-xgo="${x.id}" ${deps.length ? '' : 'disabled'}>受けとる（${X(x.price)}）</button></div>` : ''}
       ${x.st === 'offer' ? `<div class="mp-row">${inc ? (open !== x.id ? `<button class="btn main" data-xok="${x.id}">受けとる</button>` : '') + `<button class="btn" data-xno="${x.id}">ことわる</button>` : `<button class="btn" data-xno="${x.id}">取り消す</button>`}</div>` : ''}</div>`; };
+  const XTABS = () => [['in', 'とどいた申しこみ'], ['out', '出した申しこみ'], ...(xlOn() ? [['log', '転属履歴']] : [])];
+  const tabsH = () => `<div class="tabs-s">${XTABS().map(t => `<button data-tab="${t[0]}" class="${tab === t[0] ? 'on' : ''}"><span>${t[1]}</span></button>`).join('')}</div>`;
+  const drawLog = async () => {   // 転属・譲渡の履歴（この名義。DB の更新126）
+    const tb = b => b.querySelectorAll('[data-tab]').forEach(x => x.onclick = () => { tab = x.dataset.tab; open = null; draw(); });
+    m.set('編成の譲渡', tabsH() + '<p class="muted small">読みこんでいます…</p>', tb);
+    const L = await api('mp_move_log', { p_as: S.as }); if (!L || tab !== 'log') return;
+    m.set('編成の譲渡', tabsH() + `<div class="mp-list" style="margin-top:8px">${L.map(r => `<div class="mp-item"><small class="muted">${esc(dtL(r.at))}</small> <b>${esc(mvL(r))}</b>
+          <br><small translate="no">${(r.nums || []).slice(0, 16).map(esc).join('・')}${r.n > 16 ? ' …' : ''}</small> <small>（<span>${esc(T(`${r.n}両`))}</span>）</small></div>`).join('') || '<p class="muted small">ありません</p>'}</div>
+      <p class="muted small">いまの名義の車両の、転属（回送・陸送）と譲渡の記録です（新しい順に200件）。1両ずつの記録は、車両の「車歴」で見られます</p>`, tb);
+  };
   const draw = () => {
+    if (tab === 'log') return drawLog();
     const L = tab === 'in' ? D.in : D.out, nw = D.in.filter(x => x.st === 'offer').length;
-    m.set('編成の譲渡', `<div class="tabs-s">${[['in', 'とどいた申しこみ'], ['out', '出した申しこみ']].map(t => `<button data-tab="${t[0]}" class="${tab === t[0] ? 'on' : ''}"><span>${t[1]}</span>${t[0] === 'in' && nw ? ` <b>${nw}</b>` : ''}</button>`).join('')}</div>
+    m.set('編成の譲渡', `<div class="tabs-s">${XTABS().map(t => `<button data-tab="${t[0]}" class="${tab === t[0] ? 'on' : ''}"><span>${t[1]}</span>${t[0] === 'in' && nw ? ` <b>${nw}</b>` : ''}</button>`).join('')}</div>
       <div class="mp-list" style="margin-top:8px">${L.map(x => item(x, tab === 'in')).join('') || '<p class="muted small">ありません</p>'}</div>
-      <p class="muted small">${tab === 'in' ? '受けとるときに、車籍を置く車庫をえらびます（陸送で12時間）。車番は、受けとる側の続きの番号になります' : '編成をゆずるには、≡ →「車両と編成」の編成の「ゆずる」から。編成に入っていない車両は、えらんで「ゆずる」'}</p>`, b => {
+      <p class="muted small">${tab === 'in' ? (xlOn() ? '受けとるときに、車籍を置く車庫をえらびます。線路がつながっていなくても、輸送費をはらえば どこの車庫へも送れます（同じ線路なら回送・2時間、ちがえば陸送・12時間）。車番は、受けとる側の続きの番号になります' : '受けとるときに、車籍を置く車庫をえらびます（陸送で12時間）。車番は、受けとる側の続きの番号になります') : '編成をゆずるには、≡ →「車両と編成」の編成の「ゆずる」から。編成に入っていない車両は、えらんで「ゆずる」'}</p>`, b => {
       b.querySelectorAll('[data-tab]').forEach(x => x.onclick = () => { tab = x.dataset.tab; open = null; draw(); });
       b.querySelectorAll('[data-xok]').forEach(x => x.onclick = async () => {
         const it = D.in.find(y => y.id === Number(x.dataset.xok));
+        if (xlOn()) { const r = await api('mp_xfer_deps', { p_id: it.id }); if (!r) return; deps = r.deps || []; open = it.id; return draw(); }   // 輸送費つき・社長の会社の車庫も（DB の更新126）
         const cl = await api('mp_cars_list', { p_as: it.to_as }); if (!cl) return;
         const want = it.loose ? (it.rail !== false ? 'rail' : 'bus') : (fKind(it) || 'rail');   // 船は港へ（t54o）
         deps = cl.depots.filter(d => d.kind === want); open = it.id; draw();
       });
       b.querySelectorAll('[data-xgo]').forEach(x => x.onclick = async () => {
         const dep = Number(b.querySelector('[data-xd]').value); if (!dep) return toast('車庫をえらんでください');
-        const xn = b.querySelector('[data-xn]');
+        const xn = b.querySelector('[data-xn]'), dd = deps.find(d => d.id === dep), it = D.in.find(y => y.id === Number(x.dataset.xgo)) || {};
+        if (dd && dd.ship && !confirm(T(`「${dd.name}」へ送ります（${howT(dd.ship.how)}・${dd.ship.hours}時間）。代金 ${fmt(it.price || 0)} X と 輸送費 ${fmt(dd.ship.cost)} X をはらいます`) + (dd.co ? '\n' + T(`${dd.co}が受けとります`) : ''))) return;
         if (await api('mp_xfer_accept', { p_id: Number(x.dataset.xgo), p_depot: dep, p_name: xn ? xn.value : '' }, '受けとりました')) { open = null; load(); }
       });
       b.querySelectorAll('[data-xno]').forEach(x => x.onclick = async () => { if (confirm(T(tab === 'in' ? 'ことわりますか？' : '取り消しますか？')) && await api('mp_xfer_close', { p_id: Number(x.dataset.xno) }, tab === 'in' ? 'ことわりました' : '取り消しました')) load(); });

@@ -479,6 +479,20 @@ function blocked(x, y) {   // 人が入れない（たてものの区画）
   const r = 0.28 * U;
   return W.blk.has(cellK(x - r, y - r)) || W.blk.has(cellK(x + r, y - r)) || W.blk.has(cellK(x - r, y + r)) || W.blk.has(cellK(x + r, y + r));
 }
+// 列車・バスの 当たり判定（t70）：車両の箱（M3.runHit。向き ux・uz、半分の長さ hl・はば hw、高さ y0〜y1）。人の はば r と 足の高さ f で
+//   重なる箱と、外へ出る向き（いちばん近い 横・はし）を かえす
+function trainAt(x, y, f, r) {
+  const L = (M3 || window.m3State || {}).runHit; if (!L || !L.length) return null;
+  r = r == null ? 0.3 * U : r;
+  for (const h of L) {
+    if (h.hl == null || f > h.y1 - 0.2 * U || f < h.y0 - 1.6 * U) continue;   // 屋根より上・ずっと下（高架の下など）は 当たらない
+    const ex = x - h.x, ez = y - h.z; if (Math.abs(ex) > h.hl + h.hw + r || Math.abs(ez) > h.hl + h.hw + r) continue;
+    const a = ex * h.ux + ez * h.uz, b = -ex * h.uz + ez * h.ux, pa = h.hl + r - Math.abs(a), pb = h.hw + r - Math.abs(b);
+    if (pa <= 0 || pb <= 0) continue;
+    return pb < pa ? { h, nx: -h.uz * Math.sign(b || 1), ny: h.ux * Math.sign(b || 1), d: pb } : { h, nx: h.ux * Math.sign(a || 1), ny: h.uz * Math.sign(a || 1), d: pa };
+  }
+  return null;
+}
 function wetAt(x, y) { const tl = MI.tileAt(Math.floor(x), Math.floor(y)); return !!(tl && (tl.t === 'D' || tl.t === 'S' || tl.t === 'R' || tl.t === 'L')); }
 // たてものの中・水の中にいたら、近くの 歩けるところへ（5m ごとに まわりを さがす。300m まで）
 function unstuck() {
@@ -531,13 +545,15 @@ function step() {
     let da = Math.atan2(dx, dz) - W.h; while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI;
     W.h += clamp(da, -10 * dt, 10 * dt);
     const v = I.m * (I.cr ? SPD.sneak : I.run ? SPD.run : SPD.walk), d = v * dt * U, wet0 = wetAt(W.x, W.y);
-    const tryTo = (nx, ny) => { if (blocked(nx, ny)) return null; const g = groundAt(nx, ny, W.f, wet0); return g == null ? null : [nx, ny, g]; };
+    const tryTo = (nx, ny) => { if (blocked(nx, ny)) return null; if (trainAt(nx, ny, W.f) && !trainAt(W.x, W.y, W.f)) return null; const g = groundAt(nx, ny, W.f, wet0); return g == null ? null : [nx, ny, g]; };   // 列車には 入れない（t70）
     let r = tryTo(W.x + dx * d, W.y + dz * d);
     if (!r && Math.abs(dx) > 0.15) r = tryTo(W.x + Math.sign(dx) * d * Math.abs(dx), W.y);   // かべに そって
     if (!r && Math.abs(dz) > 0.15) r = tryTo(W.x, W.y + Math.sign(dz) * d * Math.abs(dz));
     if (r) { spd = Math.hypot(r[0] - W.x, r[1] - W.y) / U / Math.max(dt, 1e-3); W.x = r[0]; W.y = r[1]; W.gt = r[2]; }
     W.lastRun = I.run;
   }
+  // 走ってくる列車に 当たったら、横へ おしだされる（t70。線路の上に 立たないで）
+  { const hc = trainAt(W.x, W.y, W.f); if (hc) { const nx = W.x + hc.nx * (hc.d + 0.02 * U), ny = W.y + hc.ny * (hc.d + 0.02 * U); if (!blocked(nx, ny)) { W.x = nx; W.y = ny; W.bump = t; } } }
   // 高さ：のぼるのは すぐ・おりるのは 落ちる（重力）。ジャンプ（fv < 0）で 上へ
   const g = W.gt != null && spd > 0 ? W.gt : groundAt(W.x, W.y, W.f, true);
   W.gt = null;
@@ -1229,6 +1245,6 @@ function stop(fromClose) {
   if (onChange) onChange(false);
 }
 
-window.Walk = { start, stop, ask, join, on: () => !!W, dbg: () => (W ? { x: W.x, y: W.y, f: W.f, ix: W.ix ? { n: W.ix.tri.length / 9, ms: W.ix.ms } : null, blk: W.blk ? W.blk.size : 0, others: W.others.size, ol: [...W.others.values()].map(o => [o.m, o.it || 0, !!o.say]), me: !!(W.me && W.me.k), item: W.item, cr: !!W.cr, air: !!W.air } : null), cat: catLoad, onChange: f => { onChange = f; }, mmd: mmdLoad, mkBase: (look, hl) => { T3 = T3 || window.THREE; return mkBase(look, hl); }, poseBase,
+window.Walk = { start, stop, ask, join, on: () => !!W, hit: (x, y, f) => { const h = trainAt(x, y, f); return h ? { nx: h.nx, ny: h.ny, d: h.d } : null; }, dbg: () => (W ? { x: W.x, y: W.y, f: W.f, ix: W.ix ? { n: W.ix.tri.length / 9, ms: W.ix.ms } : null, blk: W.blk ? W.blk.size : 0, others: W.others.size, ol: [...W.others.values()].map(o => [o.m, o.it || 0, !!o.say]), me: !!(W.me && W.me.k), item: W.item, cr: !!W.cr, air: !!W.air } : null), cat: catLoad, onChange: f => { onChange = f; }, mmd: mmdLoad, mkBase: (look, hl) => { T3 = T3 || window.THREE; return mkBase(look, hl); }, poseBase,
   mkMMD: e => { T3 = T3 || window.THREE; return mkMMD(e); }, poseMMD, poseAv, ITEMS, HAIR, SKIN };
 })();

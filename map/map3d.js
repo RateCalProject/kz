@@ -515,9 +515,13 @@ function m3Carve(mesh, cx, cy, st, segs, roads) {
     const px = ax + ux * t, py = ay + uy * t, d = Math.hypot(x - px, z - py); if (d > R) return y;
     const s = acc + t;
     let zr, c = 'G';
-    if (vp) { c = m3VC(vp, s); if (c !== 'G' && c !== 'C') return y; zr = m3VZ(vp, s); }   // 縦断のない線：仮の縦断と その つくり（t67）
-    else { c = sg.st[Math.min(sg.st.length - 1, Math.max(0, Math.round(s)))] || 'G'; if (c !== 'G' && c !== 'C') return y; zr = pfZ(sg.pf, s); }
-    const zw = zr * M3_U * M3_VEX, deep = c === 'C' || y - zw > 4 * M3_U * M3_VEX;   // 深いところ（4m より）は 切り通しと おなじ けずりかた
+    if (vp) { c = m3VC(vp, s); if (c === 'T') return y; zr = m3VZ(vp, s); }   // 縦断のない線：仮の縦断と その つくり（t67）
+    else { c = sg.st[Math.min(sg.st.length - 1, Math.max(0, Math.round(s)))] || 'G'; if (c === 'T') return y; zr = pfZ(sg.pf, s); }
+    const zw = zr * M3_U * M3_VEX;
+    // 高架・橋（V・B）：ふだんは 地面が 橋より ずっと下なので けずらない。地形のほうが 高いとき（縦断を決めたあとに 地形が かわった など）だけ、
+    //   橋げたの 2m 下まで けずる（橋が 地形に うまらない。t70）
+    if (c === 'V' || c === 'B') { if (d > RG) return y; const lb = zw - 2 * M3_U * M3_VEX + Math.max(0, d - W0) * K; return y > lb ? lb : y; }
+    const deep = c === 'C' || y - zw > 4 * M3_U * M3_VEX;   // 深いところ（4m より）は 切り通しと おなじ けずりかた
     if (deep ? d > RC : d > RG) return y;
     const lim = zw - 0.25 * M3_U + (deep ? Math.max(0, d - W0C) * KC : Math.max(0, d - W0) * K);
     if (y <= lim) return y;
@@ -1795,7 +1799,7 @@ function m3Runs(v) {
       if (hide) { if (c === 0 && sel) selP = [px, m3Surf(px, pz) + hh, pz, ww]; continue; }   // トンネルの中：えらんだ列車は しるしだけ（地上に）
       pos.set(px, y + hh / 2, pz); q.setFromAxisAngle(up, -p[2]); sc.set(cl - gap, hh, ww);
       m.compose(pos, q, sc); M3.run.setMatrixAt(i, m); M3.run.setColorAt(i, col); i++;
-      M3.runHit.push({ o, x: px, y: y + hh / 2, z: pz });
+      M3.runHit.push({ o, x: px, y: y + hh / 2, z: pz, ...(k === 'rail' || k === 'bus' ? { ux: Math.cos(p[2]), uz: Math.sin(p[2]), hl: (cl - gap) / 2, hw: Math.min(ww / 2, (k === 'rail' ? 1.5 : 1.25) * M3_U), y0: y, y1: y + hh } : {}) });   // 歩く人の 当たり判定（t70）：向き・長さ・はば・高さ
       if (c === 0 && sel) selP = [px, y + hh, pz, ww];
     }
   }
@@ -1850,7 +1854,7 @@ function m3RunCars(o, md, it, sel) {
     C.p.set(x, y, z); C.s.set(M3_U, M3_U, M3_U); C.m.compose(C.p, C.q, C.s);
     const dd = Math.hypot(cam.x - x, cam.y - y, cam.z - z), lv = dd < nearD ? 'near' : dd < midD ? 'mid' : 'far';
     CAR.put(md, e.c, lv, C.m, col);
-    M3.runHit.push({ o, x, y: y + hh / 2, z });
+    M3.runHit.push({ o, x, y: y + hh / 2, z, ux: dx / L, uz: dz / L, hl: P / 2, hw: cw / 2 * M3_U, y0: y, y1: y + hh });   // 歩く人の 当たり判定（t70）
     if (k === 0 && sel) selP = [x, y + hh, z, cw * M3_U];
   }
   return selP;
