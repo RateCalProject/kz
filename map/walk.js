@@ -19,8 +19,13 @@ const LOST = 12000;                     // これだけ 位置が来なければ
 const SEE = 8;                          // ほかの人を描く遠さ（マス。400m）
 const TAG = 1.4;                        // 名前を出す遠さ（マス。70m）
 const MMD_CAP = 6, OTHER_CAP = 24;      // MMD のモデルで描く人数（ほかは 組み立ての人）・描く人数
-const HAIR = ['#1e1b1a', '#3b2a20', '#6b4a2f', '#a07a52', '#9a9a9a', '#1f2433'];
-const SKIN = ['#f2d3b8', '#e0b48f', '#c48c62', '#8d5a3b'];
+// 髪の色・はだの色（番号は サーバーに のこる。あとから たした色は うしろに。t70：DB の更新127 で ふやした）。HAIR_O・SKIN_O：えらぶ画面の ならび
+const HAIR = ['#1e1b1a', '#3b2a20', '#6b4a2f', '#a07a52', '#9a9a9a', '#1f2433', '#d9b86c', '#8a3b22', '#ece8df', '#c95a8c', '#3f6fb5', '#4f8a4a'];
+const SKIN = ['#f2d3b8', '#e0b48f', '#c48c62', '#8d5a3b', '#f8e2cf', '#ebc4a0', '#d6a47c', '#a8714a', '#6e4428', '#4a2c1b'];
+const HAIR_O = [0, 5, 1, 2, 3, 6, 7, 4, 8, 9, 10, 11], SKIN_O = [4, 0, 5, 1, 6, 2, 7, 3, 8, 9];
+// 髪型（t70・DB の更新127）：0 ふつう・1 みじかい・2 ボブ・3 ロング・4 ポニーテール・5 ツインテール・6 おだんご・7 ツンツン・8 ぼうず・9 もこもこ
+const HSTY = ['ふつう', 'みじかい', 'ボブ', 'ロング', 'ポニーテール', 'ツインテール', 'おだんご', 'ツンツン', 'ぼうず', 'もこもこ'];
+const v127 = () => { try { return ((MI && MI.S && MI.S.dbv) || 0) >= 127; } catch (e) { return false; } };   // サーバーの更新127 のあと
 const BASE_SKIN = { code: 'base', name: 'ふだん着', kind: 'base', rare: '-', look: { t: 'tee', c1: '#e8e4da', c2: '#4a5568', c3: '#3b3b3b' }, n: 0 };
 // 持ち物（E。t68・DB の更新122 で ほかの人にも見える）：右手に持つ。arm：右うでの形（up 前へ上げる・el ひじ・sw 歩くときの ふり）。
 //   at：手からの位置（m。人の向き：+y 上・+z 前）・rx：前後の かたむき。pmx：MMD の持ち物のモデル（only：その見た目のときだけ）
@@ -33,8 +38,10 @@ const ITEMS = [
   { ico: '💐', name: '花たば', arm: { up: 0.26, el: -1.35 }, at: [0, 0.02, 0.02], rx: 0.25 },
   { ico: '📖', name: '本', arm: { up: 0.32, el: -1.6 }, at: [0.06, 0.08, 0.04], rx: 0.45 },
   { ico: '📷', name: 'カメラ', arm: { up: 0.62, el: -2.05 }, at: [0, 0.03, 0.06] },
-  { ico: '⛩️', name: 'お祓い棒', arm: { up: 0.3, el: -1.0 }, rx: 0.12, pmx: 'map/skins/reimu/W_oonusa.pmx', only: 'map/skins/reimu/' }   // 霊夢と同じ モデルデータ集の 大幣
+  { ico: '⛩️', name: 'お祓い棒', arm: { up: 0.3, el: -1.0 }, rx: 0.12, pmx: 'map/skins/reimu/W_oonusa.pmx', only: 'map/skins/reimu/' },   // 霊夢と同じ モデルデータ集の 大幣
+  { ico: '🔦', name: '懐中電灯', arm: { up: 0.95, el: -0.28 }, at: [0, 0.01, 0.04], light: true }   // 前を 照らす（夜に 光が 見える。t70）
 ];
+const FLASH = 9;   // 懐中電灯の 番号
 // 歩きはじめる場所（t68）：この建物の前（いちばん近い 道路などの上）。x・y：建物の まん中（マス）
 const SPAWN = [
   { n: '瑠璃府庁前', x: -7.7, y: 5.5 },
@@ -109,7 +116,7 @@ function geos() {
 function mkBase(look, hl) {
   const g = geos(), T = T3, lk = look || BASE_SKIN.look, t = lk.t || 'tee';
   const c1 = lk.c1 || '#e8e4da', c3 = lk.c3 || '#3b3b3b', c2 = t === 'happi' ? '#1f2a44' : (lk.c2 || '#4a5568');
-  const sk = SKIN[hl && hl.s >= 0 && hl.s < SKIN.length ? hl.s | 0 : 0], hr = HAIR[hl && hl.h >= 0 && hl.h < HAIR.length ? hl.h | 0 : 0];
+  const sk = SKIN[hl && hl.s >= 0 && hl.s < SKIN.length ? hl.s | 0 : 0], hr = HAIR[hl && hl.h >= 0 && hl.h < HAIR.length ? hl.h | 0 : 0], hy = hl && hl.y >= 0 && hl.y < HSTY.length ? hl.y | 0 : 0;
   const shoe = t === 'suit' ? '#18191b' : t === 'happi' ? '#2a2a2a' : t === 'work' ? '#3a3027' : c3;
   const longSl = t !== 'tee' && t !== 'happi';
   const M = (ge, c, two) => new T.Mesh(ge, mat(c, two));
@@ -139,7 +146,7 @@ function mkBase(look, hl) {
   head.add(M(g.head, sk));
   if (t === 'rain') head.add(at(M(g.cap, c1, true), 0, 0.006, -0.01));
   else if (t === 'work') { head.add(at(M(g.helm, c3), 0, 0.022, 0)); head.add(at(M(g.brim, c3), 0, 0.025, 0.01)); }
-  else { const h = at(M(g.hair, hr), 0, 0.012, -0.008); h.rotation.x = -0.45; head.add(h); }
+  else hairOf(head, hy, hr, M, at, T);
   if (t === 'happi') head.add(at(M(g.hband, c3), 0, 0.035, 0));
   for (const sd of [1, -1]) head.add(at(M(g.eye, '#1d1d1f'), 0.04 * sd, 0.006, 0.104));
   for (const sd of [1, -1]) {
@@ -155,6 +162,37 @@ function mkBase(look, hl) {
   }
   const hand = at(new T.Object3D(), 0, -0.3, 0); arms[1].elbow.add(hand);   // 右手（持ち物の位置）
   return { root, body, chest, head, legs, arms, hand, h: 1.78 };
+}
+// 髪型（t70）：頭（半径 0.112m）の まわりに、かんたんな形を 組み合わせる
+const HGE = new Map();
+function hairOf(head, y, c, M, at, T) {
+  const G = (k, f) => { let q = HGE.get(k); if (!q) HGE.set(k, q = f()); return q; };
+  const cap = (phi, r) => G('cap' + phi + ':' + r, () => new T.SphereGeometry(r || 0.121, 14, 8, 0, Math.PI * 2, 0, Math.PI * phi));
+  const add = (ge, x, yy, z, rx, rz, two) => { const m = at(M(ge, c, two), x, yy, z); if (rx) m.rotation.x = rx; if (rz) m.rotation.z = rz; head.add(m); return m; };
+  if (y === 8) { add(cap(0.5, 0.114), 0, 0.004, -0.004, -0.45); return; }   // ぼうず：うすく
+  if (y === 1) { add(cap(0.5, 0.117), 0, 0.008, -0.006, -0.42); return; }
+  if (y === 9) { const m = add(G('afro', () => new T.SphereGeometry(0.155, 14, 10)), 0, 0.045, -0.025); m.scale.set(1, 0.92, 1); return; }
+  add(cap(0.56), 0, 0.012, -0.008, -0.45);   // 上（ふつうの 髪）
+  if (y === 2 || y === 3) {   // ボブ・ロング：うしろと 横を おおう（前は あける）
+    const L = y === 2 ? 0.13 : 0.3;
+    const sh = G('side' + y, () => { const q = new T.CylinderGeometry(0.124, y === 2 ? 0.13 : 0.12, L, 16, 1, true, Math.PI * 0.21, Math.PI * 1.58); q.translate(0, -L / 2, 0); return q; });
+    add(sh, 0, 0.03, -0.006, 0, 0, true);
+  }
+  if (y === 4) {   // ポニーテール
+    add(G('tie', () => new T.SphereGeometry(0.03, 8, 6)), 0, 0.03, -0.12);
+    const t = add(G('tail', () => { const q = new T.CylinderGeometry(0.035, 0.018, 0.26, 8); q.translate(0, -0.13, 0); return q; }), 0, 0.03, -0.13, 0.32);
+    t.rotation.x = 0.32;
+  }
+  if (y === 5) for (const sd of [1, -1]) {   // ツインテール
+    add(G('tie', () => new T.SphereGeometry(0.03, 8, 6)), 0.1 * sd, 0.03, -0.06);
+    add(G('tail2', () => { const q = new T.CylinderGeometry(0.032, 0.016, 0.24, 8); q.translate(0, -0.12, 0); return q; }), 0.115 * sd, 0.03, -0.065, 0.15, 0.25 * sd);
+  }
+  if (y === 6) add(G('bun', () => new T.SphereGeometry(0.055, 10, 8)), 0, 0.11, -0.07);   // おだんご
+  if (y === 7) for (let k = 0; k < 9; k++) {   // ツンツン
+    const a = k / 9 * Math.PI * 2, r = 0.075;
+    const m = add(G('spike', () => { const q = new T.ConeGeometry(0.026, 0.085, 6); q.translate(0, 0.04, 0); return q; }), Math.sin(a) * r, 0.09, Math.cos(a) * r - 0.02);
+    m.rotation.x = Math.cos(a) * 0.55; m.rotation.z = -Math.sin(a) * 0.55;
+  }
 }
 // X（t68）：{ cr しゃがむ 0〜1・air ジャンプ 0〜1・it 持ち物 }。しゃがむ：腰を下げて ひざを まげる（足のうらは 地面に）
 function legPose(amt, run, s, c, sg, X) {
@@ -351,6 +389,10 @@ function mkItem(id, k) {
     for (const x of [-0.06, 0.06]) { const q = new T.SphereGeometry(0.03, 6, 4); q.scale(1, 0.4, 1); q.translate(x, 0.2, 0); g.add(M(q, '#4f9a4f')); }
   } else if (id === 6) {   // 本（ひらいて 読む）
     for (const sd of [1, -1]) { const q = box(0.13, 0.19, 0.012, 0.065 * sd, 0, 0); g.add(M(q, '#7a3b2e')); g.add(M(box(0.12, 0.18, 0.01, 0.063 * sd, 0, -0.009), '#f3efe4')); }
+  } else if (id === FLASH) {   // 懐中電灯：+z が 前（光は flashTick）
+    const b = new T.CylinderGeometry(0.019, 0.017, 0.17, 10); b.rotateX(Math.PI / 2); b.translate(0, 0, 0.02); g.add(M(b, '#2b2e33'));
+    const hd = new T.CylinderGeometry(0.03, 0.021, 0.05, 12); hd.rotateX(Math.PI / 2); hd.translate(0, 0, 0.12); g.add(M(hd, '#3a3e45'));
+    const ln = new T.CircleGeometry(0.026, 12); ln.translate(0, 0, 0.1455); g.add(new T.Mesh(ln, new T.MeshBasicMaterial({ color: '#fffbe6' })));
   } else if (id === 7) {   // カメラ（レンズが 前）
     g.add(M(box(0.13, 0.085, 0.065), '#1f2023'));
     const l = new T.CylinderGeometry(0.03, 0.033, 0.06, 12); l.rotateX(Math.PI / 2); l.translate(0.015, 0, 0.06); g.add(M(l, '#2e3034'));
@@ -381,6 +423,33 @@ function itemTick(A, id, t) {
   if (id === 4) { A.itO.rotation.x = 0.08 * Math.sin(t / 900 + A.ph * 0.1); A.itO.rotation.z = 0.1 * Math.sin(t / 1300); }   // 風船は ゆれる
 }
 
+// 懐中電灯の 光（t70）：手から 前へ ひろがる 光（すける 円すい）と、前の 地面を 照らす 丸い光。夜ほど 明るい（昼は うすく）
+let FLG = null;
+function flashGeo() {
+  if (FLG) return FLG;
+  const T = T3, L = 7.5, cone = new T.ConeGeometry(1.45, L, 20, 6, true); cone.translate(0, -L / 2, 0); cone.rotateX(-Math.PI / 2);
+  const pc = cone.attributes.position, cc = new Float32Array(pc.count * 3);
+  for (let i = 0; i < pc.count; i++) { const tz = Math.max(0, Math.min(1, pc.getZ(i) / L)), v = 0.55 * Math.pow(1 - tz, 1.6); cc[3 * i] = v; cc[3 * i + 1] = v * 0.97; cc[3 * i + 2] = v * 0.86; }
+  cone.setAttribute('color', new T.BufferAttribute(cc, 3));
+  const pool = new T.CircleGeometry(1, 24, 0, Math.PI * 2), pp = pool.attributes.position, pcol = new Float32Array(pp.count * 3);
+  for (let i = 0; i < pp.count; i++) { const r = Math.hypot(pp.getX(i), pp.getY(i)), v = Math.max(0, 1 - r) ** 1.3; pcol[3 * i] = v; pcol[3 * i + 1] = v * 0.96; pcol[3 * i + 2] = v * 0.85; }
+  pool.setAttribute('color', new T.BufferAttribute(pcol, 3)); pool.rotateX(-Math.PI / 2);
+  const mk = () => new T.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, blending: T.AdditiveBlending, side: T.DoubleSide });
+  FLG = { cone, pool, mc: mk(), mp: Object.assign(mk(), { polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }) };
+  return FLG;
+}
+function flashTick(A, on) {
+  if (!A || !A.root) return;
+  if (!on) { if (A.flC) { if (A.flC.parent) A.flC.parent.remove(A.flC); A.flC = null; } if (A.flP) { A.root.remove(A.flP); A.flP = null; } return; }
+  const G = flashGeo(), nw = (M3 && M3.nightW) || 0;
+  G.mc.opacity = 0.06 + 0.5 * nw; G.mp.opacity = 0.1 + 0.75 * nw;
+  if (A.itO && (!A.flC || A.flC.parent !== A.itO)) { if (A.flC && A.flC.parent) A.flC.parent.remove(A.flC); A.flC = new T3.Mesh(G.cone, G.mc); A.flC.position.z = 0.15; A.flC.rotation.x = 0.26; A.flC.renderOrder = 4; A.itO.add(A.flC); }
+  if (!A.flP) { A.flP = new T3.Mesh(G.pool, G.mp); A.flP.scale.set(1.35, 1, 1.9); A.flP.renderOrder = 4; A.root.add(A.flP); }
+  // 地面の 高さ（人の 前 4.2m）
+  const r = A.root, h = r.rotation.y, d = 4.2, wx = r.position.x + Math.sin(h) * d * U, wz = r.position.z + Math.cos(h) * d * U;
+  let gy = M3.surf(wx, wz); if (W && W.ix) { const g = groundAt(wx, wz, r.position.y + 0.6 * U, true); if (g != null) gy = g; }
+  A.flP.position.set(0, clamp((gy - r.position.y) / U, -3, 1.5) + 0.04, d);
+}
 /* ---------- 人（自分・ほかの人）：見た目のかわりめ・MMD がまだのときは 組み立ての人 ---------- */
 function mmdShown() { let n = 0; if (W) { if (W.av && W.av.P && W.av.P.mmd) n++; for (const o of W.others.values()) if (o.av && o.av.P && o.av.P.mmd) n++; } return n; }
 function mkAvatar(code, hl, self) {
@@ -758,7 +827,13 @@ function rideIn(I, dt, yaw) {
 // 列車を うごかしたあと（map3d の m3Runs のあと）：車両の中の位置 → 地図の位置
 function post() {
   M3.rideK = W && W.ride ? W.ride.rid + ':' + W.ride.tid : null;   // 乗っている 列車（トンネルの中でも 見せる。t70）
-  if (!W || !W.ride || !W.av) return;
+  if (!W) return;
+  for (const o of W.others.values()) {   // ほかの人で 列車に 乗っている人も、うごかした あとの 車両に あわせる（1コマ おくれて 車両から はみ出さない。DB の更新127）
+    if (!o.av || !o.r || o.r.k !== 't' || o.vmesh) continue;
+    const rw = rideWorld(o); if (!rw) continue;
+    o.dx = rw[0]; o.dy = rw[1]; o.df = rw[2]; o.dh = rw[3]; o.av.root.position.set(rw[0], rw[2], rw[1]); o.av.root.rotation.y = rw[3];
+  }
+  if (!W.ride || !W.av) return;
   const R = W.ride, h = rideCar(R); W.rh = h; if (!h) return;
   const x = h.x + (h.ux * R.lx - h.uz * R.lz) * U, y = h.z + (h.uz * R.lx + h.ux * R.lz) * U, t = now();
   if (W.rp && t > W.rp[2]) W.wspd = Math.hypot(x - W.rp[0], y - W.rp[1]) / U / ((t - W.rp[2]) / 1000);
@@ -825,6 +900,7 @@ function step() {
     if (W.ride) {
       const A = W.av;
       poseAv(A, dt, W.spd, !!W.lastRun, { cr: W.cr, air: false, it: W.item | 0, sit: W.ride.sit });
+      flashTick(A, (W.item | 0) === FLASH);
       others(dt); net(t); hudTick(t);
       return;
     }
@@ -865,6 +941,7 @@ function step() {
   const A = W.av;
   A.root.position.set(W.x, W.f, W.y); A.root.rotation.y = W.h;
   poseAv(A, dt, spd, !!W.lastRun, { cr: W.cr, air: W.air, it: W.item | 0, sit: !!W.sitG });
+  flashTick(A, (W.item | 0) === FLASH);
   M3.tx = W.x; M3.ty = W.y;
   if (A.wait && !A.P.mmd) { const e = MMD.get(skinOf(A.code).file); if (e && (e.mesh || e.fail)) avSelf(); }
   others(dt);
@@ -934,11 +1011,43 @@ function camCar(C, h, yaw, ty, dt) {
   if (!W.rcp) W.rcp = [C.position.x, C.position.y, C.position.z];
   W.rcp[0] += (cxw - W.rcp[0]) * k; W.rcp[1] += (cyw - W.rcp[1]) * k; W.rcp[2] += (czw - W.rcp[2]) * k;
   C.position.set(W.rcp[0], W.rcp[1], W.rcp[2]); C.lookAt(W.x, ty - 0.1 * U, W.y);
-  if (W.av) W.av.root.visible = true;
+  meShow(true);
   if (W.lamp) W.lamp.position.set((W.rcp[0] + W.x) / 2, top - 0.1 * U, (W.rcp[2] + W.y) / 2);   // 車内の 明かり：カメラと 自分の あいだの 天井
+}
+// カメラの きりかえ（C・🎥。t70）：0 三人称・1 一人称（自分の目から）・2 俯瞰（上から）
+const CAMN = ['🎥 三人称', '👁 一人称', '🛰 俯瞰'];
+function camSet(m) {
+  if (!W) return;
+  W.camM = ((m == null ? (W.camM || 0) + 1 : m) % 3 + 3) % 3; W.rcp = null;
+  const b = W.hud && W.hud.querySelector('[data-wk-cam]'); if (b) { b.textContent = CAMN[W.camM].slice(0, 2); b.classList.toggle('on', W.camM > 0); }
+  if (typeof toast === 'function') toast(tt(CAMN[W.camM]));
+}
+// 自分の からだを 見せる・かくす（一人称・とても近いとき）。懐中電灯の 地面の光は のこす（光の 円すいは からだと いっしょに かくす）
+function meShow(v) { const A = W.av; if (!A) return; A.root.visible = true; if (A.P && A.P.root) A.P.root.visible = v; }
+function camFix(C, cx, cy, cz) {   // 近い面・遠い面・霧・海
+  C.near = 0.08 * U; C.far = 80; C.updateProjectionMatrix();
+  if (M3.sea) { M3.sea.scale.set(0.012, 0.012, 1); M3.sea.position.x = cx; M3.sea.position.z = cz; }
+  const fog = M3.sc.fog; if (fog) { const q = MI.MQ ? MI.MQ.d3 : 1; fog.near = 6 + q * 2; fog.far = 30 + q * 10; }
 }
 function cam() {
   const C = M3.cam, yaw = M3.yaw, ty = W.f + HEAD * (1 - 0.3 * ((W.av && W.av.cr) || 0) - 0.33 * ((W.av && W.av.sit) || 0)) * U, t = now(), dt = Math.min(0.25, Math.max(0, (t - (W.ct || t)) / 1000)); W.ct = t;
+  const R0 = W.av ? W.av.root.position : { x: W.x, y: W.f, z: W.y };
+  if (W.camM === 1) {   // 一人称：目の高さ（すわる・しゃがむ・乗り物でも）。上下は W.pitch（0.32 で まっすぐ）
+    const eh = (HEAD + 0.12) * (1 - 0.3 * ((W.av && W.av.cr) || 0) - 0.36 * ((W.av && W.av.sit) || 0)) * U, ex = -Math.sin(yaw), ez = -Math.cos(yaw), lp = clamp((0.32 - W.pitch) * 1.3, -1.2, 1.2);
+    const cx = R0.x + ex * 0.1 * U, cy = R0.y + eh, cz = R0.z + ez * 0.1 * U;
+    C.position.set(cx, cy, cz); C.lookAt(cx + ex * Math.cos(lp) * 4 * U, cy + Math.sin(lp) * 4 * U, cz + ez * Math.cos(lp) * 4 * U);
+    meShow(false);
+    if (W.lamp && W.ride && W.rh) W.lamp.position.set(cx, W.rh.y0 + (FLOOR + 2.0) * U, cz);
+    camFix(C, cx, cy, cz); return;
+  }
+  if (W.camM === 2) {   // 俯瞰：上から（ズームで 高さ。列車に 乗っていても 外から 見える）
+    const H = clamp(W.ovH || 26, 6, 160) * U, ox = Math.sin(yaw), oz = Math.cos(yaw);
+    const tx = R0.x + ox * H * 0.5, ty2 = R0.y + H, tz = R0.z + oz * H * 0.5, k = W.rcp ? Math.min(1, dt * 6) : 1;
+    if (!W.rcp) W.rcp = [tx, ty2, tz]; W.rcp[0] += (tx - W.rcp[0]) * k; W.rcp[1] += (ty2 - W.rcp[1]) * k; W.rcp[2] += (tz - W.rcp[2]) * k;
+    C.position.set(W.rcp[0], W.rcp[1], W.rcp[2]); C.lookAt(R0.x, R0.y + 1 * U, R0.z);
+    meShow(true);
+    camFix(C, W.rcp[0], W.rcp[1], W.rcp[2]); C.far = 120; C.updateProjectionMatrix(); return;
+  }
   if (W.ride && W.rh) {   // 列車の 中（t70）
     camCar(C, W.rh, yaw, ty, dt);
     C.near = 0.08 * U; C.far = 80; C.updateProjectionMatrix();
@@ -965,10 +1074,10 @@ function cam() {
   if (!W.veh && !W.pas && roofOver(W.x, W.y, W.f)) {   // 跨線橋・階段の 中：自分の目から（t70）
     const ex = -Math.sin(yaw), ez = -Math.cos(yaw);
     C.position.set(W.x + ex * 0.12 * U, ty, W.y + ez * 0.12 * U); C.lookAt(W.x + ex * 3 * U, ty - Math.sin(W.pitch - 0.32) * 3 * U, W.y + ez * 3 * U);
-    if (W.av) W.av.root.visible = false;
+    meShow(false);
   } else {
     C.position.set(cx, cy, cz); C.lookAt(W.x + fx, ty + cl * 0.2 * U, W.y + fz);
-    if (W.av) W.av.root.visible = d > 0.75 * U;
+    meShow(d > 0.75 * U);
   }
   C.near = 0.12 * U; C.far = 80; C.updateProjectionMatrix();
   // 遠くの海の大きな板（20km）は、カメラのまわりだけに（近い面が 0.1m なので、大きすぎる板は 奥行きが こわれて 手前に出る）
@@ -976,7 +1085,7 @@ function cam() {
   const fog = M3.sc.fog; if (fog) { const q = MI.MQ ? MI.MQ.d3 : 1; fog.near = 6 + q * 2; fog.far = 30 + q * 10; }
 }
 function look(dx, dy) { if (!W) return; M3.yaw -= dx * 0.006 * (MI.S.v3x ? -1 : 1); W.pitch = clamp(W.pitch + dy * 0.0045, -0.35, 1.25); }
-function zoom(f) { if (!W) return; W.cd = clamp(W.cd / f, 1.4, 30); }
+function zoom(f) { if (!W) return; if (W.camM === 2) { W.ovH = clamp((W.ovH || 26) / f, 6, 160); return; } W.cd = clamp(W.cd / f, 1.4, 30); }
 
 /* ---------- ほかの人（サーバーと やりとり：av_step。DB の更新119） ---------- */
 //   自分の位置・向き・うごきだけを送って、近く（400m）の人の 位置・向き・うごきを受けとる（サーバーと この端末のあいだだけ）。
@@ -989,12 +1098,44 @@ const r4 = v => Math.round(v * 1e4) / 1e4;
 const v122 = () => ((MI && MI.S && MI.S.dbv) || 0) >= 122;   // サーバーの更新122 のあと（しゃがむ・ジャンプ・持ち物・チャットを ほかの人に）
 const v124 = () => ((MI && MI.S && MI.S.dbv) || 0) >= 124;   // サーバーの更新124 のあと（フレンドを 街歩きに よぶ）
 const mvSt = m => m === 1 || m === 2 || m === 4;   // 進んでいる うごき
+// 乗っているもの（ほかの人の 端末が 自分の 列車・乗り物から 位置を 組み立てる。DB の更新127）
+function rideRef() {
+  const f = v => (Math.round(v * 100) / 100).toString();
+  if (W.ride) return ['t', W.ride.rid, W.ride.tid, W.ride.kc, f(W.ride.lx), f(W.ride.lz), f(W.ride.lh)].join('|');
+  if (W.pas) return ['v', W.pas.key, f(W.pas.lx), f(W.pas.ly), f(W.pas.lz)].join('|');
+  return null;
+}
+function rideParse(r) {
+  if (typeof r !== 'string') return null;
+  const a = r.split('|');
+  if (a[0] === 't' && a.length === 7) return { k: 't', rid: a[1], tid: a[2], kc: Number(a[3]) | 0, lx: Number(a[4]) || 0, lz: Number(a[5]) || 0, lh: Number(a[6]) || 0 };
+  if (a[0] === 'v' && a.length === 5) return { k: 'v', key: a[1], lx: Number(a[2]) || 0, ly: Number(a[3]) || 0, lz: Number(a[4]) || 0 };
+  return null;
+}
+// ほかの人が 乗っているもの → 位置 [x, y, f, h]（見つからなければ null）
+function rideWorld(o) {
+  const r = o.r; if (!r) return null;
+  if (r.k === 't') {
+    for (const h of M3.runHit || []) {
+      if (h.hl == null || String(h.rid) !== r.rid || String(h.tid) !== r.tid || h.kc !== r.kc) continue;
+      const x = h.x + (h.ux * r.lx - h.uz * r.lz) * U, y = h.z + (h.uz * r.lx + h.ux * r.lz) * U;
+      const hd = o.m === 6 ? (r.lz > 0 ? Math.atan2(h.uz, -h.ux) : Math.atan2(-h.uz, h.ux)) : Math.atan2(h.ux, h.uz) + r.lh;
+      return [x, y, h.y0 + FLOOR * U, hd];
+    }
+    return null;
+  }
+  const d = W.me && r.key === W.me.k ? (W.veh ? { dx: W.x, dy: W.y, df: W.f, dh: W.h } : null) : W.others.get(r.key);
+  if (!d) return null;
+  const p = vehAt(d.dx, d.dy, d.df, d.dh, [r.lx, r.ly, r.lz]);
+  return [p[0], p[1], p[2], d.dh];
+}
 function stepArgs(m) {
   const known = [];
   for (const o of W.others.values()) { const w = WHO.get(o.k); if (w && w.v === o.v && known.length < 60) known.push(o.k); }
   const f = W.air && W.fg != null ? W.fg : W.f;   // ジャンプ中は 足もとの地面（とぶ形は 受けとった端末で）
   const a = { p_k: W.me.k, p_x: r4(W.x), p_y: r4(W.y), p_f: r4(f), p_h: Math.round(W.h * 100) / 100, p_m: m, p_v: W.lv, p_known: known };
   if (v122()) { a.p_i = W.veh ? VC[W.veh.k] : W.pas ? VC[VEH[W.pas.k].pas] : W.item | 0; a.p_c = W.chat.since || null; }   // 乗り物（t70）：持ち物の番号 24〜27
+  if (v127()) { a.p_r = rideRef(); if (m === 3 && sitOn()) a.p_m = 6; }   // 乗っている 列車・乗り物の中の 位置・すわる（DB の更新127）
   else a.p_m = m === 3 ? 0 : m === 4 ? 1 : m === 5 ? (W.spd > 0.05 ? 1 : 0) : m;   // 更新122 の前：止まる・歩く・走る だけ
   return a;
 }
@@ -1018,11 +1159,12 @@ function onStep(r, t) {
       if (o.vm) { o.vx = (x - o.x) / d; o.vy = (y - o.y) / d; }
       o.x = x; o.y = y; o.f = f; o.h = h; o.ts = ts;
     }
-    const pm = o.m; o.m = clamp(Number(m.m) | 0, 0, 5);
+    const pm = o.m; o.m = clamp(Number(m.m) | 0, 0, 7);
     if (o.m === 5 && pm !== 5) o.jt = t;   // ジャンプした：この端末で とぶ
     if (!mvSt(o.m) && o.m !== 5) { o.vx = 0; o.vy = 0; o.vm = false; }
     else if (!o.vm && mvSt(o.m)) { const v = (o.m === 2 ? SPD.run : o.m === 4 ? SPD.sneak : SPD.walk) * U; o.vx = Math.sin(h) * v; o.vy = Math.cos(h) * v; }   // はじめは 向きと うごきから
     { const ic = Number(m.i) | 0; o.vc = VCK[ic] ? ic : 0; o.it = o.vc ? 0 : clamp(ic, 0, ITEMS.length - 1); }   // 乗り物（t70）
+    o.r = rideParse(m.r);   // 乗っているもの（DB の更新127）
     o.v = Number(m.v) | 0; o.t = t; o.miss = 0;
     if (m.c != null) {   // 名前と見た目（知らない人・見た目を変えた人のぶんだけ）
       WHO.set(m.k, { n: String(m.n || '').slice(0, 40), c: String(m.c || 'base'), l: m.l && typeof m.l === 'object' ? m.l : {}, v: o.v });
@@ -1049,6 +1191,8 @@ function others(dt) {
     if (jump) { o.dx = tx; o.dy = ty; o.df = o.f; o.dh = o.h; }
     else { o.dx += (tx - o.dx) * k; o.dy += (ty - o.dy) * k; o.df += (o.f - o.df) * k; let da = o.h - o.dh; while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI; o.dh += da * Math.min(1, k * 1.5); }
     o.spd = jump ? 0 : Math.hypot(o.dx - px, o.dy - py) / U / Math.max(dt, 1e-3);
+    const rw = o.r ? rideWorld(o) : null;   // 列車・乗り物に 乗っている人：この端末の 列車・乗り物の 中に（ずれない。DB の更新127）
+    if (rw) { o.dx = rw[0]; o.dy = rw[1]; o.df = rw[2]; o.dh = rw[3]; o.spd = mvSt(o.m) ? SPD.walk * 0.6 : 0; }
     o.dist = Math.hypot(o.dx - W.x, o.dy - W.y);
     list.push(o);
   }
@@ -1076,15 +1220,18 @@ function others(dt) {
     }
     if (o.vmesh) { M3.sc.remove(o.vmesh); o.vmesh = null; }
     o.av.root.position.set(o.dx, o.df + jy * U, o.dy); o.av.root.rotation.y = o.dh;
-    poseAv(o.av, dt, mvSt(o.m) ? Math.max(o.spd, 0.3) : o.spd * 0.5, o.m === 2, { cr: o.m === 3 || o.m === 4, air: jy > 0.03, it: o.it || 0, sit: o.vc === 25 ? 1 : 0 });
+    const sitO = o.m === 6 || o.vc === 25 || (o.r && o.r.k === 'v' && o.vc === 25);
+    poseAv(o.av, dt, sitO ? 0 : mvSt(o.m) ? Math.max(o.spd, 0.3) : o.spd * 0.5, o.m === 2, { cr: !sitO && (o.m === 3 || o.m === 4), air: jy > 0.03, it: o.it || 0, sit: sitO ? 1 : 0 });
+    flashTick(o.av, o.it === FLASH);
   }
   W.near = n;
 }
 function net(t) {
   const N = W.net; if (!W.me || !W.me.k || N.off) return;
-  const rmv = (!!W.ride && (W.wspd || 0) > 0.5) || (!!W.veh && Math.abs(W.veh.v) > 0.3) || !!W.pas, mv = W.spd > 0.05 || rmv;   // 乗っている列車・乗り物が 走っている（t70）
+  const rf = v127() && (W.ride || W.pas);   // 列車・乗り物の中の 位置を 送る（DB の更新127）：ほかの人の 端末が 組み立てるので、列車・乗り物が 走っても 歩いている あつかいに しない
+  const rmv = !rf && ((!!W.ride && (W.wspd || 0) > 0.5) || !!W.pas) || (!!W.veh && Math.abs(W.veh.v) > 0.3), mv = W.spd > 0.05 || rmv;   // 乗っている列車・乗り物が 走っている（t70）
   let st = W.cr ? (mv ? 4 : 3) : mv ? (W.lastRun && W.spd > SPD.walk * 1.2 ? 2 : 1) : 0;
-  if (sitOn()) st = 3;   // すわっている：ほかの人には しゃがんで見える
+  if (sitOn()) st = 3;   // すわっている（サーバーの更新127 のあとは 6：ほかの人にも すわって見える。stepArgs）
   if (W.air && W.jumpT && t - W.jumpT < 1200) st = 5;
   { const ic = W.veh ? 100 + VC[W.veh.k] : W.pas ? 200 : W.item; if (ic !== N.it && t - N.sent > 250) { N.it = ic; N.next = 0; } }   // 持ち物を かえた：すぐ送る
   if (st !== N.st && N.st >= 0 && t - N.sent > 250) N.next = 0;   // 歩きだした・止まった：すぐ送る
@@ -1099,7 +1246,7 @@ function net(t) {
   }).finally(() => {
     N.busy = false;
     // つぎ：自分が うごいている 0.5秒・近くの人が うごいている 0.6秒・近くに人がいる 1.5秒・だれもいない 3秒
-    if (W) { let mv = false; for (const o of W.others.values()) if ((mvSt(o.m) || o.m === 5) && o.dist < SEE) { mv = true; break; } N.next = now() + (N.err ? 3000 : W.spd > 0.05 || (W.ride && (W.wspd || 0) > 0.5) ? 400 : mv ? 600 : W.others.size ? 1500 : 3000); }
+    if (W) { let mv = false; for (const o of W.others.values()) if ((mvSt(o.m) || o.m === 5) && o.dist < SEE) { mv = true; break; } N.next = now() + (N.err ? 3000 : W.spd > 0.05 || (W.veh && Math.abs(W.veh.v) > 0.3) ? 350 : !v127() && W.ride && (W.wspd || 0) > 0.5 ? 400 : mv ? 600 : W.others.size ? 1500 : 3000); }   // うごいている：0.35秒（t70）
   });
 }
 function netLeave(w) {   // やめた：自分の位置を消す（送れなくても 12秒で 見えなくなる）
@@ -1221,6 +1368,8 @@ const CSS = `
 .wk-cols{margin-top:10px;display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center}
 .wk-cols span{font-size:12px;font-weight:700}
 .wk-sw{width:28px;height:28px;border-radius:50%;border:2px solid rgba(0,0,0,.15);padding:0}
+.wk-hs{border:2px solid rgba(0,0,0,.12);border-radius:14px;background:#f3f5f8;color:inherit;font:inherit;font-size:12px;padding:4px 9px}
+.wk-hs.on{border-color:#1f5fbf;background:#e7effb;font-weight:700}
 .wk-sw.on{border:3px solid #1f5fbf}
 .wk-cred{font-size:11px;color:#667;margin:8px 0 0;word-break:break-word}
 .wk-foot{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
@@ -1244,11 +1393,11 @@ function hudMake() {
   const S = MI.S, h = document.createElement('div');
   h.className = 'wk-hud';
   const pc = !!(window.matchMedia && window.matchMedia('(pointer: fine)').matches);   // パソコン：キーの説明
-  h.innerHTML = `<div class="wk-info"><span data-wk-n>🚶 歩いています</span><small data-wk-s></small><button class="wk-cr" data-wk-cr hidden></button>${pc ? '<small class="wk-keys">Q 走る・Shift しゃがむ・R すわる・V 乗り物・スペース ジャンプ・E 持ち物・Z チャット</small>' : ''}<button class="wk-inv" data-wk-inv ${v124() ? '' : 'hidden'}>👋 フレンドを よぶ</button></div>
+  h.innerHTML = `<div class="wk-info"><span data-wk-n>🚶 歩いています</span><small data-wk-s></small><button class="wk-cr" data-wk-cr hidden></button>${pc ? '<small class="wk-keys">Q 走る・Shift しゃがむ・R すわる・V 乗り物・C カメラ・スペース ジャンプ・E 持ち物・Z チャット</small>' : ''}<button class="wk-inv" data-wk-inv ${v124() ? '' : 'hidden'}>👋 フレンドを よぶ</button></div>
     <div class="wk-stick" data-wk-stick title="うごく（いっぱいに たおすと 走る）"><i></i></div>
     <div class="wk-btns"><button data-wk-chat title="チャット（Z・/）">💬</button><button data-wk-x title="歩くのをやめる">✕</button>
       <button data-wk-item title="持ち物（E）">🎒</button><button data-wk-look title="見た目">👕</button>
-      <button data-wk-veh title="乗り物（V）・乗せてもらう（F）">🚲</button><button data-wk-sit title="すわる（R）">🪑</button><button data-wk-crb title="しゃがむ（Shift）">🧎</button><button data-wk-run title="走る（Q）">🏃</button>
+      <button data-wk-cam title="カメラ（C）：三人称・一人称・俯瞰">🎥</button><button data-wk-veh title="乗り物（V）・乗せてもらう（F）">🚲</button><button data-wk-sit title="すわる（R）">🪑</button><button data-wk-crb title="しゃがむ（Shift）">🧎</button><button data-wk-run title="走る（Q）">🏃</button>
       <button class="wk-jump" data-wk-jump title="ジャンプ（スペース）">⤒ ジャンプ</button></div>
     <div class="wk-log" hidden></div>
     <div class="wk-say" hidden><input type="text" maxlength="60" enterkeyhint="send" autocomplete="off" placeholder="近くの人に（60文字まで）"><button data-wk-ss>送る</button><button data-wk-sx title="とじる">✕</button></div>
@@ -1273,6 +1422,7 @@ function hudMake() {
   tap('[data-wk-crb]', () => crSet(!W.crOn));
   tap('[data-wk-sit]', () => sitSet(!sitOn()));
   tap('[data-wk-veh]', () => vehTap());
+  tap('[data-wk-cam]', () => camSet());
   { const b = h.querySelector('[data-wk-jump]'); b.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); jump(); }); b.onclick = () => { try { b.blur(); } catch (er) {} }; }   // おした しゅんかんに（スティックを おしながらでも。t70）
   tap('[data-wk-item]', () => wheelOpen(!W.wheel, false));
   tap('[data-wk-chat]', () => chatOpen(!W.chat.open));
@@ -1300,6 +1450,7 @@ function hudMake() {
     if (c === 'KeyQ') dashSet(!W.runOn);
     else if (c === 'KeyR') sitSet(!sitOn());   // すわる（t70。モーションの キー）
     else if (c === 'KeyV') vehTap();   // 乗り物（t70）
+    else if (c === 'KeyC') camSet();   // カメラ（t70）
     else if (c === 'KeyF') { if (W.pas) pasOff(); else { const o = vehNear(); if (o) pasOn(o); } }   // 乗せてもらう・おりる
     else if (c === 'KeyZ' || c === 'Slash' || e.key === '/') { e.preventDefault(); chatOpen(true); }
     else if (/^Digit[0-9]$/.test(c) && W.wheel) { const L = itemList(), n = Number(c.slice(5)); if (L[n]) itemPick(L[n].id); }
@@ -1523,8 +1674,10 @@ function pickDraw() {
     <div class="wk-grid">${CAT.list.map(s => `<button class="wk-sk ${s.code === cur.code ? 'on' : ''} ${own(s) ? '' : 'lock'}" data-code="${esc2(s.code)}">
       <img src="map/skins/thumbs/${esc2(s.code)}.webp?v=${esc2(mapv())}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
       ${s.rare && s.rare !== '-' ? `<span class="wk-r ${esc2(s.rare)}">${esc2(s.rare)}</span>` : ''}<small>${esc2(s.name)}${own(s) ? '' : '<br>🔒'}</small></button>`).join('')}</div>
-    ${cur.kind === 'base' ? `<div class="wk-cols"><span>髪</span>${HAIR.map((c, i) => `<button class="wk-sw ${(l.h | 0) === i ? 'on' : ''}" data-h="${i}" style="background:${c}" title="髪の色"></button>`).join('')}
-      <span>はだ</span>${SKIN.map((c, i) => `<button class="wk-sw ${(l.s | 0) === i ? 'on' : ''}" data-s="${i}" style="background:${c}" title="はだの色"></button>`).join('')}</div>` : ''}
+    ${cur.kind === 'base' ? (() => { const more = CAT.off || v127(), ho = more ? HAIR_O : HAIR_O.filter(i => i < 6), so = more ? SKIN_O : SKIN_O.filter(i => i < 4);   // ふやした色・髪型は サーバーの更新127 のあと
+      return `<div class="wk-cols"><span>髪</span>${ho.map(i => `<button class="wk-sw ${(l.h | 0) === i ? 'on' : ''}" data-h="${i}" style="background:${HAIR[i]}" title="髪の色"></button>`).join('')}</div>
+      <div class="wk-cols"><span>はだ</span>${so.map(i => `<button class="wk-sw ${(l.s | 0) === i ? 'on' : ''}" data-s="${i}" style="background:${SKIN[i]}" title="はだの色"></button>`).join('')}</div>
+      ${more ? `<div class="wk-cols wk-hy"><span>髪型</span>${HSTY.map((n, i) => `<button class="wk-hs ${(l.y | 0) === i ? 'on' : ''}" data-y="${i}">${esc2(tt(n))}</button>`).join('')}</div>` : ''}`; })() : ''}
     ${cur.credit ? `<p class="wk-cred">${esc2(cur.name)}：${esc2(cur.credit)}</p>` : ''}
     <div class="wk-foot"><span>${CAT.off ? '' : `持っている見た目 ${have} / ${CAT.list.length}`}</span>${CAT.off ? '' : CAT.soon && CAT.soon.skin && !CAT.admin ? '<button data-wk-ga>🎫 スキンガチャ（カミングスーン）</button>' : `<button data-wk-ga>🎫 スキンガチャ（🎫${esc2(CAT.cost || 20)}）</button>`}</div>`;
   p.querySelector('[data-wk-pc]').onclick = () => { p.hidden = true; };
@@ -1533,8 +1686,9 @@ function pickDraw() {
     if (!own(s)) { if (typeof toast === 'function') toast(tt('この見た目は スキンガチャで当たります')); return; }
     setLook(s.code, null);
   });
-  p.querySelectorAll('[data-h]').forEach(b => b.onclick = () => setLook(me.c, { h: Number(b.dataset.h), s: l.s | 0 }));
-  p.querySelectorAll('[data-s]').forEach(b => b.onclick = () => setLook(me.c, { h: l.h | 0, s: Number(b.dataset.s) }));
+  p.querySelectorAll('[data-h]').forEach(b => b.onclick = () => setLook(me.c, { h: Number(b.dataset.h), s: l.s | 0, y: l.y | 0 }));
+  p.querySelectorAll('[data-s]').forEach(b => b.onclick = () => setLook(me.c, { h: l.h | 0, s: Number(b.dataset.s), y: l.y | 0 }));
+  p.querySelectorAll('[data-y]').forEach(b => b.onclick = () => setLook(me.c, { h: l.h | 0, s: l.s | 0, y: Number(b.dataset.y) }));   // 髪型（t70）
   const ga = p.querySelector('[data-wk-ga]');
   if (ga) ga.onclick = () => { stop(); if (typeof go === 'function') go('vGacha'); };
 }
@@ -1635,6 +1789,6 @@ function stop(fromClose) {
   if (onChange) onChange(false);
 }
 
-window.Walk = { start, stop, ask, join, on: () => !!W, ride: () => (W && W.ride ? { ...W.ride } : null), gnd: (x, y, f) => (W ? groundAt(x, y, f, false) : null), tp: (x, y) => { if (!W || W.ride) return false; W.x = x; W.y = y; const g = groundAt(x, y, M3.surf(x, y) + 3 * U, false); W.f = g != null ? g : M3.surf(x, y); W.fv = 0; W.spawn = null; return W.f; }, hit: (x, y, f) => { const h = trainAt(x, y, f); return h ? { nx: h.nx, ny: h.ny, d: h.d } : null; }, dbg: () => (W ? { x: W.x, y: W.y, f: W.f, fg: W.fg, fv: W.fv, air: W.air, spawn: !!W.spawn, ex: W.dbgExit || null, veh: W.veh ? W.veh.k : null, pas: W.pas ? W.pas.k : null, nothers: W.others.size, ix: W.ix ? { n: W.ix.tri.length / 9, ms: W.ix.ms } : null, blk: W.blk ? W.blk.size : 0, others: W.others.size, ol: [...W.others.values()].map(o => [o.m, o.it || 0, !!o.say]), me: !!(W.me && W.me.k), item: W.item, cr: !!W.cr, air: !!W.air } : null), cat: catLoad, onChange: f => { onChange = f; }, mmd: mmdLoad, mkBase: (look, hl) => { T3 = T3 || window.THREE; return mkBase(look, hl); }, poseBase,
+window.Walk = { start, stop, ask, join, on: () => !!W, ride: () => (W && W.ride ? { ...W.ride } : null), gnd: (x, y, f) => (W ? groundAt(x, y, f, false) : null), tp: (x, y) => { if (!W || W.ride) return false; W.x = x; W.y = y; const g = groundAt(x, y, M3.surf(x, y) + 3 * U, false); W.f = g != null ? g : M3.surf(x, y); W.fv = 0; W.spawn = null; return W.f; }, hit: (x, y, f) => { const h = trainAt(x, y, f); return h ? { nx: h.nx, ny: h.ny, d: h.d } : null; }, dbg: () => (W ? { x: W.x, y: W.y, f: W.f, h: W.h, fg: W.fg, fv: W.fv, air: W.air, spawn: !!W.spawn, ex: W.dbgExit || null, veh: W.veh ? W.veh.k : null, pas: W.pas ? W.pas.k : null, nothers: W.others.size, ix: W.ix ? { n: W.ix.tri.length / 9, ms: W.ix.ms } : null, blk: W.blk ? W.blk.size : 0, others: W.others.size, ol: [...W.others.values()].map(o => [o.m, o.it || 0, !!o.say]), op: [...W.others.values()].map(o => [o.dx, o.dy, o.df, o.m, o.r ? o.r.k : '', !!o.av]), me: !!(W.me && W.me.k), item: W.item, cr: !!W.cr, air: !!W.air } : null), cat: catLoad, onChange: f => { onChange = f; }, mmd: mmdLoad, mkBase: (look, hl) => { T3 = T3 || window.THREE; return mkBase(look, hl); }, poseBase,
   mkMMD: e => { T3 = T3 || window.THREE; return mkMMD(e); }, poseMMD, poseAv, ITEMS, HAIR, SKIN };
 })();
