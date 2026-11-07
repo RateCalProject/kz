@@ -24998,7 +24998,7 @@ begin
   perform _mp_ok(u);
   select * into pa from _mp_party(u, p_as);
   zfo := pa.gv and p_kind = 'rail' and coalesce(p_force, false);   -- 国の強行（DB の更新116）：ホームのカーブ・ホームにかかる建物でも つくる
-  if pa.gv and p_kind <> 'rail' then raise exception 'バス停は人か会社で作ります'; end if;   -- 国は鉄道の駅だけ（DB の更新101）
+  if pa.gv and p_kind not in ('rail', 'bus') then raise exception '国がつくれるのは 鉄道の駅と バスターミナルです'; end if;   -- 国は鉄道の駅（DB の更新101）とバスターミナル（DB の更新128）
   if not p_dry then perform _mp_lock(pa.pu, pa.pc); end if;
   select * into sg from mp_segs where id = p_seg;
   if not found then raise exception '線が見つかりません'; end if;
@@ -25046,19 +25046,21 @@ begin
   elsif p_kind = 'bus' then
     if sg.kind <> 'road' then raise exception 'バス停は道路の上に作ります'; end if;
     if exists (select 1 from mp_stations t where t.seg = p_seg and t.kind = 'bus' and abs(t.at - s) < 3) then raise exception '近くにほかのバス停があります'; end if;
-    span := 0.4; p_plat := 0; p_tracks := 1;
+    span := 0.4; p_plat := 0;
+    p_tracks := case when pa.gv then greatest(2, least(8, coalesce(p_tracks, 4))) else 1 end;   -- 国のバスターミナル（DB の更新128）：のりば 2〜8
     select * into pt from _mp_at(sg.pts, s);
     tiles := array[floor(pt.x)::int, floor(pt.y)::int];
-    cost := _mp_rate('stop');
+    cost := case when pa.gv then 0 else _mp_rate('stop') end;   -- 国の工事は無料
   else raise exception '作るものがちがいます'; end if;
   if p_dry then return jsonb_build_object('cost', round(cost), 'up_day', case when pa.gv then 0 when p_kind = 'rail' then round(_mp_rate('up_sta') * (1 + 0.25 * (p_tracks - 1))) else _mp_rate('up_stop') end,
     'lease', round(lfee), 'need', need, 'zl', zl) || case when zfo then jsonb_build_object('fc', zfc) else '{}'::jsonb end; end if;
   perform _mp_land_stop(need);
-  perform _mp_pay(pa.pu, pa.pc, pa.gv, round(cost)::bigint, 'sta', format('%s「%s」の工事', case when p_kind = 'rail' then '駅' else 'バス停' end, nm));
+  perform _mp_pay(pa.pu, pa.pc, pa.gv, round(cost)::bigint, 'sta', format('%s「%s」の工事', case when p_kind = 'rail' then '駅' when pa.gv then 'バスターミナル' else 'バス停' end, nm));
   select * into pt from _mp_at(sg.pts, s);
   insert into mp_stations(kind, seg, at, x, y, ang, plat, tracks, name, own_u, own_c, cost)
   values (p_kind, p_seg, s, round(pt.x * 100), round(pt.y * 100), pt.ang, p_plat, p_tracks, nm, pa.pu, pa.pc, round(cost))
   returning id into sid;
+  if pa.gv and p_kind = 'bus' then update mp_stations set lend = round(_mp_rate('up_stop') * p_tracks) where id = sid; end if;   -- 国のバスターミナル：はじめから だれでも 使える（1系統・1日の使用料は国庫へ。DB の更新128）
   perform _mp_occ_set(sid, case when p_kind = 'rail' then 'sta' else 'stop' end, tiles);
   if p_kind = 'rail' then perform _mp_lease_set('sta', sid, pa.pu, pa.pc, pa.gv); end if;
   if p_kind = 'rail' then begin perform _mp_prof_redo(p_seg); exception when others then raise warning 'mp sta level: %', sqlerrm; end; end if;   -- 駅のところを水平に（DB の更新108）

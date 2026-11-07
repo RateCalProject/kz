@@ -8,6 +8,15 @@
 let sunNow, MQ, q, LITE, liteNeed, EDEC, B64I, S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runIsSel, runName, runDest, showTrain, runFollow, pfZ, runRef, PAL;
 function m3Init() { ({ sunNow, MQ, q, LITE, liteNeed, EDEC, B64I, S, CS, tileAt, visibleItems, needChunks, needCells, ckey, pOf, bcol, hint, saveCam, now, evT, runList, runPt, clearRunLayer, RUN, runIsSel, runName, runDest, showTrain, runFollow, pfZ, runRef } = window.MapInt); PAL = window.MapPal; if (!runRef) runRef = () => null; }
 const M3 = { on: false, loading: false };
+// 視野角（t70）：たての角度（度）。v 地図を見るとき・w 歩くとき。この端末に おぼえる（mp_fov）
+const M3FOV = { v: 45, w: 45 };
+try { const o = JSON.parse(localStorage.getItem('mp_fov') || 'null'); if (o && typeof o === 'object') for (const k of ['v', 'w']) if (Number.isFinite(o[k])) M3FOV[k] = Math.max(30, Math.min(100, Math.round(o[k]))); } catch (e) {}
+function m3Fov(k, v) {
+  if (k !== 'v' && k !== 'w') return 45;
+  if (v != null && Number.isFinite(Number(v))) { M3FOV[k] = Math.max(30, Math.min(100, Math.round(Number(v)))); try { localStorage.setItem('mp_fov', JSON.stringify(M3FOV)); } catch (e) {} M3.dirty = true; }
+  return M3FOV[k];
+}
+function m3FovApply() { const c = M3.cam, f = M3.walk ? M3FOV.w : M3FOV.v; if (c && c.fov !== f) { c.fov = f; c.updateProjectionMatrix(); } }
 const M3_LIB = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
 const M3_FH = 3.4;          // 1階の高さ（m）
 const M3_U = 1 / 50;        // 1m → マス
@@ -222,7 +231,7 @@ function m3Frame() {
   m3UgPass();   // 地下ビュー（DB の更新109）：地面・建物・道路を すかす
   m3Cam();
   if (M3.pp) m3PropNear2(false);   // 近くの 小物を こまかく（t69）
-  M3.r.render(M3.sc, M3.cam);
+  m3FovApply(); M3.r.render(M3.sc, M3.cam);
   m3Labels();   // 建物の名前（t61）
   if (Math.abs(m3Surf(M3.tx, M3.ty) - M3.gy) > 0.002) M3.dirty = true;
 }
@@ -235,7 +244,7 @@ function m3RunFrame() {
   if (M3.nearQ) { try { m3Runs(M3.nearQ); } catch (e) { console.error(e); } }
   if (M3.walk) { if (M3.walk.post) { try { M3.walk.post(); } catch (e) { console.error(e); } } m3Cam(); }   // 乗っている 列車に あわせてから カメラ（t70）
   m3SigTick();
-  M3.r.render(M3.sc, M3.cam);
+  m3FovApply(); M3.r.render(M3.sc, M3.cam);
   m3Labels();
 }
 // 毎フレーム描く うごくものが 見えているか：列車・バス（走行位置の しるし）・踏切が しまっている・水面（川・海）・天気
@@ -2131,5 +2140,5 @@ window.M3Look = { load: m3Arch, looks: kind => m3Arch().then(A => A.looksOf(kind
   props: () => m3Arch().then(A => A.PROP || {}) };   // 小物の型（t65）
 
 M3.surf = m3Surf;   // 地形の面の高さ（たしかめる用。t64）
-Object.assign(window, { m3Open, m3Close, m3Frame, m3RunFrame, m3Moving, m3Zoom, m3Target, m3Resize, m3Ug, m3State: M3 });
+Object.assign(window, { m3Open, m3Close, m3Frame, m3RunFrame, m3Moving, m3Zoom, m3Target, m3Resize, m3Ug, m3Fov, m3State: M3 });
 })();

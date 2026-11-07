@@ -1680,6 +1680,12 @@ function drawBusStop(g, s, z) {
   const x = sx(s.fx), y = sy(s.fy);
   if (x < -80 || y < -40 || x > S.W + 80 || y > S.H + 40) return;
   const r = Math.max(3.5, 0.18 * z);
+  if (s.tr > 1) {   // バスターミナル（のりばが いくつもある。DB の更新128）：横長の しるし・のりばの数
+    const w = r * (1.6 + 0.35 * Math.min(8, s.tr)), h = r * 1.15;
+    g.fillStyle = '#1f5fbf'; g.strokeStyle = '#fff'; g.lineWidth = 1.5; g.beginPath(); g.roundRect ? g.roundRect(x - w, y - h, 2 * w, 2 * h, h) : g.rect(x - w, y - h, 2 * w, 2 * h); g.fill(); g.stroke();
+    if (r >= 6) { g.fillStyle = '#fff'; g.font = `bold ${Math.round(r * 1.15)}px sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('B' + s.tr, x, y + 0.5); }
+    return;
+  }
   g.fillStyle = '#2a7de1'; g.strokeStyle = '#fff'; g.lineWidth = 1.5; g.beginPath(); g.arc(x, y, r, 0, 6.3); g.fill(); g.stroke();
   if (r >= 7) { g.fillStyle = '#fff'; g.font = `bold ${Math.round(r * 1.2)}px sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('B', x, y + 0.5); }
 }
@@ -3507,6 +3513,7 @@ const CSS = `
 .mp-qd summary{cursor:pointer;color:#555;font-size:12px}.mp-qd label{margin-top:6px;align-items:center}
 .mp-qn{color:#666;font-size:11px;line-height:1.4}
 .mp-cfg input{margin-top:2px;flex:none;width:18px;height:18px}
+.mp-cfg .mp-fovl{align-items:center}.mp-cfg .mp-fovl input{flex:1;width:auto;min-width:90px;height:auto;margin:0}.mp-cfg .mp-fovl b{min-width:2.6em;text-align:right}
 .mp-top{position:absolute;left:8px;right:56px;top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;pointer-events:none}
 .mp-top>*{pointer-events:auto}
 .mp-topb{display:flex;gap:6px;align-items:center;flex-wrap:wrap;pointer-events:none}
@@ -3684,6 +3691,7 @@ function build(root) {
       <label><input type="checkbox" data-o="v3names"> 3D で建物の名前を出す</label>
       <label><input type="checkbox" data-o="v3x"> 3D で横に回す向きを反対にする</label>
       <label><input type="checkbox" data-o="wx"> 天気と気温を出す（左下に地図のまん中の天気。場所・駅・列車にも）</label>
+      <label class="mp-fovl"><span>3D の視野角</span><input type="range" min="30" max="100" step="5" data-fov><b data-fovv></b></label>
       <b>画質と見える遠さ（この端末）</b>
       <div class="mp-seg mp-qp"><button data-qp="eco">🍃 省エネ</button><button data-qp="std">標準</button><button data-qp="high">高画質</button><button data-qp="max">最高画質</button></div>
       <small class="mp-qn" data-qcustom hidden>自分で決めた設定です</small>
@@ -3746,6 +3754,11 @@ function build(root) {
   cfg.querySelectorAll('select[data-q]').forEach(x => x.onchange = () => { const aa0 = MQ.aa; MQ[x.dataset.q] = Number(x.value); qMatch(); qApply(aa0); });
   cfg.querySelector('input[data-q="aa"]').onchange = ev => { const aa0 = MQ.aa; MQ.aa = ev.target.checked; qMatch(); qApply(aa0); };
   qUI();
+  // 3D の視野角（t70。歩くときは 歩く画面の 🔭 で べつに 決める）
+  { const fr = cfg.querySelector('[data-fov]'), fv = cfg.querySelector('[data-fovv]'), fget = () => (window.m3Fov ? window.m3Fov('v') : 45);
+    const fui = () => { fr.value = String(fget()); fv.textContent = fget() + '°'; };
+    fr.oninput = () => { if (window.m3Fov) window.m3Fov('v', Number(fr.value)); fv.textContent = fget() + '°'; S.dirty = true; if (S.v3) S.v3.dirty = true; };
+    fui(); cfg.addEventListener('focusin', fui); S.wrap.querySelector('[data-opt]').addEventListener('click', fui); }
   S.wrap.addEventListener('pointerdown', e => { if (!cfg.hidden && e.target.tagName === 'CANVAS') cfg.hidden = true; }, true);   // 地図にさわったら とじる
   // 建物の見えかた：2.5D（高さ・壁）と 2D（上から見たまま）。この端末におぼえる
   try { const v = localStorage.getItem('mp_b25'); if (v != null) S.b25 = v !== '0'; } catch (e) {}
@@ -4704,7 +4717,8 @@ function showSta(s) {
   S.sel = { kind: 'sta', id: s.id }; S.dirty = true;
   const air = s.k === 'air', port = s.k === 'ship' || air, pdep = port ? [...S.vis.deps.values()].find(d => d.k === s.k && d.b != null && d.b === s.b) : null;
   const gov = air && s.o === 'gov', adm = gov && S.admin;   // 国の空港（t54q）：だれでも使える。名前・使用料は管理者
-  sheet(`<h4>${s.k === 'rail' ? '🚉 ' : air ? '✈ ' : port ? '⚓ ' : '🚏 '}<span>${esc(s.n)}</span>${s.k === 'rail' ? '<span>駅</span>' : gov ? '<span>（国の空港）</span>' : air ? '<span>（空港）</span>' : port ? '<span>（港）</span>' : ''}</h4><p class="small muted" data-addr translate="no" style="margin:0"></p>
+  const gbt = s.k === 'bus' && s.o === 'gov';   // 国のバスターミナル（DB の更新128）
+  sheet(`<h4>${s.k === 'rail' ? '🚉 ' : air ? '✈ ' : port ? '⚓ ' : gbt || s.tr > 1 ? '🚌 ' : '🚏 '}<span>${esc(s.n)}</span>${s.k === 'rail' ? '<span>駅</span>' : gov ? '<span>（国の空港）</span>' : gbt ? '<span>（国のバスターミナル）</span>' : air ? '<span>（空港）</span>' : port ? '<span>（港）</span>' : ''}</h4><p class="small muted" data-addr translate="no" style="margin:0"></p>
     <div class="mp-kv"><b>持ち主</b><span><span>${s.o === 'gov' ? '国' : esc(S.vis.names[s.o] || '')}</span>${s.mine && s.o !== 'gov' ? '<small>（あなた）</small>' : ''}</span>
       ${wxRow(s.fx, s.fy)}${snowStaRow(s)}
       ${s.k === 'rail' ? `<b>ホーム</b><span>${s.pl} m・${s.tr}番線まで${pfName(s.pf, s.tr) ? `<br><span>${esc(pfName(s.pf, s.tr))}</span>` : ''}</span>` : ''}
@@ -4714,7 +4728,9 @@ function showSta(s) {
       ${s.k === 'rail' && (s.mm || (s.mine && memoOn())) ? `<b>直通のメモ</b><span>${s.mm ? `📝 <span translate="no" style="white-space:pre-wrap">${esc(s.mm)}</span>` : '<span class="muted">なし</span>'}${s.mine && memoOn() ? ` <a href="#" data-memo>${s.mm ? '書きなおす' : '書く'}</a>` : ''}</span>` : ''}
       ${s.k === 'rail' && tomeOn() ? (() => { const ts = [...S.vis.deps.values()].filter(d => d.st === s.id);   // 留置線（DB の更新105）
         return `<b>留置線</b><span>${ts.length ? ts.map(d => { const [l, n] = tomeDim(d.sz); return `<span translate="no">${esc(d.n)}</span>（${esc(T(`${l}m・${n}本`))}）`; }).join('<br>') : '<span class="muted">なし</span>'}</span>`; })() : ''}
+      ${s.k === 'bus' && s.tr > 1 ? `<b>のりば</b><span>${s.tr}番まで</span>` : ''}
       ${gov ? `<b>使用料</b><span>${s.ln != null ? `<span>空路に入れると 1路線・1日 ${X(s.ln)}（国庫へ）</span>` : '<span>いまは新しい空路に使えません</span>'}</span>`
+        : gbt ? `<b>使用料</b><span>${s.ln != null ? `<span>系統に入れると 1系統・1日 ${X(s.ln)}（国庫へ）</span>` : '<span>いまは新しい系統に使えません</span>'}</span>`
         : s.k === 'bus' || port ? `<b>貸し出し</b><span>${s.ln != null ? `<span>ほかの人・会社に貸しています（1系統・1日 ${X(s.ln)}）</span>` : '<span>ほかの人・会社には貸していません</span>'}</span>` : ''}
       ${air ? `<b>滑走路</b><span>${s.pl > 0 ? `<span>${fmt(s.pl)}m（いちばん長い滑走路）</span>` : '<span class="mp-warn">まだありません（飛行機は飛べません）</span>'}</span><b>発着口</b><span><span>${s.tr}こ</span>（<span>1つで1時間に1便</span>）</span>` : ''}
       ${port && pdep ? (gov ? `<b>駐機場</b><span>${pdep.cap}機まで（みんなで使う）</span>` : air ? `<b>駐機場</b><span>${pdep.cap}機まで</span>` : `<b>船の置き場</b><span>${pdep.cap}隻まで</span>`) : ''}
@@ -4725,7 +4741,8 @@ function showSta(s) {
     ${gov ? `<div class="mp-row"><button class="btn main" data-slot>🛫 発着口・入札</button>${pdep ? '<button class="btn" data-cars>飛行機を見る・注文する</button>' : ''}<button class="btn" data-newr>＋ 空路</button>${adm ? '<button class="btn" data-ren>名前を変える</button><button class="btn" data-lend>使用料</button>' : ''}</div>
       <p class="muted small"><span>国の空港です。だれでも駐機場に飛行機を置いて（≡ →「車両と編成」）、空路に使えます。空路に入れると、1路線・1日の使用料を国にはらいます（使いはじめたときの値段のまま）。</span><span>この空港を出る便は、1時間に、持っている発着口の数まで（発着口の権利は入札で買います）</span></p>`
     : s.mine && port ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button><button class="btn" data-lend>貸し出し</button>${pdep ? (air ? '<button class="btn" data-cars>飛行機を見る</button>' : '<button class="btn" data-cars>船を見る</button>') : ''}${air ? '<button class="btn" data-newr>＋ 空路</button>' : '<button class="btn" data-newr>＋ 航路</button>'}</div>
-      <p class="muted small">${air ? '空港は、空港の建物をこわすとなくなります' : '港は、フェリーターミナルの建物をこわすとなくなります'}</p>` : s.mine ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button>${s.k === 'bus' ? '<button class="btn" data-lend>貸し出し</button>' : '<button class="btn" data-plat>ホーム・番線</button><button class="btn" data-trk>' + (pfOn() ? '発着番線・ホームの形' : '発着番線') + '</button>' + (S.hgt2 ? '<button class="btn" data-sth>⛰ 駅の高さ</button>' : '') + (tomeOn() ? '<button class="btn" data-tome>🅿 留置線をつくる</button>' : '') + (ugmOn() ? '<button class="btn" data-ugmb>🛍 地下街をつくる</button>' : '')}${s.k === 'rail' && S.snowOK && (s.ml || snowZoneAt(s.fx, s.fy) > 0) ? `<button class="btn" data-melt>${s.ml ? '融雪器をはずす' : '❄ 融雪器をつける'}</button>` : ''}${s.k === 'rail' && S.supOK ? `<button class="btn" data-sup="water">${s.wt ? '給水設備をはずす' : '💧 給水設備をつくる'}</button><button class="btn" data-sup="coal">${s.cl ? '給炭設備をはずす' : '⛏ 給炭設備をつくる'}</button>` : ''}<button class="btn" data-del>こわす</button></div>` : ''}
+      <p class="muted small">${air ? '空港は、空港の建物をこわすとなくなります' : '港は、フェリーターミナルの建物をこわすとなくなります'}</p>` : s.mine ? `<div class="mp-row"><button class="btn" data-ren>名前を変える</button>${s.k === 'bus' ? (gbt ? '<button class="btn" data-lend>使用料</button>' : '<button class="btn" data-lend>貸し出し</button>') : '<button class="btn" data-plat>ホーム・番線</button><button class="btn" data-trk>' + (pfOn() ? '発着番線・ホームの形' : '発着番線') + '</button>' + (S.hgt2 ? '<button class="btn" data-sth>⛰ 駅の高さ</button>' : '') + (tomeOn() ? '<button class="btn" data-tome>🅿 留置線をつくる</button>' : '') + (ugmOn() ? '<button class="btn" data-ugmb>🛍 地下街をつくる</button>' : '')}${s.k === 'rail' && S.snowOK && (s.ml || snowZoneAt(s.fx, s.fy) > 0) ? `<button class="btn" data-melt>${s.ml ? '融雪器をはずす' : '❄ 融雪器をつける'}</button>` : ''}${s.k === 'rail' && S.supOK ? `<button class="btn" data-sup="water">${s.wt ? '給水設備をはずす' : '💧 給水設備をつくる'}</button><button class="btn" data-sup="coal">${s.cl ? '給炭設備をはずす' : '⛏ 給炭設備をつくる'}</button>` : ''}<button class="btn" data-del>こわす</button></div>` : ''}
+    ${gbt ? '<p class="muted small">国のバスターミナルです。だれでも バス系統に入れられます（1系統・1日の 使用料を 国にはらいます）。</p>' : ''}
     ${S.admin && (s.rt || []).length ? '<div class="mp-row"><button class="btn" data-unkomk>🚦 乱れを起こす（管理者）</button></div>' : ''}`, sh => {
     const cs = sh.querySelector('[data-cars]'); if (cs) cs.onclick = () => openCars(pdep.id);
     const um = sh.querySelector('[data-unkomk]'); if (um) um.onclick = () => unkoMake(s);   // t108
@@ -4742,11 +4759,11 @@ function showSta(s) {
     const pl = sh.querySelector('[data-plat]'); if (pl) pl.onclick = () => staResize(s);
     const sth = sh.querySelector('[data-sth]'); if (sth) sth.onclick = () => staHeight(s);   // 駅の高さ（DB の更新84）
     const ld = sh.querySelector('[data-lend]'); if (ld) ld.onclick = async () => {
-      const v = prompt(gov ? T('国の空港の使用料（1路線・1日・X）。空にすると、新しい空路には使えなくなります（いまの空路は、そのまま使えます）') : T('ほかの人・会社に貸す使用料（1系統・1日・X）。空にすると貸しません（いま使っている系統は、そのまま使えます）'), s.ln != null ? String(s.ln) : '1000');
+      const v = prompt(gov ? T('国の空港の使用料（1路線・1日・X）。空にすると、新しい空路には使えなくなります（いまの空路は、そのまま使えます）') : gbt ? T('国のバスターミナルの使用料（1系統・1日・X）。空にすると、新しい系統には使えなくなります（いまの系統は、そのまま使えます）') : T('ほかの人・会社に貸す使用料（1系統・1日・X）。空にすると貸しません（いま使っている系統は、そのまま使えます）'), s.ln != null ? String(s.ln) : '1000');
       if (v == null) return;
       const t = hw(v).replace(/[,，\s]/g, ''), n = t === '' ? null : Number(t);
       if (n != null && !(n >= 0)) return toast('数字を入れてください');
-      const r = await api('mp_stop_lend', { p_id: s.id, p_lend: n }, gov ? (n == null ? '新しい空路には使えなくしました' : '使用料を決めました') : n == null ? '貸すのをやめました' : '貸し出します');
+      const r = await api('mp_stop_lend', { p_id: s.id, p_lend: n }, gov || gbt ? (n == null ? (gbt ? '新しい系統には使えなくしました' : '新しい空路には使えなくしました') : '使用料を決めました') : n == null ? '貸すのをやめました' : '貸し出します');
       if (r) { s.ln = r.lend; refreshBox(s.fx - 3, s.fy - 3, s.fx + 3, s.fy + 3); showSta(s); }
     };
     { const tb = sh.querySelector('[data-tome]'); if (tb) tb.onclick = () => { setTool('dep'); S.toolState = { tome: s.id }; hint('留置線：駅の近くの線路の上で、はじめと終わりをタップします（ホームの はしより先・同じ線路の上）'); }; }   // 留置線（DB の更新105）
@@ -5801,15 +5818,18 @@ async function staTap(x, y) {
     return staSheet('rail', st.a, st.b);
   }
   const hb = nearSeg(x, y, 12, s => s.k === 'road' && s.c !== 'exp');
+  if (hb && S.as === 'gov' && !btOn()) return toast(T('国のバスターミナルは、サーバーの更新のあとで つくれます'));
   if (hb) return staSheet('bus', hb);
   toast('自分の線路か、道路の上をタップしてください');
 }
+const btOn = () => (S.dbv || 0) >= 128;   // 国のバスターミナル（DB の更新128）
 function staSheet(kind, hit, hit2) {
+  const bt = kind === 'bus' && S.as === 'gov';   // 国のバスターミナル（のりば 2〜8・工事は無料・はじめから貸し出し）
   const segLenMax = kind === 'rail' ? hit.s.len / 50 : 0;
   // 起点と終点のまん中・長さ（20m単位）
   const span = kind === 'rail' ? Math.abs(hit2.at - hit.at) : 0;
   const st = { plat: kind === 'rail' ? clamp(Math.round(span * 50 / 20) * 20, 20, 400) : 0, mid: kind === 'rail' ? (hit.at + hit2.at) / 2 : hit.at,
-               tracks: 2, name: nearDist(hit.x, hit.y), q: null, err: null, force: false };
+               tracks: bt ? 4 : 2, name: nearDist(hit.x, hit.y), q: null, err: null, force: false };
   const fok = () => kind === 'rail' && S.as === 'gov' && forceOn(), fa = () => (st.force && fok() ? { p_force: true } : {});   // 国の強行（DB の更新116）
   const pt = () => segPointAt(hit.s, st.mid);
   S.sel = { kind: 'seg', id: hit.s.id }; S.dirty = true;
@@ -5830,8 +5850,10 @@ function staSheet(kind, hit, hit2) {
     draw(); S.dirty = true;
   };
   const changed = () => { st.seq = (st.seq || 0) + 1; st.quoting = false; st.q = null; st.err = null; draw(); S.dirty = true; };
-  const draw = () => sheet(`<h4>${kind === 'rail' ? '🚉 駅をつくる' : '🚏 バス停をつくる'}</h4>
-    <div class="mp-row"><input class="mp-inp" data-nm placeholder="${kind === 'rail' ? '駅の名前（「駅」はつけない）' : 'バス停の名前'}" value="${esc(st.name)}"></div>
+  const draw = () => sheet(`<h4>${kind === 'rail' ? '🚉 駅をつくる' : bt ? '🚌 バスターミナルをつくる（国）' : '🚏 バス停をつくる'}</h4>
+    <div class="mp-row"><input class="mp-inp" data-nm placeholder="${kind === 'rail' ? '駅の名前（「駅」はつけない）' : bt ? 'バスターミナルの名前' : 'バス停の名前'}" value="${esc(st.name)}"></div>
+    ${bt ? `<div class="mp-row">のりば <span class="mp-seg">${[2, 3, 4, 6, 8].map(n => `<button data-t="${n}" class="${st.tracks === n ? 'on' : ''}">${n}</button>`).join('')}</span></div>
+      <p class="muted small" style="margin:4px 0 0">国のバスターミナルは、はじめから ほかの人・会社の バス系統に 使えます（1系統・1日の 使用料は 国庫へ。あとで 変えられます）</p>` : ''}
     ${kind === 'rail' ? `<div class="mp-row"><span>ホーム</span> <button class="btn" data-pm="-20" style="flex:none;padding:4px 12px">−</button><b style="min-width:4.2em;text-align:center">${st.plat}m</b><button class="btn" data-pm="20" style="flex:none;padding:4px 12px">＋</button>
         <span class="muted small">20m の車両 ${Math.floor(st.plat / 20)}両まで</span></div>
       <div class="mp-row">番線 <span class="mp-seg">${[1, 2, 3, 4, 6].map(n => `<button data-t="${n}" class="${st.tracks === n ? 'on' : ''}">${n}</button>`).join('')}</span></div>

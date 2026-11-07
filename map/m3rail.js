@@ -1250,17 +1250,36 @@ function staPlan(t, XS) {
 }
 
 /* ---------- 駅：屋根の柱・駅舎・階段・跨線橋・高架駅の下・地下駅の出入口・名前 ---------- */
+// 道路の 車道の はば（m。map3d の m3RoadProf と同じ）
+function roadCw(sg) {
+  const W = Math.max(6, (sg.w || 0.2) * 50), ln = Math.max(0, sg.l || 0);
+  if (sg.c === 'exp' || ln === 0 || sg.c === 'lane') return W;
+  return Math.max(5, W - 2 * (ln === 1 ? 2.75 : ln === 2 ? 3.5 : 4));
+}
 function staBuild(t) {
   const g = G.v;
   let g0 = X.m3Surf(t.fx, t.fy);
-  if (t.k === 'bus') {   // バス停：屋根・柱・うしろのかべ・ポール
-    const a = t.a || 0, c = Math.cos(a), s = Math.sin(a), lod = lodAt(t.fx, t.fy), y0 = g0 + LIFT;
+  if (t.k === 'bus') {   // バス停：屋根・柱・うしろのかべ・ポール。道の はし（車道の 左の ふち）から 外へ（t70：前は 道の まん中から だった）
+    const a = t.a || 0, c = Math.cos(a), s = Math.sin(a), sg = X.it && X.it.segs ? X.it.segs.get(t.seg) : null, cwh = sg && sg.k === 'road' ? roadCw(sg) / 2 * U : 3 * U;
+    t = Object.assign({}, t, { fx: t.fx - s * cwh, fy: t.fy + c * cwh }); g0 = X.m3Surf(t.fx, t.fy);
+    const lod = lodAt(t.fx, t.fy), y0 = g0 + LIFT;
+    if ((t.tr || 1) > 1) {   // バスターミナル（DB の更新128）：のりばの数だけ 長い屋根・柱・のりばの ポール
+      const n = Math.min(8, t.tr), Lh = n * 6, bx = t.fx - s * 1.8 * U, by = t.fy + c * 1.8 * U;
+      if (lod >= 1) {
+        g.box(bx, by, c, s, Lh * U, 1.5 * U, y0 + 2.9 * U, y0 + 3.1 * U, CL.busR, true);
+        g.box(bx - s * 1.4 * U, by + c * 1.4 * U, c, s, Lh * U, 0.05 * U, y0, y0 + 2.9 * U, [0.62, 0.72, 0.78]);
+        for (let k = -Lh + 1; k <= Lh - 1 + 1e-6; k += 6) g.box(bx + c * k * U + s * 1.2 * U, by + s * k * U - c * 1.2 * U, c, s, 0.08 * U, 0.08 * U, y0, y0 + 2.9 * U, CL.steelD);
+        for (let i = 0; i < n; i++) { const k = -Lh + 6 + i * 12, px = t.fx + c * k * U - s * 0.35 * U, py = t.fy + s * k * U + c * 0.35 * U; g.box(px, py, c, s, 0.04 * U, 0.04 * U, y0, y0 + 2.3 * U, CL.steelD); g.box(px, py, c, s, 0.3 * U, 0.03 * U, y0 + 2.0 * U, y0 + 2.6 * U, CL.bus); }
+      } else g.box(bx, by, c, s, Lh * U, 1.5 * U, y0, y0 + 3.1 * U, CL.bus);
+      M3.labs.push({ x: t.fx, y: t.fy, h: y0 + 6 * U, n: t.n, f: 0, st: 'bus' });
+      return;
+    }
     if (lod >= 1) {
       const bx = t.fx - s * 0.9 * U, by = t.fy + c * 0.9 * U;
       g.box(bx, by, c, s, 2.0 * U, 0.8 * U, y0 + 2.4 * U, y0 + 2.55 * U, CL.busR, true);
       g.box(bx - s * 0.7 * U, by + c * 0.7 * U, c, s, 1.9 * U, 0.04 * U, y0, y0 + 2.4 * U, [0.62, 0.72, 0.78]);
       for (const k of [-1.7, 1.7]) g.box(bx + c * k * U - s * 0.6 * U, by + s * k * U + c * 0.6 * U, c, s, 0.05 * U, 0.05 * U, y0, y0 + 2.4 * U, CL.steelD);
-      g.box(t.fx + c * 3 * U, t.fy + s * 3 * U, c, s, 0.04 * U, 0.04 * U, y0, y0 + 2.3 * U, CL.steelD); g.box(t.fx + c * 3 * U, t.fy + s * 3 * U, c, s, 0.3 * U, 0.03 * U, y0 + 2.0 * U, y0 + 2.6 * U, CL.bus);
+      { const px = t.fx + c * 3 * U - s * 0.35 * U, py = t.fy + s * 3 * U + c * 0.35 * U; g.box(px, py, c, s, 0.04 * U, 0.04 * U, y0, y0 + 2.3 * U, CL.steelD); g.box(px, py, c, s, 0.3 * U, 0.03 * U, y0 + 2.0 * U, y0 + 2.6 * U, CL.bus); }
     } else g.box(t.fx, t.fy, c, s, 3 * U, 1 * U, y0, y0 + 2.6 * U, CL.bus);
     M3.labs.push({ x: t.fx, y: t.fy, h: y0 + 5 * U, n: t.n, f: 0, st: 'bus' });
     return;

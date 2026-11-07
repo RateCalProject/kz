@@ -1355,6 +1355,7 @@ const CSS = `
 .wk-cr{display:block;pointer-events:auto;margin-top:3px;padding:0;border:0;background:transparent;color:#fff;opacity:.85;font-size:10.5px;font-weight:400;text-align:left;cursor:pointer;line-height:1.35}
 .wk-pick{position:absolute;left:8px;right:8px;bottom:8px;max-height:64%;overflow:auto;background:var(--panel,#fff);color:var(--ink,#222);border-radius:14px;box-shadow:0 4px 18px rgba(0,0,0,.3);padding:10px 12px 12px;font-size:13px;z-index:2}
 .wk-pick[hidden]{display:none}
+.wk-fov{display:flex;align-items:center;gap:10px;margin:2px 0 10px}.wk-fov input{flex:1}.wk-fov b{min-width:3em;text-align:right;font-size:15px}.wk-fn{margin:8px 0 0;font-size:12px;opacity:.75}
 .wk-ph{display:flex;align-items:center;gap:8px;margin-bottom:8px}.wk-ph b{flex:1;font-size:15px}
 .wk-ph button{border:0;background:transparent;font-size:18px;padding:4px 8px}
 .wk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px}
@@ -1397,7 +1398,7 @@ function hudMake() {
     <div class="wk-stick" data-wk-stick title="うごく（いっぱいに たおすと 走る）"><i></i></div>
     <div class="wk-btns"><button data-wk-chat title="チャット（Z・/）">💬</button><button data-wk-x title="歩くのをやめる">✕</button>
       <button data-wk-item title="持ち物（E）">🎒</button><button data-wk-look title="見た目">👕</button>
-      <button data-wk-cam title="カメラ（C）：三人称・一人称・俯瞰">🎥</button><button data-wk-veh title="乗り物（V）・乗せてもらう（F）">🚲</button><button data-wk-sit title="すわる（R）">🪑</button><button data-wk-crb title="しゃがむ（Shift）">🧎</button><button data-wk-run title="走る（Q）">🏃</button>
+      <button data-wk-cam title="カメラ（C）：三人称・一人称・俯瞰">🎥</button><button data-wk-veh title="乗り物（V）・乗せてもらう（F）">🚲</button><button data-wk-sit title="すわる（R）">🪑</button><button data-wk-crb title="しゃがむ（Shift）">🧎</button><button data-wk-run title="走る（Q）">🏃</button><button data-wk-fov title="視野角">🔭</button>
       <button class="wk-jump" data-wk-jump title="ジャンプ（スペース）">⤒ ジャンプ</button></div>
     <div class="wk-log" hidden></div>
     <div class="wk-say" hidden><input type="text" maxlength="60" enterkeyhint="send" autocomplete="off" placeholder="近くの人に（60文字まで）"><button data-wk-ss>送る</button><button data-wk-sx title="とじる">✕</button></div>
@@ -1423,6 +1424,7 @@ function hudMake() {
   tap('[data-wk-sit]', () => sitSet(!sitOn()));
   tap('[data-wk-veh]', () => vehTap());
   tap('[data-wk-cam]', () => camSet());
+  tap('[data-wk-fov]', () => fovOpen());
   { const b = h.querySelector('[data-wk-jump]'); b.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); jump(); }); b.onclick = () => { try { b.blur(); } catch (er) {} }; }   // おした しゅんかんに（スティックを おしながらでも。t70）
   tap('[data-wk-item]', () => wheelOpen(!W.wheel, false));
   tap('[data-wk-chat]', () => chatOpen(!W.chat.open));
@@ -1658,6 +1660,25 @@ function hudTick(t) {
   const cb = W.hud.querySelector('[data-wk-cr]'), cs = [...cred.values()];
   cb.hidden = !cs.length;
   cb.textContent = W.crOpen ? cs.map(k => k.name + '：' + k.credit).join(' ／ ') : 'ⓘ ' + cs.map(k => k.name).join('・') + '（' + (/CC BY [0-9.]+/.exec(cs.map(k => k.credit).join(' ')) || ['クレジット'])[0] + '）';
+}
+// 視野角（🔭。t70）：歩くときの カメラの 広さ（たての角度）。この端末に おぼえる（地図を見るときの 視野角は ⚙ で べつに）
+function fovOpen() {
+  const p = W.hud.querySelector('.wk-pick'), F = (v) => (window.m3Fov ? window.m3Fov('w', v) : 45);
+  if (!p.hidden && p.dataset.k === 'fov') { p.hidden = true; return; }
+  p.dataset.k = 'fov'; p.hidden = false;
+  const draw = () => {
+    const v = F();
+    p.innerHTML = `<div class="wk-ph"><b>🔭 視野角</b><button data-wk-pc title="とじる">✕</button></div>
+      <div class="wk-fov"><input type="range" min="30" max="100" step="5" value="${v}" data-fv><b data-fvv>${v}°</b></div>
+      <div class="wk-cols">${[45, 60, 75, 90].map(n => `<button class="wk-hs ${v === n ? 'on' : ''}" data-fp="${n}">${n}°</button>`).join('')}</div>
+      <p class="wk-fn">広くすると まわりが よく見えます（画面の ふちは のびて 見えます）。はじめは 45°</p>`;
+    p.querySelector('[data-wk-pc]').onclick = () => { p.hidden = true; };
+    const r = p.querySelector('[data-fv]');
+    r.oninput = () => { F(Number(r.value)); p.querySelector('[data-fvv]').textContent = F() + '°'; p.querySelectorAll('[data-fp]').forEach(b => b.classList.toggle('on', Number(b.dataset.fp) === F())); };
+    r.addEventListener('keydown', e => e.stopPropagation());   // 矢印キーで 歩かない
+    p.querySelectorAll('[data-fp]').forEach(b => b.onclick = () => { F(Number(b.dataset.fp)); draw(); });
+  };
+  draw();
 }
 function pickOpen() {
   const p = W.hud.querySelector('.wk-pick');
