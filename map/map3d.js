@@ -149,8 +149,9 @@ function m3Sun(force) {
   else { if (M3.sc.background && M3.sc.background.isColor) M3.sc.background.copy(skyC); if (M3.sc.fog) M3.sc.fog.color.copy(skyC); }
   // 夜の明かり：建物の窓（夕方から）・列車
   const w = Math.max(0, Math.min(1, (2 - sn.el) / 8));
-  M3.nightW = w;
-  for (const g of [M3.grpB, M3.grpL]) if (g) g.traverse(o => { const m = o.material; if (m && m.userData && m.userData.win) m.emissiveIntensity = 0.95 * w; });
+  M3.nightW = w; if (window.M3A) window.M3A.nightW = w;   // 建物の型の 窓の明かり（t70）
+  for (const g of [M3.grpB, M3.grpL]) if (g) g.traverse(o => { for (const m of (Array.isArray(o.material) ? o.material : [o.material])) if (m && m.userData && m.userData.win) m.emissiveIntensity = 0.95 * w; if (o.userData && o.userData.spill) o.visible = w > 0.02; });
+  if (M3.spillMat) M3.spillMat.opacity = 0.75 * w;   // 建物から もれる光（t70）
   if (M3.run && M3.run.material && M3.run.material.emissive) { const e = 0.16 + 0.5 * w; M3.run.material.emissive.setRGB(e, e * 0.95, e * 0.82); }
   M3.dirty = true;
 }
@@ -1312,6 +1313,36 @@ function m3SigTick(force) {
 }
 
 /* ---------- 建物・道路・線路 ---------- */
+/* ---------- 夜に 建物から もれる光（t70）：近くの建物の まわりの地面に、窓の明かりの あたたかい光の帯（外へ うすく）。
+   建物ごとに 明るさを かえる（暗い建物もある）。足していく光（Additive）。夜の度合い（M3.nightW）で m3Sun が 明るさを決める ---------- */
+function m3SpillB(SPL, b, f) {
+  const k = m3Hash(b.id, 77); if (k < 0.18) return;   // 明かりの ついていない建物
+  const pw = Math.min(1, 0.45 + f * 0.04) * (0.55 + 0.45 * k), set = b.set;
+  const warm = k > 0.8 ? [0.75, 0.82, 1.0] : [1.0, 0.8, 0.52];   // ときどき 白っぽい（LED の事務所）
+  for (const kk of set) {
+    const i = kk.indexOf(','), x = +kk.slice(0, i), y = +kk.slice(i + 1), x0 = x / 5, z0 = y / 5, x1 = (x + 1) / 5, z1 = (y + 1) / 5;
+    if (!set.has((x + 1) + ',' + y)) SPL.push([x1, z1, x1, z0, 1, 0, pw, warm]);
+    if (!set.has((x - 1) + ',' + y)) SPL.push([x0, z0, x0, z1, -1, 0, pw, warm]);
+    if (!set.has(x + ',' + (y + 1))) SPL.push([x0, z1, x1, z1, 0, 1, pw, warm]);
+    if (!set.has(x + ',' + (y - 1))) SPL.push([x1, z0, x0, z0, 0, -1, pw, warm]);
+  }
+}
+function m3SpillMesh(T3, SPL) {
+  if (!SPL.length || SPL.length > 20000) return;
+  const P = new Float32Array(SPL.length * 18 * 3), C = new Float32Array(SPL.length * 18 * 3), W1 = 6 * M3_U, W2 = 2 * M3_U, e = 0.1 * M3_U, lift = 0.12 * M3_U;
+  let o = 0;
+  const v = (x, z, c) => { P[o] = x; P[o + 1] = m3Surf(x, z) + lift; P[o + 2] = z; C[o] = c[0]; C[o + 1] = c[1]; C[o + 2] = c[2]; o += 3; };
+  for (const [ax, az, bx, bz, nx, nz, pw, w] of SPL) {
+    const c0 = [w[0] * pw, w[1] * pw, w[2] * pw], c1 = [c0[0] * 0.38, c0[1] * 0.38, c0[2] * 0.38], c2 = [0, 0, 0];
+    const A0 = [ax + nx * e, az + nz * e], B0 = [bx + nx * e, bz + nz * e], A1 = [ax + nx * W2, az + nz * W2], B1 = [bx + nx * W2, bz + nz * W2], A2 = [ax + nx * W1, az + nz * W1], B2 = [bx + nx * W1, bz + nz * W1];
+    v(A0[0], A0[1], c0); v(B0[0], B0[1], c0); v(B1[0], B1[1], c1); v(A0[0], A0[1], c0); v(B1[0], B1[1], c1); v(A1[0], A1[1], c1);
+    v(A1[0], A1[1], c1); v(B1[0], B1[1], c1); v(B2[0], B2[1], c2); v(A1[0], A1[1], c1); v(B2[0], B2[1], c2); v(A2[0], A2[1], c2);
+  }
+  const g = new T3.BufferGeometry(); g.setAttribute('position', new T3.BufferAttribute(P.subarray(0, o), 3)); g.setAttribute('color', new T3.BufferAttribute(C.subarray(0, o), 3));
+  if (!M3.spillMat) { M3.spillMat = new T3.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0, blending: T3.AdditiveBlending, depthWrite: false, side: T3.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }); M3.spillMat.keep = true; }
+  M3.spillMat.opacity = 0.75 * (M3.nightW || 0);
+  const me = new T3.Mesh(g, M3.spillMat); me.visible = (M3.nightW || 0) > 0.02; me.renderOrder = 2; me.userData.spill = 1; M3.grpB.add(me);
+}
 function m3Blds(v) {
   const it = visibleItems();   // S.v3rect（近いはんい）・S.cam.z（細かさ）は m3Frame で合わせてある
   const bs = [...it.blds.values()].filter(b => b.bb[2] >= v.x0 && b.bb[0] <= v.x1 && b.bb[3] >= v.y0 && b.bb[1] <= v.y1);
@@ -1338,7 +1369,7 @@ function m3Blds(v) {
   const hex = (h, f) => { const n = parseInt(h.slice(1), 16); return [((n >> 16) & 255) / 255 * f, ((n >> 8) & 255) / 255 * f, (n & 255) / 255 * f]; };
   const FND = [0.64, 0.63, 0.60];   // 土台（坂の低いがわ。コンクリート）
   // 建物の型（t65）：読めていれば 型と見た目で組み立てる（近いほど細かく・入口は道のほうへ）。まだなら前の箱
-  const AR = m3ArchNow(), AB = AR ? new AR.Builder() : null, FRo = AB ? m3FrontIdx(segs) : null;
+  const AR = m3ArchNow(), AB = AR ? new AR.Builder() : null, FRo = AB ? m3FrontIdx(segs) : null, SPL = [];   // SPL：夜に もれる光の 地面の帯（t70）
   if (!AR) m3Arch().then(() => { M3.bKey = ''; S.dirty = true; }).catch(() => {});
   else { AR.tq = MQ.d3 <= 0 ? 0.5 : MQ.d3 >= 3 ? 2 : 1; AR.aniso = Math.min(8, M3.r.capabilities.getMaxAnisotropy()); }
   const G5 = Math.max(4, Math.round((v.x1 - v.x0) / 10));   // 近いはんいの目の半分ほど（中心がずれていても 近くは細かく）
@@ -1374,6 +1405,7 @@ function m3Blds(v) {
       if (dk && lod >= 0) try { m3EkiDeck(AB, dk, it, lod); } catch (e) { console.error(e); }
       const sx = M3.bst[lod + 1]; sx[0]++; sx[1] += performance.now() - tb0;   // 段ごとの数と時間（たしかめる用）
       if (b.name) M3.labs.push({ x: b.cx, y: b.cy, h: top + 2 * M3_U, n: b.name, f });
+      if (lod >= 1 && f > 0) m3SpillB(SPL, b, f);   // 夜に 窓から もれる光（t70）
       continue;
     }
     const st = m3Style(b.kind, b), wc = hex(st.wc, st.jit), rcol = hex(f > 0 ? st.rc : (bcol(b.kind)[0] || '#bbb'), st.jit), wa = W[st.win] || W.none;
@@ -1431,6 +1463,7 @@ function m3Blds(v) {
       } else { top(x0, y1, z0, x0, y1, z1, x1, y1, z1, 0, 1, 0); top(x0, y1, z0, x1, y1, z1, x1, y1, z0, 0, 1, 0); }
     }
   }
+  m3SpillMesh(T3, SPL);
   const mkMesh = (arr, tex, grp) => {
     if (!arr.length) return;
     const n = arr.length / 11, P = new Float32Array(n * 3), N = new Float32Array(n * 3), C = new Float32Array(n * 3), UV = new Float32Array(n * 2);

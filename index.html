@@ -1304,7 +1304,7 @@ nav.tabs button.dot::after{content:"";position:absolute;top:6px;left:calc(50% + 
     if (F[t]) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.id = 'tf-' + t; l.href = 'https://fonts.googleapis.com/css2?family=' + F[t] + '&display=swap'; document.head.appendChild(l); }
   } catch (e) {}
   /* 言語：日本語のほかをえらんだ端末では、そのことばの辞書（i18n/<lang>.js）を先に読みこむ */
-  window.AX_LANGS = {"en":"en.js?v=c161fa2f","zh-TW":"zh-TW.js?v=527f0393","zh-CN":"zh-CN.js?v=06798ad4","ko":"ko.js?v=2134cc87","ko-Hani":"ko-Hani.js?v=1889a1b8"};
+  window.AX_LANGS = {"en":"en.js?v=bbb88056","zh-TW":"zh-TW.js?v=d3a2e035","zh-CN":"zh-CN.js?v=2291265c","ko":"ko.js?v=b5f6e130","ko-Hani":"ko-Hani.js?v=2f59b2fb"};
   try { var L = localStorage.getItem('lang'); if (window.AX_LANGS[L]) { document.documentElement.lang = { 'en': 'en', 'zh-TW': 'zh-Hant-TW', 'zh-CN': 'zh-Hans-CN', 'ko': 'ko', 'ko-Hani': 'ko' }[L] || L; document.write('<script src="i18n/' + window.AX_LANGS[L] + '"><\/script>'); } } catch (e) {}
 })();
 </script>
@@ -5080,7 +5080,7 @@ const ST_COLS = {
   muni: [['n', '市区町村', 's'], ['pr', '都道府県', 's'], ['pop', '人口', 'n'], ['land', '面積 km²', 'a'], ['dens', '人口密度 /km²', 'd'], ['cv', '中心の地価', 'x'], ['sta', '駅', 'n'], ['blds', '建物', 'n']],
   sta: [['n', '駅・バス停', 's'], ['k', '種類', 'k'], ['mu', '市区町村', 's'], ['pax', '乗降客数/日', 'n'], ['tr', '発着本数/日', 'n'], ['rt', '系統', 'n'], ['tk', '番線', 'n'], ['o', '持ち主', 's']],
   port: [['n', '空港・港', 's'], ['k', '種類', 'k'], ['mu', '市区町村', 's'], ['pax', '乗降客数/日', 'n'], ['tr', '発着便数/日', 'n'], ['rt', '路線', 'n'], ['pl', '滑走路 m', 'm'], ['tk', '発着口・乗り場', 'n'], ['o', '持ち主', 's']],
-  route: [['n', '系統', 's'], ['k', '種類', 'k'], ['o', '持ち主', 's'], ['pax', '利用者/日', 'n'], ['load', '混雑 %', 'p'], ['tr', '本数/日', 'n'], ['ns', '駅', 'n'], ['km', '長さ km', 'f'], ['sp', '速さ km/h', 'f']],
+  route: [['n', '系統', 's'], ['k', '種類', 'k'], ['o', '持ち主', 's'], ['pax', '利用者/日', 'n'], ['load', '混雑 %', 'p'], ['oc', '営業係数', 'n'], ['tr', '本数/日', 'n'], ['ns', '駅', 'n'], ['km', '長さ km', 'f'], ['sp', '速さ km/h', 'f']],   // 営業係数（DB の更新125）
   // 山・湖・島・峠と岬（t108）：map/nature.json（地形から見つけたもの。だれが見ても同じ）
   peak: [['n', '山', 's'], ['pr', '都道府県', 's'], ['mu', '市区町村', 's'], ['h', '標高 m', 'n'], ['iso', 'より高い山まで km', 'f']],
   lake: [['n', '湖・池', 's'], ['pr', '都道府県', 's'], ['mu', '市区町村', 's'], ['a2', '面積 km²', 'f']],
@@ -5160,7 +5160,7 @@ async function statsLoad() {
     : `${d.nat ? '' : d.old ? '<span>10月31日の写しです。駅の数・建物・地価は、サーバーの更新のあとに出ます。</span>' : '<span>1時間ごとにまとめています。</span>'}`
       + `<span>見出しをおすと並べかえます（もう一度おすと逆）。</span>`
       + (ST.kind === 'sta' || ST.kind === 'port' ? '<span>乗降客数は、系統の1日の利用者を、駅のまわりの人のわりあいで分けた推計です。</span>' : '')
-      + (ST.kind === 'route' ? '<span>混雑は、定員にたいする利用者のわりあい（1日の平均）です。</span>' : '')
+      + (ST.kind === 'route' ? '<span>混雑は、定員にたいする利用者のわりあい（1日の平均）です。</span><span>営業係数は、運賃収入 100 X を かせぐのに かかった費用です（1日分の 車両・線路・駅の 維持費を、列車の本数で 系統に わりふった推計。100 より小さいと もうかっている。サーバーの更新125 のあとに出ます）。</span>' : '')
       + (ST.kind === 'muni' ? '<span>中心の地価は、市区町村の中心の1区画（100㎡）の地価です。区は、市の中の区です。</span>' : '')
       + (ST.kind === 'peak' ? '<span>山は、地形から見つけたいただきです（まわりより200m以上高く、もっと高い山から3km以上はなれているもの）。「より高い山まで」は、その山より高いところまでの遠さです（大きいほど、まわりでぬきんでた山。100km より遠いときは 100）。</span>' : '')
       + (ST.kind === 'lake' ? '<span>面積は、地図のマス（50m）から数えた、だいたいの広さです。</span>' : '')
@@ -6007,10 +6007,10 @@ const coRow = c => `<div class="co-row" data-cid="${c.cid}"><span class="nm"><b>
 const bindRows = el => el.querySelectorAll('[data-cid]').forEach(r => r.onclick = () => corpOpen(r.dataset.cid));
 let coT = null, jbT = null;
 // 国土（2Dの地図）：はじめて開いたときに map/palette.js・map/map.js を読む
-const MAPV = '187';
+const MAPV = '188';
 const STAGE = 'Pre';   // 正式公開の前（Pre）。名前のよこと、バージョンの表記に出す。正式公開のときは '' にする
 document.querySelectorAll('.kz-stage').forEach(e => { e.textContent = STAGE; e.hidden = !STAGE; });
-const DBV = 124;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）
+const DBV = 125;   // この画面が前提にしている DB の更新の番号（サーバーで update.sh を流すと入る）
 { const e = document.getElementById('verLogin'); if (e) e.textContent = 'v' + MAPV + (STAGE ? ' ' + STAGE : ''); }   // バージョン表記（ログインの画面）
 // バージョン表記（設定 → プロフィール）：画面の版・サーバーに入っている DB の更新の番号。管理者には、サーバーの更新がまだのとき知らせる
 async function verShow() {

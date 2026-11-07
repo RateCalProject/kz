@@ -39874,10 +39874,10 @@ begin
      where b.kind = 'prefhall' and mu.parent is not null
      order by mu.parent, b.id;
   -- 系統のこの24時間
-  create temp table if not exists _is_rt (route bigint primary key, served bigint, seats bigint) on commit drop;
-  delete from _is_rt where true;
+  drop table if exists _is_rt;   -- 運賃収入も（DB の更新125）
+  create temp table _is_rt (route bigint primary key, served bigint, seats bigint, rev bigint) on commit drop;
   insert into _is_rt
-    select h.route, sum(h.served), sum(h.cap::bigint * case when r.kind = 'air' then 1 else 2 end)
+    select h.route, sum(h.served), sum(h.cap::bigint * case when r.kind = 'air' then 1 else 2 end), sum(coalesce(h.revenue, 0))
       from mp_hours h join mp_routes r on r.id = h.route where h.hour > (select max(hour) from mp_hours) - interval '24 hours' group by h.route;   -- いちばん新しい24時間
   create temp table if not exists _is_pax (st bigint primary key, pax bigint) on commit drop;
   delete from _is_pax where true;
@@ -39948,6 +39948,35 @@ begin
       left join _is_stop st on st.st = s.id left join _is_pax px on px.st = s.id))
   on conflict (kind) do update set at = excluded.at, data = excluded.data;
 
+  -- 営業係数（DB の更新125）：運賃収入 100 X を かせぐのに かかった費用（1日分の 維持費を 系統に わりふる）
+  --   車両：編成の 車両の維持費 × その編成の 列車のうち この系統の わりあい。線路：線の維持費 × 使う長さの わりあい × 列車の本数の わりあい。
+  --   駅：駅の維持費 × 止まる列車の本数の わりあい。国のもの（線路・駅）は 入れない
+  drop table if exists _is_oc;
+  create temp table _is_oc (route bigint primary key, cost numeric) on commit drop;
+  insert into _is_oc
+  with tr as (select t.route, t.form from mp_trains t join mp_routes r on r.id = t.route and r.ok where not t.bad and t.day is null),
+       ntr as (select route, count(*)::numeric n from tr group by route),
+       fu as (select c.form, sum(ty.upkeep)::numeric upk from mp_cars c join mp_types ty on ty.code = c.type where c.form in (select form from tr where form is not null) group by c.form),
+       fn as (select form, count(*)::numeric n from tr where form is not null group by form),
+       car as (select tr.route, sum(fu.upk / fn.n) c from tr join fu on fu.form = tr.form join fn on fn.form = tr.form group by tr.route),
+       ug as (select r.id route, (g ->> 0)::bigint seg, sum(abs((g ->> 2)::numeric - (g ->> 1)::numeric)) used
+                from mp_routes r cross join lateral jsonb_array_elements(case when jsonb_typeof(r.legs) = 'array' then r.legs else '[]'::jsonb end) l
+                cross join lateral jsonb_array_elements(case when jsonb_typeof(l -> 'g') = 'array' then l -> 'g' else '[]'::jsonb end) g
+               where r.ok and r.kind = 'rail' and jsonb_typeof(g) = 'array' and jsonb_array_length(g) >= 3 group by 1, 2),
+       sw as (select ug.seg, sum(coalesce(ntr.n, 0)) n from ug left join ntr on ntr.route = ug.route group by ug.seg),
+       trk as (select ug.route, sum((s.len * _mp_rate('up_rail') * case when s.quad then 2.6 when s.dbl then 1.6 else 1 end * _mp_trk_upk(s.gauge, s.g2, s.slp, s.elec, s.cat) + s.len * _mp_nw_upk(s.nw))
+                                    * least(1, ug.used / nullif(s.len, 0)) * coalesce(ntr.n, 0) / nullif(sw.n, 0)) c
+                 from ug join mp_segs s on s.id = ug.seg and not s.gov and (s.own_u is not null or s.own_c is not null)
+                 join sw on sw.seg = ug.seg left join ntr on ntr.route = ug.route group by ug.route),
+       rs as (select distinct r.id route, x.st from mp_routes r cross join lateral unnest(r.stops) x(st) where r.ok),
+       sn as (select rs.st, sum(coalesce(ntr.n, 0)) n from rs left join ntr on ntr.route = rs.route group by rs.st),
+       sta as (select rs.route, sum(case when s.kind = 'rail' then _mp_rate('up_sta') * (1 + 0.25 * (s.tracks - 1)) when s.kind = 'ship' then _mp_rate('up_port')
+                                         when s.kind = 'air' then _mp_rate('up_air') * greatest(1, s.tracks / 2.0) else _mp_rate('up_stop') end * coalesce(ntr.n, 0) / nullif(sn.n, 0)) c
+                 from rs join mp_stations s on s.id = rs.st and (s.own_u is not null or s.own_c is not null)
+                 join sn on sn.st = rs.st left join ntr on ntr.route = rs.route group by rs.route)
+  select r.id, coalesce(car.c, 0) + coalesce(trk.c, 0) + coalesce(sta.c, 0)
+    from mp_routes r left join car on car.route = r.id left join trk on trk.route = r.id left join sta on sta.route = r.id where r.ok;
+
   -- 系統（鉄道・バス・航路・空路）
   insert into info_stats(kind, at, data) values ('route', now(), (
     select coalesce(jsonb_agg(jsonb_build_object(
@@ -39958,9 +39987,10 @@ begin
         'tr', (select count(*) from mp_trains t where t.route = r.id and not t.bad and t.day is null),
         'pax', coalesce(rt.served, 0),
         'load', case when rt.seats > 0 then round(100.0 * rt.served / rt.seats) end,
+        'oc', case when rt.rev > 0 and oc.cost is not null then round(100.0 * oc.cost / rt.rev) end,   -- 営業係数（DB の更新125）
         'sp', case when jsonb_typeof(r.last) = 'object' then (r.last ->> 'speed')::numeric end,
         'x', (select round(s.x / 100.0, 1) from mp_stations s where s.id = r.stops[1]), 'y', (select round(s.y / 100.0, 1) from mp_stations s where s.id = r.stops[1])) order by r.id), '[]'::jsonb)
-      from mp_routes r left join _is_rt rt on rt.route = r.id where r.ok))
+      from mp_routes r left join _is_rt rt on rt.route = r.id left join _is_oc oc on oc.route = r.id where r.ok))
   on conflict (kind) do update set at = excluded.at, data = excluded.data;
   return 4;
 end $$;

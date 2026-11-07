@@ -503,14 +503,30 @@ A.matOf = (T3, key) => {
   if (e.m) { e.m.map && e.m.map.dispose(); e.m.dispose(); }
   const k = e.o.fixed ? 1 : A.tq, W = Math.max(16, Math.round(e.w * k)), H = Math.max(16, Math.round(e.h * k));
   const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const g = cv.getContext('2d');
+  PT._wins = [];   // 窓の ガラスの場所を おぼえる（夜の明かり。t70）
   try { e.draw(g, W, H, A.rng(strHash(key))); } catch (er) { console.error('M3A.tex', key, er); g.fillStyle = '#ccc'; g.fillRect(0, 0, W, H); }
+  const wins = PT._wins; PT._wins = null;
   const tx = new T3.CanvasTexture(cv); tx.wrapS = tx.wrapT = T3.RepeatWrapping; tx.anisotropy = A.aniso || 4;
   const op = { map: tx, vertexColors: true, side: T3.DoubleSide };
+  // 夜の明かり（t70）：窓の ガラスのところだけ 光る絵（つく窓・つかない窓。あたたかい色・白・テレビの青）。夜の度合いで 明るさ（A.nightW。map3d の m3Sun）
+  if (wins.length && !e.o.alpha && !e.o.tr && !e.o.noNight) {
+    const ec = document.createElement('canvas'), q = 0.5; ec.width = Math.max(8, Math.round(W * q)); ec.height = Math.max(8, Math.round(H * q));
+    const eg = ec.getContext('2d'), Rn = A.rng(strHash(key) ^ 0x5f3759df); eg.fillStyle = '#000'; eg.fillRect(0, 0, ec.width, ec.height);
+    const LIT = ['#ffd9a0', '#ffe3b8', '#ffcf8a', '#fff1d8', '#e8f0ff', '#cfe0ff'];
+    for (const [x, y, w, h, p] of wins) {
+      if (Rn() > p) continue;
+      const c = Rn() < 0.06 ? '#8fb6ff' : A.pick(Rn, LIT), gr = eg.createLinearGradient(0, y * q, 0, (y + h) * q);
+      gr.addColorStop(0, c); gr.addColorStop(1, PT.css(c, 0.72)); eg.fillStyle = gr; eg.fillRect(x * q, y * q, Math.max(1, w * q), Math.max(1, h * q));
+    }
+    const et = new T3.CanvasTexture(ec); et.wrapS = et.wrapT = T3.RepeatWrapping;
+    Object.assign(op, { emissive: new T3.Color('#ffffff'), emissiveMap: et, emissiveIntensity: 0.95 * (A.nightW || 0) });
+  }
   if (e.o.alpha) op.alphaTest = 0.5;
   if (e.o.front) op.side = T3.FrontSide;   // おもてだけ（うらと おもての 2まいで 両がわ。木の 葉の 板：光の 向きを 外に そろえる。t69）
   if (e.o.tr) { op.transparent = true; op.opacity = e.o.op || 0.5; op.depthWrite = false; }
   const M = e.o.shiny ? new T3.MeshPhongMaterial(Object.assign(op, { specular: new T3.Color(e.o.shiny), shininess: e.o.sh || 40 })) : new T3.MeshLambertMaterial(op);
   if (e.o.po) Object.assign(M, { polygonOffset: true, polygonOffsetFactor: e.o.po, polygonOffsetUnits: e.o.po });
+  if (op.emissiveMap) M.userData.win = true;   // 夜に 窓が 光る（m3Sun が 明るさを決める。t70）
   M.keep = true; e.m = M; e.tq = A.tq;
   return M;
 };
@@ -568,6 +584,7 @@ PT.win = (g, x, y, w, h, o, R) => {
   if (o.rec) { g.fillStyle = 'rgba(0,0,0,.28)'; g.fillRect(x - o.rec * 0.4, y - o.rec, w + o.rec * 0.8, h + o.rec * 1.2); }
   PT.fill(g, x, y, w, h, o.f || '#e8e8e6');
   const gx = x + fw, gy = y + fw, gw = w - fw * 2, gh = h - fw * 2; if (gw <= 0 || gh <= 0) return;
+  if (PT._wins && o.night !== false) PT._wins.push([gx, gy, gw, gh, o.night == null ? 0.55 : o.night]);   // 夜の明かり（t70）：つく わりあい
   // ガラス：空がうつる（上が明るい）
   const gr = g.createLinearGradient(0, gy, 0, gy + gh); gr.addColorStop(0, PT.css(o.g0 || '#9fb4c6')); gr.addColorStop(0.55, PT.css(o.g1 || '#4f6476')); gr.addColorStop(1, PT.css(o.g1 || '#4f6476', 0.85));
   g.fillStyle = gr; g.fillRect(gx, gy, gw, gh);
